@@ -44,6 +44,39 @@ Reliable AI impact detection engine.
 
 ---
 
+## Phase 4.1 – Web UI (Streamlit)
+
+Objetivo: interfaz visual extensible para inspeccionar y gestionar los datos del agente.
+
+Tecnología elegida: **Streamlit** — Python puro, sin frontend separado, fácil de extender con nuevas páginas/secciones.
+
+Funcionalidades iniciales:
+
+* Tabla con todos los artículos analizados (título, empresa, ticker, impact level/type, confianza, fecha)
+* Filtros por `impact_level` e `impact_type`
+* Botón para borrar un artículo individual (por URL)
+* Botón para resetear toda la base de datos
+
+Estructura:
+
+```
+ui/
+└── app.py          # Entrada Streamlit (st.set_page_config + navegación)
+└── pages/
+    └── articles.py # Vista principal de artículos
+```
+
+Arrancar con:
+
+```bash
+streamlit run ui/app.py
+```
+
+Deliverable:
+Dashboard local funcional que consume directamente `StorageLayer`.
+
+---
+
 ## Phase 4 – Alert Integration
 
 * Implement isolated email notification module

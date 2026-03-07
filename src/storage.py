@@ -103,6 +103,18 @@ class StorageLayer:
                 ),
             )
 
+    def get_all(self) -> list[dict]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM articles ORDER BY created_at DESC"
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def delete_by_url(self, url: str):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM articles WHERE url = ?", (url,))
+
     def reset(self):
         with self._connect() as conn:
             conn.execute("DELETE FROM articles")

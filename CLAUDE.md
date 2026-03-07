@@ -60,12 +60,14 @@ GNews API → News Ingestion → Deduplication (SQLite) → LLM Analysis → Imp
 - **News source**: GNews free tier
 - **Database**: SQLite (standard library)
 - **Alerts**: Gmail SMTP with App Password
-- **Dependencies**: `ollama`, `requests`, `python-dotenv`
+- **UI**: Streamlit — dashboard local extensible para inspeccionar y gestionar la base de datos
+- **Dependencies**: `ollama`, `requests`, `python-dotenv`, `streamlit`
 
 ## Implementation Phases (Plan.md)
 
 1. `requirements.txt` + virtual environment
 2. Article schema + SQLite persistence + deduplication
 3. LLM loading + structured JSON prompt engineering
+4.1. Web UI (Streamlit) — tabla de artículos, filtros, borrado individual y reset de DB
 4. Email alert integration + end-to-end validation
 5. Logging, error handling, Windows Task Scheduler automation
