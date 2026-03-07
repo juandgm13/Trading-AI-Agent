@@ -9,6 +9,7 @@ from .ingestion import Article
 @dataclass
 class DeduplicationResult:
     is_new: bool
+    is_analyzed: bool
     article: Article
 
 
@@ -38,6 +39,7 @@ class StorageLayer:
                     impact_level TEXT,
                     impact_type  TEXT,
                     confidence   INTEGER,
+                    reason       TEXT,
                     alert_sent   INTEGER DEFAULT 0,
                     created_at   TEXT
                 )
@@ -51,11 +53,12 @@ class StorageLayer:
 
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT url FROM articles WHERE content_hash = ?", (content_hash,)
+                "SELECT impact_level FROM articles WHERE content_hash = ?", (content_hash,)
             ).fetchone()
 
             if row:
-                return DeduplicationResult(is_new=False, article=article)
+                is_analyzed = row[0] is not None
+                return DeduplicationResult(is_new=False, is_analyzed=is_analyzed, article=article)
 
             conn.execute(
                 """
@@ -72,7 +75,7 @@ class StorageLayer:
                 ),
             )
 
-        return DeduplicationResult(is_new=True, article=article)
+        return DeduplicationResult(is_new=True, is_analyzed=False, article=article)
 
     def save_analysis(self, article: Article, llm_output: dict, alert_result: dict):
         with self._connect() as conn:
@@ -84,6 +87,7 @@ class StorageLayer:
                     impact_level = ?,
                     impact_type  = ?,
                     confidence   = ?,
+                    reason       = ?,
                     alert_sent   = ?
                 WHERE url = ?
                 """,
@@ -93,6 +97,7 @@ class StorageLayer:
                     llm_output.get("impact_level"),
                     llm_output.get("impact_type"),
                     llm_output.get("confidence"),
+                    llm_output.get("reason"),
                     1 if alert_result.get("sent") else 0,
                     article.url,
                 ),

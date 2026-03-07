@@ -4,10 +4,7 @@
 
 Create `requirements.txt` defining:
 
-* PyTorch (CUDA 11.8 compatible)
-* Transformers
-* Accelerate
-* Bitsandbytes
+* Ollama (local LLM inference — replaces Transformers/bitsandbytes for simplicity, no CUDA setup required)
 * Requests
 * Python-dotenv
 * SQLite (standard library)
@@ -36,7 +33,8 @@ Stable ingestion and storage pipeline.
 
 ## Phase 3 – LLM Integration
 
-* Load quantized Mistral 7B model
+* Connect to local Ollama server (replaces Hugging Face Transformers for simplicity)
+* Default model: `qwen2.5:7b` (configurable via `MODEL_NAME` env var)
 * Implement structured financial analysis prompt
 * Enforce strict JSON output schema
 * Validate structured parsing

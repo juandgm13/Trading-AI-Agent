@@ -58,19 +58,17 @@ Role:
 
 Framework:
 
-* Hugging Face Transformers
+* [Ollama](https://ollama.com/) — se eligió sobre Hugging Face Transformers por simplicidad: no requiere gestión de CUDA, cuantización ni dependencias de PyTorch.
 
 Model:
 
-* Mistral AI
-* Mistral-7B-Instruct (4-bit quantized)
+* `qwen2.5:7b` (default, configurable via `MODEL_NAME` env var)
 
 Execution Environment:
 
 * Windows 10 / 11
-* NVIDIA GPU (8GB VRAM)
-* CUDA 11.8+
 * Local inference only (no external API calls)
+* GPU opcional; Ollama gestiona la aceleración automáticamente
 
 ---
 
@@ -182,7 +180,7 @@ LLMOutput {
 
 * Always returns structured output.
 * No business logic embedded inside LLM module.
-* LLM can be swapped (Mistral → Llama → Finetuned model).
+* LLM can be swapped (qwen2.5 → llama3 → any Ollama-supported model).
 * Only text-in / structured-JSON-out.
 
 ---

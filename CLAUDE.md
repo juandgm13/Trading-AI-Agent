@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Trading AI Agent is a Python pipeline that ingests financial news, analyzes it locally using a quantized LLM (Mistral-7B-Instruct), classifies stock impact, and sends email alerts. Runs on Windows with NVIDIA GPU (CUDA 11.8+).
+Trading AI Agent is a Python pipeline that ingests financial news, analyzes it locally using an LLM via Ollama, classifies stock impact, and sends email alerts. Runs on Windows.
 
 ## Setup
 
@@ -47,19 +47,20 @@ GNews API → News Ingestion → Deduplication (SQLite) → LLM Analysis → Imp
 
 ### Key Design Constraints
 
-- Each module is **independently replaceable** (e.g., swap GNews → Bloomberg, Mistral → Llama, Gmail → Slack).
+- Each module is **independently replaceable** (e.g., swap GNews → Bloomberg, qwen2.5 → llama3, Gmail → Slack).
 - No business logic inside the LLM module — it is text-in / structured-JSON-out only.
 - The classifier is a pure decision engine with no notification logic.
 - SQLite deduplication uses `url` as the unique key to prevent reprocessing.
 
 ## Tech Stack
 
-- **LLM**: Mistral-7B-Instruct (4-bit quantized via `bitsandbytes`)
-- **Inference**: Hugging Face `transformers` + `accelerate`, local GPU only
+- **LLM**: `qwen2.5:7b` via [Ollama](https://ollama.com/) (local inference, sin GPU obligatorio)
+  - Se eligió Ollama en lugar de `transformers` + `bitsandbytes` por simplicidad: no requiere gestión manual de CUDA, cuantización ni dependencias de PyTorch.
+  - El modelo se puede cambiar con la variable de entorno `MODEL_NAME`.
 - **News source**: GNews free tier
 - **Database**: SQLite (standard library)
 - **Alerts**: Gmail SMTP with App Password
-- **Dependencies**: `torch` (CUDA 11.8), `transformers`, `accelerate`, `bitsandbytes`, `requests`, `python-dotenv`
+- **Dependencies**: `ollama`, `requests`, `python-dotenv`
 
 ## Implementation Phases (Plan.md)
 
