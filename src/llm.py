@@ -13,10 +13,20 @@ VALID_IMPACT_TYPES = {"POSITIVE", "NEGATIVE", "NEUTRAL"}
 SYSTEM_PROMPT = (
     "You are a financial news analyst. "
     "Analyze the article and return ONLY a valid JSON object, no explanation.\n\n"
+    "Rules for the 'company' field:\n"
+    "- Use the company name when the news is primarily about a specific company.\n"
+    "- Use 'MARKET' when the news affects the general market (e.g. Fed rate decisions, "
+    "inflation data, GDP reports, stock index movements, global economic events).\n"
+    "- Use 'SECTOR:<name>' when the news affects an entire sector but not a specific company "
+    "(e.g. 'SECTOR:ENERGY', 'SECTOR:TECH', 'SECTOR:BANKING').\n"
+    "- Use 'Unknown' only when the affected entity truly cannot be determined.\n\n"
+    "Rules for the 'ticker' field:\n"
+    "- Use the stock exchange ticker when company is a specific company.\n"
+    "- Use 'N/A' when company is MARKET, SECTOR:*, or Unknown.\n\n"
     "Schema:\n"
     '{\n'
-    '  "company": "<company name or \'Unknown\'>",\n'
-    '  "ticker": "<stock exchange ticker or \'N/A\'>",\n'
+    '  "company": "<company name | MARKET | SECTOR:<name> | Unknown>",\n'
+    '  "ticker": "<ticker or \'N/A\'>",\n'
     '  "impact_level": "<LOW|MEDIUM|HIGH>",\n'
     '  "impact_type": "<POSITIVE|NEGATIVE|NEUTRAL>",\n'
     '  "confidence": <integer 0-100>,\n'

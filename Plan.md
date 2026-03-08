@@ -77,6 +77,29 @@ Dashboard local funcional que consume directamente `StorageLayer`.
 
 ---
 
+## Phase 4.2 – LLM Market-scope Classification
+
+Objetivo: que el LLM clasifique el alcance de la noticia en el campo `company`, en lugar de devolver siempre `Unknown` para noticias de mercado general.
+
+Valores posibles para `company`:
+
+| Valor | Cuándo usarlo |
+|---|---|
+| `<nombre empresa>` | Noticia principalmente sobre una empresa específica |
+| `MARKET` | Afecta al mercado general (Fed, inflación, PIB, índices bursátiles, eventos macro) |
+| `SECTOR:<nombre>` | Afecta a un sector entero (ej. `SECTOR:TECH`, `SECTOR:ENERGY`, `SECTOR:BANKING`) |
+| `Unknown` | No se puede determinar el afectado (debe ser raro) |
+
+Cambios:
+
+* Actualizar `SYSTEM_PROMPT` en `src/llm.py` con las reglas de clasificación de scope.
+* Cuando `company` es `MARKET` o `SECTOR:*`, el `ticker` es siempre `N/A`.
+
+Deliverable:
+Noticias macro y sectoriales correctamente categorizadas en lugar de `Unknown`.
+
+---
+
 ## Phase 4 – Alert Integration
 
 * Implement isolated email notification module

@@ -40,7 +40,7 @@ GNews API → News Ingestion → Deduplication (SQLite) → LLM Analysis → Imp
 |---|---|---|
 | **News Ingestion** | API credentials + query params | `Article { source, title, description, content, url, published_at }` |
 | **Deduplication** | `Article` | `DeduplicationResult { is_new: bool, article: Article }` |
-| **LLM Analysis** | `{ title, content }` | `LLMOutput { company, impact_level: LOW/MEDIUM/HIGH, impact_type: POSITIVE/NEGATIVE/NEUTRAL, confidence: 0-100 }` |
+| **LLM Analysis** | `{ title, content }` | `LLMOutput { company: <name>\|MARKET\|SECTOR:<name>\|Unknown, ticker, impact_level: LOW/MEDIUM/HIGH, impact_type: POSITIVE/NEGATIVE/NEUTRAL, confidence: 0-100 }` |
 | **Impact Classification** | `LLMOutput` | `ClassificationResult { should_alert: bool, analysis: LLMOutput }` |
 | **Alerting** | `AlertPayload` | `AlertResult { sent: bool, timestamp }` |
 | **Storage** | `Article + LLMOutput + AlertResult` | Persistence confirmation |
@@ -69,5 +69,6 @@ GNews API → News Ingestion → Deduplication (SQLite) → LLM Analysis → Imp
 2. Article schema + SQLite persistence + deduplication
 3. LLM loading + structured JSON prompt engineering
 4.1. Web UI (Streamlit) — tabla de artículos, filtros, borrado individual y reset de DB
+4.2. LLM market-scope classification — `MARKET`, `SECTOR:<name>`, empresa, o `Unknown`
 4. Email alert integration + end-to-end validation
 5. Logging, error handling, Windows Task Scheduler automation
