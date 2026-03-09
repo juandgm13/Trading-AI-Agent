@@ -44,6 +44,38 @@ class StorageLayer:
                     created_at   TEXT
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS price_snapshots (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol      TEXT NOT NULL,
+                    close       REAL NOT NULL,
+                    volume      INTEGER,
+                    bar_time    TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS trades (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol     TEXT NOT NULL,
+                    side       TEXT NOT NULL,
+                    qty        REAL NOT NULL,
+                    price      REAL,
+                    order_id   TEXT,
+                    status     TEXT,
+                    trigger    TEXT,
+                    reason     TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS watchlist (
+                    symbol        TEXT PRIMARY KEY,
+                    company       TEXT,
+                    threshold_pct REAL DEFAULT 2.0,
+                    active        INTEGER DEFAULT 1
+                )
+            """)
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
@@ -118,3 +150,95 @@ class StorageLayer:
     def reset(self):
         with self._connect() as conn:
             conn.execute("DELETE FROM articles")
+
+    # ── Price snapshots ───────────────────────────────────────────────────────
+
+    def save_price_snapshot(self, symbol: str, close: float, volume: int | None, bar_time: str):
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO price_snapshots (symbol, close, volume, bar_time, recorded_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (symbol, close, volume, bar_time, datetime.now(timezone.utc).isoformat()),
+            )
+
+    def get_last_price(self, symbol: str) -> float | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT close FROM price_snapshots WHERE symbol = ? ORDER BY recorded_at DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+        return row[0] if row else None
+
+    def get_price_history(self, symbol: str, limit: int = 100) -> list[dict]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM price_snapshots WHERE symbol = ? ORDER BY recorded_at DESC LIMIT ?",
+                (symbol, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── Trades ────────────────────────────────────────────────────────────────
+
+    def save_trade(
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        price: float | None,
+        order_id: str | None,
+        status: str,
+        trigger: str,
+        reason: str,
+    ):
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO trades (symbol, side, qty, price, order_id, status, trigger, reason, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    symbol, side, qty, price, order_id, status, trigger, reason,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+    def get_trades(self, limit: int = 50) -> list[dict]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM trades ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── Watchlist ─────────────────────────────────────────────────────────────
+
+    def get_watchlist(self) -> list[dict]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM watchlist WHERE active = 1 ORDER BY symbol"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def upsert_watchlist(self, symbol: str, company: str = "", threshold_pct: float = 2.0):
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO watchlist (symbol, company, threshold_pct, active)
+                VALUES (?, ?, ?, 1)
+                ON CONFLICT(symbol) DO UPDATE SET
+                    company       = excluded.company,
+                    threshold_pct = excluded.threshold_pct,
+                    active        = 1
+                """,
+                (symbol.upper(), company, threshold_pct),
+            )
+
+    def deactivate_watchlist(self, symbol: str):
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE watchlist SET active = 0 WHERE symbol = ?", (symbol.upper(),)
+            )

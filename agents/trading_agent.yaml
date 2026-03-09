@@ -5,9 +5,32 @@ models:
     temperature: 0.1
     max_tokens: 512
 
+  trader:
+    provider: ollama
+    model: qwen2.5:7b
+    temperature: 0.2
+    max_tokens: 1024
+
 agents:
   trading_analyzer:
     planner: simple
     tools: []
     model_role: analyzer
     description: "Analyzes financial news articles and returns structured JSON"
+
+  trading_decision_maker:
+    planner: react
+    tools:
+      - get_price
+      - search_news
+      - get_portfolio
+      - place_order
+    model_role: trader
+    max_iterations: 8
+    description: "ReAct agent that monitors prices, analyzes news, and executes trades"
+
+trading:
+  max_qty_per_order: 10
+  max_daily_trades: 5
+  poll_interval_seconds: 60
+  paper_mode: true
