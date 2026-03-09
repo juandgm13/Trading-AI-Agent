@@ -1,7 +1,5 @@
 """Tool: ejecuta órdenes de compra/venta en Alpaca con límites de seguridad."""
 import json
-import os
-from datetime import datetime, timezone
 from agent_framework.tools.base_tool import BaseTool
 
 
@@ -37,10 +35,11 @@ class PlaceOrderTool(BaseTool):
         "required": ["symbol", "side", "qty", "reason"],
     }
 
-    def __init__(self, alpaca_client, storage, max_qty_per_order: int = 10):
+    def __init__(self, alpaca_client, storage, max_qty_per_order: int = 10, alerter=None):
         self._alpaca = alpaca_client
         self._storage = storage
         self._max_qty = max_qty_per_order
+        self._alerter = alerter  # TradeAlerter | None
 
     async def execute(self, symbol: str, side: str, qty: float, reason: str) -> str:
         symbol = symbol.upper().strip()
@@ -93,6 +92,20 @@ class PlaceOrderTool(BaseTool):
             trigger="agent_decision",
             reason=reason,
         )
+
+        # Enviar alerta por email (no bloquea si falla)
+        if self._alerter:
+            try:
+                self._alerter.send_trade_alert(
+                    symbol=symbol,
+                    side=side,
+                    qty=qty,
+                    price=approx_price,
+                    order_id=result.get("order_id"),
+                    reason=reason,
+                )
+            except Exception:
+                pass
 
         return json.dumps({
             "order_id": result.get("order_id"),

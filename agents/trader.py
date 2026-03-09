@@ -51,6 +51,7 @@ async def build_trading_agent(
     gnews_api_key: str,
     max_qty_per_order: int = 10,
     max_iterations: int = 8,
+    alerter=None,
 ):
     """
     Construye el ReAct trading agent con todas las tools inyectadas.
@@ -64,12 +65,13 @@ async def build_trading_agent(
         gnews_api_key: API key para GNews
         max_qty_per_order: Límite de acciones por orden (seguridad)
         max_iterations: Máximo de pasos ReAct antes de terminar forzosamente
+        alerter: TradeAlerter opcional para notificaciones email al operar
     """
     tool_registry = ToolRegistry()
     tool_registry.register(GetPriceTool(alpaca_client))
     tool_registry.register(SearchNewsTool(gnews_api_key))
     tool_registry.register(GetPortfolioTool(alpaca_client))
-    tool_registry.register(PlaceOrderTool(alpaca_client, storage, max_qty_per_order))
+    tool_registry.register(PlaceOrderTool(alpaca_client, storage, max_qty_per_order, alerter))
 
     agent = (
         AgentBuilder()

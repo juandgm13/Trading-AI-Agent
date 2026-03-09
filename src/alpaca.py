@@ -175,3 +175,49 @@ class AlpacaClient:
             return True
         except Exception:
             return False
+
+    # ── Assets ────────────────────────────────────────────────────────────────
+
+    async def get_assets(self, asset_class: str = "us_equity") -> list[dict]:
+        """
+        Devuelve todos los activos activos y negociables en Alpaca.
+
+        Returns:
+            Lista de dicts con {symbol, name} para cada activo negociable.
+        """
+        url = f"{self._trading_url}/v2/assets"
+        params = {"status": "active", "asset_class": asset_class, "tradable": "true"}
+        async with aiohttp.ClientSession(headers=self._headers) as session:
+            async with session.get(url, params=params) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+        return [
+            {"symbol": a["symbol"], "name": a.get("name", "")}
+            for a in data
+            if a.get("tradable") and a.get("status") == "active"
+        ]
+
+    async def get_snapshots(self, symbols: list[str]) -> dict[str, dict]:
+        """
+        Consulta precios para múltiples símbolos en una sola llamada.
+
+        Returns:
+            dict {symbol: {close, volume, timestamp}} con los datos más recientes.
+        """
+        if not symbols:
+            return {}
+        url = f"{DATA_URL}/stocks/snapshots"
+        params = {"symbols": ",".join(symbols), "feed": "iex"}
+        async with aiohttp.ClientSession(headers=self._headers) as session:
+            async with session.get(url, params=params) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+        result = {}
+        for symbol, snap in data.items():
+            bar = snap.get("minuteBar") or snap.get("dailyBar") or {}
+            result[symbol] = {
+                "timestamp": bar.get("t"),
+                "close": bar.get("c"),
+                "volume": bar.get("v"),
+            }
+        return result

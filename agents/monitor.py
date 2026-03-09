@@ -3,20 +3,27 @@ PriceMonitor — loop de monitorización de precios.
 
 Consulta Alpaca a intervalos regulares para cada símbolo en la watchlist.
 Cuando detecta un cambio de precio superior al threshold, dispara el ReAct trading agent.
+
+Si WATCHLIST_SYMBOLS no está definido en .env, se usan TODOS los activos
+negociables de Alpaca (US equities activos). Los precios se consultan en
+batch (snapshots) para minimizar llamadas a la API.
 """
 import asyncio
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 
 from agent_framework.config.config_loader import load_from_yaml
-from agent_framework.events import EventBus, EventType, Event
+from agent_framework.events import EventBus, EventType
 from agent_framework.models.model_registry import ModelRegistry
 from agent_framework.providers import OllamaProvider
 
 from src.alpaca import AlpacaClient
+from src.alerting import TradeAlerter
 from src.storage import StorageLayer
 from .trader import build_trading_agent
+
+# Máximo de símbolos por llamada a snapshots (límite de la API de Alpaca)
+_SNAPSHOT_BATCH = 100
 
 
 class PriceMonitor:
@@ -46,39 +53,41 @@ class PriceMonitor:
             if not watchlist:
                 self._log("[monitor] Watchlist vacía — añade símbolos desde el dashboard")
             else:
-                for item in watchlist:
-                    if not self._running:
-                        break
-                    try:
-                        await self._check_symbol(item)
-                    except Exception as e:
-                        self._log(f"[monitor] Error revisando {item['symbol']}: {e}")
+                await self._check_all(watchlist)
 
-            try:
-                await asyncio.wait_for(
-                    _wait_or_stop(stop_event, poll_interval_seconds),
-                    timeout=poll_interval_seconds + 1,
-                )
-            except asyncio.TimeoutError:
-                pass
+            await _wait_or_stop(stop_event, poll_interval_seconds)
 
         self._log("[monitor] Monitorización detenida")
 
-    async def _check_symbol(self, item: dict):
-        symbol = item["symbol"]
-        threshold = item.get("threshold_pct", 2.0)
+    async def _check_all(self, watchlist: list[dict]):
+        """Consulta precios en batch y procesa los cambios detectados."""
+        symbols = [item["symbol"] for item in watchlist]
+        threshold_map = {item["symbol"]: item.get("threshold_pct", 2.0) for item in watchlist}
 
-        try:
-            bar = await self._alpaca.get_latest_bar(symbol)
-        except Exception as e:
-            self._log(f"[monitor] {symbol}: error obteniendo precio — {e}")
-            return
+        # Consultar precios en lotes de _SNAPSHOT_BATCH
+        snapshots: dict[str, dict] = {}
+        for i in range(0, len(symbols), _SNAPSHOT_BATCH):
+            batch = symbols[i: i + _SNAPSHOT_BATCH]
+            try:
+                batch_data = await self._alpaca.get_snapshots(batch)
+                snapshots.update(batch_data)
+            except Exception as e:
+                self._log(f"[monitor] Error en batch {batch[:3]}...: {e}")
 
-        current_price = bar["close"]
-        bar_time = bar.get("timestamp", "")
+        for symbol in symbols:
+            if not self._running:
+                break
+            snap = snapshots.get(symbol)
+            if not snap or snap.get("close") is None:
+                continue
+            await self._process_symbol(symbol, snap, threshold_map[symbol])
+
+    async def _process_symbol(self, symbol: str, snap: dict, threshold: float):
+        current_price = snap["close"]
+        bar_time = snap.get("timestamp") or ""
 
         last_price = self._storage.get_last_price(symbol)
-        self._storage.save_price_snapshot(symbol, current_price, bar.get("volume"), bar_time)
+        self._storage.save_price_snapshot(symbol, current_price, snap.get("volume"), bar_time)
 
         if last_price is None:
             self._log(f"[monitor] {symbol}: precio base registrado — ${current_price:.2f}")
@@ -86,12 +95,15 @@ class PriceMonitor:
 
         change_pct = abs((current_price - last_price) / last_price * 100)
         direction = "▲" if current_price > last_price else "▼"
-        self._log(f"[monitor] {symbol}: ${current_price:.2f} {direction} {change_pct:.2f}% (prev: ${last_price:.2f})")
+        self._log(
+            f"[monitor] {symbol}: ${current_price:.2f} {direction} {change_pct:.2f}%"
+            f" (prev: ${last_price:.2f})"
+        )
 
         if change_pct >= threshold:
             self._log(
-                f"[monitor] {symbol}: cambio {change_pct:.1f}% ≥ threshold {threshold}% "
-                f"→ disparando análisis"
+                f"[monitor] {symbol}: {change_pct:.1f}% ≥ threshold {threshold}%"
+                f" → disparando análisis"
             )
             await self._trigger_analysis(symbol, current_price, change_pct, last_price)
 
@@ -107,7 +119,6 @@ class PriceMonitor:
             f"review the portfolio, and decide: BUY, SELL, or HOLD."
         )
 
-        # Limpiar memoria del agente para análisis independiente
         await self._agent._context.memory.clear()
 
         try:
@@ -121,7 +132,6 @@ class PriceMonitor:
 
 
 async def _wait_or_stop(stop_event: asyncio.Event | None, seconds: int):
-    """Espera `seconds` segundos o hasta que stop_event se active."""
     if stop_event:
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=seconds)
@@ -129,6 +139,21 @@ async def _wait_or_stop(stop_event: asyncio.Event | None, seconds: int):
             pass
     else:
         await asyncio.sleep(seconds)
+
+
+async def _init_watchlist_from_alpaca(alpaca: AlpacaClient, storage: StorageLayer, log):
+    """
+    Pobla la watchlist con TODOS los activos negociables de Alpaca cuando
+    WATCHLIST_SYMBOLS no está definido.
+    """
+    log("[monitor] WATCHLIST_SYMBOLS no definido — obteniendo todos los activos de Alpaca...")
+    try:
+        assets = await alpaca.get_assets()
+        for asset in assets:
+            storage.upsert_watchlist(asset["symbol"], asset.get("name", ""))
+        log(f"[monitor] Watchlist inicializada con {len(assets)} activos de Alpaca")
+    except Exception as e:
+        log(f"[monitor] Error obteniendo activos de Alpaca: {e} — watchlist vacía")
 
 
 async def run_monitor(on_log=None, stop_event: asyncio.Event | None = None):
@@ -148,6 +173,9 @@ async def run_monitor(on_log=None, stop_event: asyncio.Event | None = None):
     trading_url = os.environ.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
     gnews_key = os.environ.get("GNEWS_API_KEY")
     ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    gmail_user = os.environ.get("GMAIL_USER")
+    gmail_pass = os.environ.get("GMAIL_APP_PASSWORD")
+    alert_recipient = os.environ.get("ALERT_RECIPIENT") or gmail_user
 
     if not api_key or not secret_key:
         log("[error] ALPACA_API_KEY y ALPACA_SECRET_KEY requeridas en .env")
@@ -165,16 +193,27 @@ async def run_monitor(on_log=None, stop_event: asyncio.Event | None = None):
     account = await alpaca.get_account()
     log(f"[monitor] Cuenta OK — equity: ${account['equity']:.2f} | cash: ${account['cash']:.2f}")
 
+    # Alerter de email (opcional)
+    alerter = None
+    if gmail_user and gmail_pass:
+        alerter = TradeAlerter(gmail_user, gmail_pass, alert_recipient)
+        log(f"[monitor] Alertas email habilitadas → {alert_recipient}")
+    else:
+        log("[monitor] GMAIL_USER / GMAIL_APP_PASSWORD no configurados — alertas email desactivadas")
+
     # Storage
     storage = StorageLayer(db_path="trading_agent.db")
 
-    # Rellenar watchlist desde .env si está vacía
+    # Inicializar watchlist
     watchlist = storage.get_watchlist()
     if not watchlist:
-        symbols_env = os.environ.get("WATCHLIST_SYMBOLS", "AAPL,MSFT,NVDA")
-        for sym in [s.strip().upper() for s in symbols_env.split(",") if s.strip()]:
-            storage.upsert_watchlist(sym)
-        log(f"[monitor] Watchlist inicializada desde .env: {symbols_env}")
+        symbols_env = os.environ.get("WATCHLIST_SYMBOLS", "").strip()
+        if symbols_env:
+            for sym in [s.strip().upper() for s in symbols_env.split(",") if s.strip()]:
+                storage.upsert_watchlist(sym)
+            log(f"[monitor] Watchlist inicializada desde .env: {symbols_env}")
+        else:
+            await _init_watchlist_from_alpaca(alpaca, storage, log)
 
     # Framework config
     config_path = Path(__file__).parent / "trading_agent.yaml"
@@ -200,7 +239,7 @@ async def run_monitor(on_log=None, stop_event: asyncio.Event | None = None):
 
     bus.subscribe("*", on_event)
 
-    # Leer configuración de trading del YAML
+    # Configuración de trading del YAML
     trading_opts = config.trading
     max_qty = trading_opts.get("max_qty_per_order", 10)
     poll_interval = trading_opts.get("poll_interval_seconds", 60)
@@ -214,6 +253,7 @@ async def run_monitor(on_log=None, stop_event: asyncio.Event | None = None):
         storage=storage,
         gnews_api_key=gnews_key,
         max_qty_per_order=max_qty,
+        alerter=alerter,
     )
 
     # Arrancar monitor
