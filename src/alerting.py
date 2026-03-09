@@ -37,7 +37,8 @@ class TradeAlerter:
                 server.login(self._user, self._password)
                 server.sendmail(self._user, self._recipient, msg.as_string())
             return True
-        except Exception:
+        except Exception as e:
+            print(f"[alerting] Error sending email: {type(e).__name__}: {e}")
             return False
 
     def _build_message(
