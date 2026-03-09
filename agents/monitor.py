@@ -235,7 +235,7 @@ async def run_monitor(on_log=None, stop_event: asyncio.Event | None = None):
         if event.type == EventType.MODEL_CALLED:
             log(f"[agent] Llamando al modelo ({trading_cfg.model})...")
         elif event.type == EventType.TOOL_CALLED:
-            log(f"[agent] Tool: {event.data.get('tool_name', '?')}")
+            log(f"[agent] Tool: {event.data.get('tool', '?')}")
 
     bus.subscribe("*", on_event)
 
