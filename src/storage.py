@@ -76,6 +76,29 @@ class StorageLayer:
                     active        INTEGER DEFAULT 1
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS symbol_states (
+                    symbol           TEXT PRIMARY KEY,
+                    state            TEXT NOT NULL DEFAULT 'WATCHING',
+                    last_analysis_at TEXT,
+                    analysis_summary TEXT,
+                    entry_signal_at  TEXT,
+                    target_price     REAL,
+                    stop_loss        REAL,
+                    position_qty     REAL,
+                    position_open_at TEXT,
+                    updated_at       TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS agent_reports (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol      TEXT NOT NULL,
+                    agent_name  TEXT NOT NULL,
+                    report      TEXT NOT NULL,
+                    created_at  TEXT NOT NULL
+                )
+            """)
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
@@ -242,3 +265,113 @@ class StorageLayer:
             conn.execute(
                 "UPDATE watchlist SET active = 0 WHERE symbol = ?", (symbol.upper(),)
             )
+
+    # ── Symbol states (máquina de estados por símbolo) ────────────────────────
+
+    def get_symbol_state(self, symbol: str) -> dict:
+        """Devuelve la fila de estado para el símbolo, o un estado por defecto (WATCHING)."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM symbol_states WHERE symbol = ?", (symbol.upper(),)
+            ).fetchone()
+        if row:
+            return dict(row)
+        return {
+            "symbol": symbol.upper(),
+            "state": "WATCHING",
+            "last_analysis_at": None,
+            "analysis_summary": None,
+            "entry_signal_at": None,
+            "target_price": None,
+            "stop_loss": None,
+            "position_qty": None,
+            "position_open_at": None,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def upsert_symbol_state(self, symbol: str, **kwargs):
+        """Crea o actualiza el estado de un símbolo. Los kwargs sobreescriben campos individuales."""
+        symbol = symbol.upper()
+        now = datetime.now(timezone.utc).isoformat()
+
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM symbol_states WHERE symbol = ?", (symbol,)
+            ).fetchone()
+
+            if existing is None:
+                # Insertar con defaults
+                conn.execute(
+                    """
+                    INSERT INTO symbol_states
+                        (symbol, state, last_analysis_at, analysis_summary,
+                         entry_signal_at, target_price, stop_loss,
+                         position_qty, position_open_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        symbol,
+                        kwargs.get("state", "WATCHING"),
+                        kwargs.get("last_analysis_at"),
+                        kwargs.get("analysis_summary"),
+                        kwargs.get("entry_signal_at"),
+                        kwargs.get("target_price"),
+                        kwargs.get("stop_loss"),
+                        kwargs.get("position_qty"),
+                        kwargs.get("position_open_at"),
+                        now,
+                    ),
+                )
+            else:
+                # Construir SET dinámico solo con los campos proporcionados
+                allowed = {
+                    "state", "last_analysis_at", "analysis_summary",
+                    "entry_signal_at", "target_price", "stop_loss",
+                    "position_qty", "position_open_at",
+                }
+                updates = {k: v for k, v in kwargs.items() if k in allowed}
+                updates["updated_at"] = now
+                set_clause = ", ".join(f"{k} = ?" for k in updates)
+                values = list(updates.values()) + [symbol]
+                conn.execute(
+                    f"UPDATE symbol_states SET {set_clause} WHERE symbol = ?",
+                    values,
+                )
+
+    def get_all_symbol_states(self) -> list[dict]:
+        """Devuelve el estado de todos los símbolos."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM symbol_states ORDER BY symbol"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── Agent reports ─────────────────────────────────────────────────────────
+
+    def save_agent_report(self, symbol: str, agent_name: str, report: str):
+        """Guarda el informe de un sub-agente para un símbolo."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_reports (symbol, agent_name, report, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (symbol.upper(), agent_name, report, datetime.now(timezone.utc).isoformat()),
+            )
+
+    def get_agent_reports(self, symbol: str, limit: int = 20) -> list[dict]:
+        """Devuelve el historial de informes de sub-agentes para un símbolo."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_reports
+                WHERE symbol = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (symbol.upper(), limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
