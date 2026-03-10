@@ -168,13 +168,18 @@ class AlpacaClient:
             async with session.delete(url) as resp:
                 resp.raise_for_status()
 
-    async def is_available(self) -> bool:
-        """Comprueba conectividad con la API de Alpaca."""
+    async def is_available(self) -> tuple[bool, str]:
+        """
+        Comprueba conectividad con la API de Alpaca.
+
+        Returns:
+            (True, "") si OK, (False, mensaje_de_error) si falla.
+        """
         try:
             await self.get_account()
-            return True
-        except Exception:
-            return False
+            return True, ""
+        except Exception as e:
+            return False, f"{type(e).__name__}: {e}"
 
     # ── Assets ────────────────────────────────────────────────────────────────
 

@@ -9,7 +9,8 @@ from conftest import requires_alpaca
 @requires_alpaca
 @pytest.mark.asyncio
 async def test_is_available(alpaca):
-    assert await alpaca.is_available() is True
+    ok, err = await alpaca.is_available()
+    assert ok is True, f"Alpaca no disponible: {err}"
 
 
 @requires_alpaca

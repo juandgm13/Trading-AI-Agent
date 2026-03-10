@@ -187,8 +187,10 @@ async def run_monitor(on_log=None, stop_event: asyncio.Event | None = None):
     # Inicializar Alpaca
     alpaca = AlpacaClient(api_key, secret_key, trading_url)
     log(f"[monitor] Conectando a Alpaca ({trading_url})...")
-    if not await alpaca.is_available():
-        log("[error] No se puede conectar con Alpaca — verifica las credenciales")
+    log(f"[monitor] API key: {api_key[:4]}...{api_key[-4:]}  |  Secret: {secret_key[:4]}...{secret_key[-4:]}")
+    ok, err = await alpaca.is_available()
+    if not ok:
+        log(f"[error] No se puede conectar con Alpaca: {err}")
         return
     account = await alpaca.get_account()
     log(f"[monitor] Cuenta OK — equity: ${account['equity']:.2f} | cash: ${account['cash']:.2f}")
