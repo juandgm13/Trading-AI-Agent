@@ -81,7 +81,7 @@ class AlpacaClient:
         }
 
     async def get_positions(self) -> list[dict]:
-        """Devuelve todas las posiciones abiertas."""
+        """Devuelve todas las posiciones abiertas (solo US equities, excluye crypto)."""
         url = f"{self._trading_url}/v2/positions"
         async with aiohttp.ClientSession(headers=self._headers) as session:
             async with session.get(url) as resp:
@@ -98,6 +98,7 @@ class AlpacaClient:
                 "unrealized_plpc": float(p.get("unrealized_plpc", 0)),
             }
             for p in data
+            if p.get("asset_class") == "us_equity"
         ]
 
     async def get_position(self, symbol: str) -> dict | None:
@@ -185,7 +186,7 @@ class AlpacaClient:
 
     async def get_assets(self, asset_class: str = "us_equity") -> list[dict]:
         """
-        Devuelve todos los activos activos y negociables en Alpaca.
+        Devuelve todos los activos activos y negociables en Alpaca (excluye crypto).
 
         Returns:
             Lista de dicts con {symbol, name} para cada activo negociable.
@@ -199,8 +200,26 @@ class AlpacaClient:
         return [
             {"symbol": a["symbol"], "name": a.get("name", "")}
             for a in data
-            if a.get("tradable") and a.get("status") == "active"
+            if a.get("tradable")
+            and a.get("status") == "active"
+            and a.get("exchange") != "CRYPTO"
+            and a.get("asset_class") == "us_equity"
         ]
+
+    def is_crypto(self, symbol: str) -> bool:
+        """
+        Heurística rápida para detectar símbolos de criptomonedas.
+
+        Alpaca usa formatos como BTC/USD, ETH/USD, BTCUSD para crypto.
+        """
+        symbol = symbol.upper().strip()
+        crypto_suffixes = ("/USD", "/USDT", "/BTC", "/ETH")
+        crypto_bases = {"BTC", "ETH", "SOL", "ADA", "DOGE", "XRP", "DOT", "AVAX", "MATIC"}
+        return (
+            any(symbol.endswith(s) for s in crypto_suffixes)
+            or symbol in crypto_bases
+            or "USD" in symbol and "/" in symbol
+        )
 
     async def get_snapshots(self, symbols: list[str]) -> dict[str, dict]:
         """
