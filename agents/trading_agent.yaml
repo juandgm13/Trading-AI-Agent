@@ -1,15 +1,27 @@
 models:
-  analyzer:
+  analyzer:          # news pipeline legacy
     provider: ollama
     model: qwen2.5:7b
     temperature: 0.1
     max_tokens: 512
 
-  trader:
+  technical:         # TechnicalAnalysisAgent
+    provider: ollama
+    model: qwen2.5:7b
+    temperature: 0.1
+    max_tokens: 1024
+
+  economics:         # EconomicsAgent
     provider: ollama
     model: qwen2.5:7b
     temperature: 0.2
-    max_tokens: 1024
+    max_tokens: 768
+
+  trader:            # TradingAgent (orquestador)
+    provider: ollama
+    model: qwen2.5:7b
+    temperature: 0.1
+    max_tokens: 512
 
 agents:
   trading_analyzer:
@@ -18,18 +30,26 @@ agents:
     model_role: analyzer
     description: "Analyzes financial news articles and returns structured JSON"
 
-  trading_decision_maker:
-    planner: react
-    tools:
-      - get_price
-      - search_news
-      - get_portfolio
-      - place_order
+  technical_analysis:
+    planner: simple
+    tools: []
+    model_role: technical
+    description: "Analyzes OHLCV bar data and returns technical signal JSON"
+
+  economics_analysis:
+    planner: simple
+    tools: []
+    model_role: economics
+    description: "Analyzes news sentiment and market context, returns JSON"
+
+  trading_orchestrator:
+    planner: simple
+    tools: []
     model_role: trader
-    max_iterations: 8
-    description: "ReAct agent that monitors prices, analyzes news, and executes trades"
+    description: "Evaluates sub-agent reports and decides BUY/SELL/HOLD"
 
 trading:
+  analysis_interval_hours: 4   # cada cuántas horas hacer análisis completo (WATCHING)
   max_qty_per_order: 10
   max_daily_trades: 5
   poll_interval_seconds: 60
