@@ -9,18 +9,18 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
-from agents.pipeline import run_pipeline_sync
 from agents.monitor import run_monitor_sync
 
 load_dotenv()
 
-# Stop event compartido para el monitor
+# Estado compartido del monitor
 _monitor_stop_event: asyncio.Event | None = None
+_monitor_force_event: asyncio.Event | None = None
 _monitor_thread: threading.Thread | None = None
 
 
 class _TextRedirector:
-    """Redirige stdout al widget de log de Tkinter."""
+    """Redirige mensajes de log al widget ScrolledText de Tkinter."""
 
     def __init__(self, widget: scrolledtext.ScrolledText):
         self.widget = widget
@@ -35,18 +35,12 @@ class _TextRedirector:
         pass
 
 
-def _run_pipeline(log: scrolledtext.ScrolledText, btn: tk.Button):
-    btn.configure(state="disabled")
-    redirector = _TextRedirector(log)
-
-    try:
-        run_pipeline_sync(on_log=lambda msg: redirector.write(msg + "\n"))
-    finally:
-        btn.configure(state="normal")
-
-
-def _toggle_monitor(log: scrolledtext.ScrolledText, btn: tk.Button):
-    global _monitor_stop_event, _monitor_thread
+def _toggle_monitor(
+    log: scrolledtext.ScrolledText,
+    btn_monitor: tk.Button,
+    btn_analyze: tk.Button,
+):
+    global _monitor_stop_event, _monitor_force_event, _monitor_thread
 
     redirector = _TextRedirector(log)
 
@@ -54,19 +48,22 @@ def _toggle_monitor(log: scrolledtext.ScrolledText, btn: tk.Button):
         # Detener monitor
         if _monitor_stop_event:
             _monitor_stop_event.set()
-        btn.configure(text="Monitor ON", bg="SystemButtonFace")
+        btn_monitor.configure(text="Monitor ON", bg="SystemButtonFace")
+        btn_analyze.configure(state="disabled")
         redirector.write("[monitor] Señal de parada enviada...\n")
     else:
         # Arrancar monitor en un thread nuevo con su propio event loop
         # asyncio.Event debe crearse dentro del thread donde se ejecuta el loop
-        btn.configure(text="Monitor OFF", bg="#ff6b6b")
+        btn_monitor.configure(text="Monitor OFF", bg="#ff6b6b")
+        btn_analyze.configure(state="normal")
         redirector.write("[monitor] Iniciando...\n")
 
         def monitor_thread_fn():
-            global _monitor_stop_event
+            global _monitor_stop_event, _monitor_force_event
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             _monitor_stop_event = asyncio.Event()
+            _monitor_force_event = asyncio.Event()
 
             def on_log(msg):
                 redirector.write(msg + "\n")
@@ -76,14 +73,28 @@ def _toggle_monitor(log: scrolledtext.ScrolledText, btn: tk.Button):
                     __import__("agents.monitor", fromlist=["run_monitor"]).run_monitor(
                         on_log=on_log,
                         stop_event=_monitor_stop_event,
+                        force_event=_monitor_force_event,
                     )
                 )
             finally:
                 loop.close()
-                btn.configure(text="Monitor ON", bg="SystemButtonFace")
+                btn_monitor.configure(text="Monitor ON", bg="SystemButtonFace")
+                btn_analyze.configure(state="disabled")
 
         _monitor_thread = threading.Thread(target=monitor_thread_fn, daemon=True)
         _monitor_thread.start()
+
+
+def _force_analysis(log: scrolledtext.ScrolledText):
+    """Envía señal de análisis inmediato al monitor activo."""
+    global _monitor_force_event
+    redirector = _TextRedirector(log)
+
+    if _monitor_force_event and _monitor_thread and _monitor_thread.is_alive():
+        _monitor_force_event.set()
+        redirector.write("[monitor] Análisis forzado solicitado — procesará en el próximo ciclo\n")
+    else:
+        redirector.write("[monitor] El monitor no está activo\n")
 
 
 def _open_dashboard():
@@ -115,25 +126,27 @@ def main():
 
     log = scrolledtext.ScrolledText(root, state="disabled", font=("Consolas", 10))
 
-    btn_run = tk.Button(
-        toolbar,
-        text="Ejecutar agente",
-        width=18,
-        height=2,
-        command=lambda: threading.Thread(
-            target=_run_pipeline, args=(log, btn_run), daemon=True
-        ).start(),
-    )
-    btn_run.pack(side="left", padx=4)
-
     btn_monitor = tk.Button(
         toolbar,
         text="Monitor ON",
         width=14,
         height=2,
-        command=lambda: _toggle_monitor(log, btn_monitor),
+    )
+
+    btn_analyze = tk.Button(
+        toolbar,
+        text="Analizar ahora",
+        width=16,
+        height=2,
+        state="disabled",
+        command=lambda: _force_analysis(log),
+    )
+
+    btn_monitor.configure(
+        command=lambda: _toggle_monitor(log, btn_monitor, btn_analyze)
     )
     btn_monitor.pack(side="left", padx=4)
+    btn_analyze.pack(side="left", padx=4)
 
     tk.Button(
         toolbar,

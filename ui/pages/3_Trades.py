@@ -31,9 +31,27 @@ selected_symbol = st.selectbox("Filtrar por símbolo", symbols)
 if selected_symbol != "Todos":
     df = df[df["symbol"] == selected_symbol]
 
+# Calcular P&L por trade (solo para pares buy→sell del mismo símbolo)
+df_sorted = df.sort_values("created_at")
+buy_prices: dict = {}
+pnl_list = []
+for _, row in df_sorted.iterrows():
+    sym = row["symbol"]
+    if row["side"] == "buy" and row.get("price"):
+        buy_prices[sym] = row["price"]
+        pnl_list.append(None)
+    elif row["side"] == "sell" and row.get("price") and sym in buy_prices:
+        pnl = (row["price"] - buy_prices[sym]) * row["qty"]
+        pnl_list.append(round(pnl, 2))
+        buy_prices.pop(sym, None)
+    else:
+        pnl_list.append(None)
+df_sorted["pnl"] = pnl_list
+df = df_sorted
+
 # Tabla
 st.dataframe(
-    df[["created_at", "symbol", "side", "qty", "price", "status", "trigger", "reason", "order_id"]]
+    df[["created_at", "symbol", "side", "qty", "price", "pnl", "status", "trigger", "reason", "order_id"]]
     .sort_values("created_at", ascending=False)
     .rename(columns={
         "created_at": "Fecha",
@@ -41,6 +59,7 @@ st.dataframe(
         "side": "Dirección",
         "qty": "Cantidad",
         "price": "Precio aprox.",
+        "pnl": "P&L ($)",
         "status": "Estado",
         "trigger": "Disparador",
         "reason": "Razón",

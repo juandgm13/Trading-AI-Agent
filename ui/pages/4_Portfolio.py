@@ -27,6 +27,8 @@ def _load_portfolio():
         positions = await client.get_positions()
         return account, positions
 
+
+
     try:
         return *asyncio.run(_fetch()), None
     except Exception as e:
@@ -58,6 +60,14 @@ if not positions:
 else:
     df = pd.DataFrame(positions)
     df["unrealized_plpc"] = df["unrealized_plpc"].map(lambda x: f"{x:.2f}%")
+
+    # Añadir target_price y stop_loss desde symbol_states
+    from src.storage import StorageLayer as _SL
+    _storage = _SL(db_path="trading_agent.db")
+    states = {s["symbol"]: s for s in _storage.get_all_symbol_states()}
+    df["target_price"] = df["symbol"].map(lambda s: states.get(s, {}).get("target_price"))
+    df["stop_loss"] = df["symbol"].map(lambda s: states.get(s, {}).get("stop_loss"))
+
     st.dataframe(
         df.rename(columns={
             "symbol": "Símbolo",
@@ -67,6 +77,8 @@ else:
             "market_value": "Valor mercado",
             "unrealized_pl": "P&L no realizado",
             "unrealized_plpc": "P&L %",
+            "target_price": "Target",
+            "stop_loss": "Stop-loss",
         }),
         use_container_width=True,
     )
