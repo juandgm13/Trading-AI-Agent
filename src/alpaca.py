@@ -36,7 +36,6 @@ class AlpacaClient:
         params = {
             "timeframe": timeframe,
             "limit": limit,
-            "feed": "iex",
             "sort": "desc",
         }
         async with aiohttp.ClientSession(headers=self._headers) as session:
@@ -203,7 +202,7 @@ class AlpacaClient:
             if a.get("tradable")
             and a.get("status") == "active"
             and a.get("exchange") != "CRYPTO"
-            and a.get("asset_class") == "us_equity"
+            and a.get("class") == "us_equity"
         ]
 
     def is_crypto(self, symbol: str) -> bool:

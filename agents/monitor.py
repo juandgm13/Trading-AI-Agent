@@ -62,7 +62,7 @@ class PriceMonitor:
         self._analysis_interval_hours = analysis_interval_hours
         self._alerter = alerter
         self._force_event = force_event
-        self._running = False
+        self._running = True
         self._force_analysis = False
 
     # ── Loop principal ────────────────────────────────────────────────────────
