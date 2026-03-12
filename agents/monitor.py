@@ -25,6 +25,13 @@ from src.alpaca import AlpacaClient
 from src.alerting import TradeAlerter
 from src.logger import get_logger, AgentLogger
 from src.storage import StorageLayer
+from src.response_parser import (
+    ParseError,
+    validate_technical_report,
+    validate_market_context,
+    validate_company_analysis,
+    validate_trading_decision,
+)
 
 from .technical_agent import build_technical_agent, build_medium_term_prompt, build_short_term_prompt, TECHNICAL_SYSTEM_PROMPT
 from .economics_agent import (
@@ -401,10 +408,13 @@ class PriceMonitor:
             bars = await self._alpaca.get_bars(symbol, timeframe="1Day", limit=90)
             prompt = build_medium_term_prompt(symbol, price, bars)
             response = await self._technical_agent.run(prompt)
-            report = _parse_json_response(response)
-            self._storage.save_agent_report(symbol, "technical_medium", json.dumps(report))
             self._logger.log_prompt("technical_medium", prompt, response, TECHNICAL_SYSTEM_PROMPT)
+            report = validate_technical_report(response)
+            self._storage.save_agent_report(symbol, "technical_medium", json.dumps(report))
             return report
+        except ParseError as e:
+            self._logger.error(f"{symbol}: TechnicalAgent (medium) respuesta inválida: {e}", source="monitor")
+            return None
         except Exception as e:
             self._logger.error(f"{symbol}: error en TechnicalAgent (medium): {e}", source="monitor", exc_info=True)
             return None
@@ -415,10 +425,13 @@ class PriceMonitor:
             bars = await self._alpaca.get_bars(symbol, timeframe="15Min", limit=96)  # ~5 días
             prompt = build_short_term_prompt(symbol, price, bars)
             response = await self._technical_agent.run(prompt)
-            report = _parse_json_response(response)
-            self._storage.save_agent_report(symbol, "technical_short", json.dumps(report))
             self._logger.log_prompt("technical_short", prompt, response, TECHNICAL_SYSTEM_PROMPT)
+            report = validate_technical_report(response)
+            self._storage.save_agent_report(symbol, "technical_short", json.dumps(report))
             return report
+        except ParseError as e:
+            self._logger.error(f"{symbol}: TechnicalAgent (short) respuesta inválida: {e}", source="monitor")
+            return None
         except Exception as e:
             self._logger.error(f"{symbol}: error en TechnicalAgent (short): {e}", source="monitor", exc_info=True)
             return None
@@ -452,15 +465,17 @@ class PriceMonitor:
 
             prompt = build_market_context_prompt(market_news)
             response = await self._market_context_agent.run(prompt)
-            report = _parse_json_response(response)
+            self._logger.log_prompt("market_context", prompt, response, MARKET_CONTEXT_SYSTEM_PROMPT)
+            report = validate_market_context(response)
 
             self._storage.save_market_context(json.dumps(report), len(market_news))
-            self._logger.log_prompt("market_context", prompt, response, MARKET_CONTEXT_SYSTEM_PROMPT)
             self._logger.info(
                 f"Contexto global actualizado — sentiment: {report.get('market_sentiment', '?')} | "
                 f"risk: {report.get('risk_appetite', '?')}",
                 source="monitor",
             )
+        except ParseError as e:
+            self._logger.error(f"MarketContextAgent respuesta inválida: {e}", source="monitor")
         except Exception as e:
             self._logger.error(f"Error actualizando contexto global: {e}", source="monitor", exc_info=True)
 
@@ -485,11 +500,14 @@ class PriceMonitor:
 
             prompt = build_company_analysis_prompt(symbol, company_news)
             response = await self._company_analysis_agent.run(prompt)
-            report = _parse_json_response(response)
+            self._logger.log_prompt("company_analysis", prompt, response, COMPANY_ANALYSIS_SYSTEM_PROMPT)
+            report = validate_company_analysis(response)
 
             self._storage.save_agent_report(symbol, "company_analysis", json.dumps(report))
-            self._logger.log_prompt("company_analysis", prompt, response, COMPANY_ANALYSIS_SYSTEM_PROMPT)
             return report
+        except ParseError as e:
+            self._logger.error(f"{symbol}: CompanyAnalysisAgent respuesta inválida: {e}", source="monitor")
+            return None
         except Exception as e:
             self._logger.error(f"{symbol}: error en company analysis: {e}", source="monitor", exc_info=True)
             return None
@@ -500,10 +518,13 @@ class PriceMonitor:
         """Ejecuta el TradingAgent orquestador y devuelve la decisión parseada."""
         try:
             response = await self._trading_agent.run(prompt)
-            decision = _parse_json_response(response)
-            self._storage.save_agent_report(symbol, f"trading_{stage}", json.dumps(decision))
             self._logger.log_prompt(f"trading_{stage}", prompt, response, TRADING_ORCHESTRATOR_PROMPT)
+            decision = validate_trading_decision(response)
+            self._storage.save_agent_report(symbol, f"trading_{stage}", json.dumps(decision))
             return decision
+        except ParseError as e:
+            self._logger.error(f"{symbol}: TradingAgent ({stage}) respuesta inválida: {e}", source="monitor")
+            return None
         except Exception as e:
             self._logger.error(f"{symbol}: error en TradingAgent ({stage}): {e}", source="monitor", exc_info=True)
             return None
@@ -513,26 +534,6 @@ class PriceMonitor:
 
 
 # ── Utilidades ────────────────────────────────────────────────────────────────
-
-def _parse_json_response(text: str) -> dict:
-    """Extrae el primer bloque JSON de una respuesta de texto."""
-    import re
-    if not text:
-        return {}
-    # Intentar parsear directamente
-    try:
-        return json.loads(text.strip())
-    except json.JSONDecodeError:
-        pass
-    # Buscar bloque JSON con regex
-    match = re.search(r"\{[\s\S]*\}", text)
-    if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            pass
-    return {}
-
 
 def _parse_news_list(raw: str) -> list[dict]:
     """Extrae la lista de artículos del JSON devuelto por SearchNewsTool."""

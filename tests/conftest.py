@@ -5,8 +5,8 @@ Los tests que requieren credenciales reales se saltan automáticamente
 si las variables de entorno no están configuradas.
 """
 import os
-import tempfile
 import pytest
+import urllib.request
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -23,12 +23,22 @@ def _has_gnews() -> bool:
 def _has_gmail() -> bool:
     return bool(os.environ.get("GMAIL_USER") and os.environ.get("GMAIL_APP_PASSWORD"))
 
+def _has_ollama() -> bool:
+    """Comprueba si Ollama está corriendo en la URL configurada."""
+    url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    try:
+        urllib.request.urlopen(f"{url}/api/tags", timeout=2)
+        return True
+    except Exception:
+        return False
+
 
 # ── Markers ───────────────────────────────────────────────────────────────────
 
 requires_alpaca = pytest.mark.skipif(not _has_alpaca(), reason="ALPACA_API_KEY / ALPACA_SECRET_KEY no configuradas")
 requires_gnews  = pytest.mark.skipif(not _has_gnews(),  reason="GNEWS_API_KEY no configurada")
 requires_gmail  = pytest.mark.skipif(not _has_gmail(),  reason="GMAIL_USER / GMAIL_APP_PASSWORD no configuradas")
+requires_ollama = pytest.mark.skipif(not _has_ollama(), reason="Ollama no está corriendo")
 requires_all    = pytest.mark.skipif(
     not (_has_alpaca() and _has_gnews()),
     reason="Requiere ALPACA y GNEWS configuradas",
