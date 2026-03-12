@@ -100,14 +100,20 @@ class AgentLogger:
         if self._on_log:
             self._on_log(f"[ERROR] {full}")
 
-    def log_prompt(self, agent_name: str, prompt: str, response: str):
-        """Registra prompt enviado al LLM y la respuesta recibida en prompts.log."""
-        entry = (
-            f"=== {agent_name} ===\n"
-            f"PROMPT:\n{prompt}\n\n"
-            f"RESPONSE:\n{response}"
-        )
-        self._prompt_logger.debug(entry)
+    def log_prompt(
+        self,
+        agent_name: str,
+        prompt: str,
+        response: str,
+        system_prompt: str = "",
+    ):
+        """Registra el contenido completo enviado al LLM y la respuesta recibida."""
+        parts = [f"=== {agent_name} ==="]
+        if system_prompt:
+            parts.append(f"SYSTEM PROMPT:\n{system_prompt}")
+        parts.append(f"USER PROMPT:\n{prompt}")
+        parts.append(f"RESPONSE:\n{response}")
+        self._prompt_logger.debug("\n\n".join(parts))
 
 
 def get_logger(on_log=None) -> AgentLogger:

@@ -26,14 +26,16 @@ from src.alerting import TradeAlerter
 from src.logger import get_logger, AgentLogger
 from src.storage import StorageLayer
 
-from .technical_agent import build_technical_agent, build_medium_term_prompt, build_short_term_prompt
+from .technical_agent import build_technical_agent, build_medium_term_prompt, build_short_term_prompt, TECHNICAL_SYSTEM_PROMPT
 from .economics_agent import (
     build_market_context_agent,
     build_company_analysis_agent,
     build_market_context_prompt,
     build_company_analysis_prompt,
+    MARKET_CONTEXT_SYSTEM_PROMPT,
+    COMPANY_ANALYSIS_SYSTEM_PROMPT,
 )
-from .trading_agent import build_trading_orchestrator, build_opportunity_prompt, build_entry_prompt
+from .trading_agent import build_trading_orchestrator, build_opportunity_prompt, build_entry_prompt, TRADING_ORCHESTRATOR_PROMPT
 
 # Máximo de símbolos por llamada a snapshots (límite de la API de Alpaca)
 _SNAPSHOT_BATCH = 100
@@ -401,7 +403,7 @@ class PriceMonitor:
             response = await self._technical_agent.run(prompt)
             report = _parse_json_response(response)
             self._storage.save_agent_report(symbol, "technical_medium", json.dumps(report))
-            self._logger.log_prompt("technical_medium", prompt, response)
+            self._logger.log_prompt("technical_medium", prompt, response, TECHNICAL_SYSTEM_PROMPT)
             return report
         except Exception as e:
             self._logger.error(f"{symbol}: error en TechnicalAgent (medium): {e}", source="monitor", exc_info=True)
@@ -415,7 +417,7 @@ class PriceMonitor:
             response = await self._technical_agent.run(prompt)
             report = _parse_json_response(response)
             self._storage.save_agent_report(symbol, "technical_short", json.dumps(report))
-            self._logger.log_prompt("technical_short", prompt, response)
+            self._logger.log_prompt("technical_short", prompt, response, TECHNICAL_SYSTEM_PROMPT)
             return report
         except Exception as e:
             self._logger.error(f"{symbol}: error en TechnicalAgent (short): {e}", source="monitor", exc_info=True)
@@ -453,7 +455,7 @@ class PriceMonitor:
             report = _parse_json_response(response)
 
             self._storage.save_market_context(json.dumps(report), len(market_news))
-            self._logger.log_prompt("market_context", prompt, response)
+            self._logger.log_prompt("market_context", prompt, response, MARKET_CONTEXT_SYSTEM_PROMPT)
             self._logger.info(
                 f"Contexto global actualizado — sentiment: {report.get('market_sentiment', '?')} | "
                 f"risk: {report.get('risk_appetite', '?')}",
@@ -486,7 +488,7 @@ class PriceMonitor:
             report = _parse_json_response(response)
 
             self._storage.save_agent_report(symbol, "company_analysis", json.dumps(report))
-            self._logger.log_prompt("company_analysis", prompt, response)
+            self._logger.log_prompt("company_analysis", prompt, response, COMPANY_ANALYSIS_SYSTEM_PROMPT)
             return report
         except Exception as e:
             self._logger.error(f"{symbol}: error en company analysis: {e}", source="monitor", exc_info=True)
@@ -500,7 +502,7 @@ class PriceMonitor:
             response = await self._trading_agent.run(prompt)
             decision = _parse_json_response(response)
             self._storage.save_agent_report(symbol, f"trading_{stage}", json.dumps(decision))
-            self._logger.log_prompt(f"trading_{stage}", prompt, response)
+            self._logger.log_prompt(f"trading_{stage}", prompt, response, TRADING_ORCHESTRATOR_PROMPT)
             return decision
         except Exception as e:
             self._logger.error(f"{symbol}: error en TradingAgent ({stage}): {e}", source="monitor", exc_info=True)
