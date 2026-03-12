@@ -61,6 +61,7 @@ async def build_technical_agent(
         .tools([])
         .model_role("technical")
         .system_prompt(TECHNICAL_SYSTEM_PROMPT)
+        .stateless()
         .with_config(config)
         .with_event_bus(bus)
         .with_model_registry(model_registry)

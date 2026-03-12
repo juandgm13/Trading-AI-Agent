@@ -33,16 +33,14 @@ from src.response_parser import (
     validate_trading_decision,
 )
 
-from .technical_agent import build_technical_agent, build_medium_term_prompt, build_short_term_prompt, TECHNICAL_SYSTEM_PROMPT
+from .technical_agent import build_technical_agent, build_medium_term_prompt, build_short_term_prompt
 from .economics_agent import (
     build_market_context_agent,
     build_company_analysis_agent,
     build_market_context_prompt,
     build_company_analysis_prompt,
-    MARKET_CONTEXT_SYSTEM_PROMPT,
-    COMPANY_ANALYSIS_SYSTEM_PROMPT,
 )
-from .trading_agent import build_trading_orchestrator, build_opportunity_prompt, build_entry_prompt, TRADING_ORCHESTRATOR_PROMPT
+from .trading_agent import build_trading_orchestrator, build_opportunity_prompt, build_entry_prompt
 
 # Máximo de símbolos por llamada a snapshots (límite de la API de Alpaca)
 _SNAPSHOT_BATCH = 100
@@ -408,7 +406,6 @@ class PriceMonitor:
             bars = await self._alpaca.get_bars(symbol, timeframe="1Day", limit=90)
             prompt = build_medium_term_prompt(symbol, price, bars)
             response = await self._technical_agent.run(prompt)
-            self._logger.log_prompt("technical_medium", prompt, response, TECHNICAL_SYSTEM_PROMPT)
             report = validate_technical_report(response)
             self._storage.save_agent_report(symbol, "technical_medium", json.dumps(report))
             return report
@@ -425,7 +422,6 @@ class PriceMonitor:
             bars = await self._alpaca.get_bars(symbol, timeframe="15Min", limit=96)  # ~5 días
             prompt = build_short_term_prompt(symbol, price, bars)
             response = await self._technical_agent.run(prompt)
-            self._logger.log_prompt("technical_short", prompt, response, TECHNICAL_SYSTEM_PROMPT)
             report = validate_technical_report(response)
             self._storage.save_agent_report(symbol, "technical_short", json.dumps(report))
             return report
@@ -465,7 +461,6 @@ class PriceMonitor:
 
             prompt = build_market_context_prompt(market_news)
             response = await self._market_context_agent.run(prompt)
-            self._logger.log_prompt("market_context", prompt, response, MARKET_CONTEXT_SYSTEM_PROMPT)
             report = validate_market_context(response)
 
             self._storage.save_market_context(json.dumps(report), len(market_news))
@@ -500,7 +495,6 @@ class PriceMonitor:
 
             prompt = build_company_analysis_prompt(symbol, company_news)
             response = await self._company_analysis_agent.run(prompt)
-            self._logger.log_prompt("company_analysis", prompt, response, COMPANY_ANALYSIS_SYSTEM_PROMPT)
             report = validate_company_analysis(response)
 
             self._storage.save_agent_report(symbol, "company_analysis", json.dumps(report))
@@ -518,7 +512,6 @@ class PriceMonitor:
         """Ejecuta el TradingAgent orquestador y devuelve la decisión parseada."""
         try:
             response = await self._trading_agent.run(prompt)
-            self._logger.log_prompt(f"trading_{stage}", prompt, response, TRADING_ORCHESTRATOR_PROMPT)
             decision = validate_trading_decision(response)
             self._storage.save_agent_report(symbol, f"trading_{stage}", json.dumps(decision))
             return decision
@@ -674,11 +667,17 @@ async def run_monitor(
 
     async def on_event(event):
         if event.type == EventType.MODEL_CALLED:
-            logger.debug(f"Llamando al modelo...", source="agent")
+            logger.debug(f"Llamando al modelo ({event.data.get('role', '?')})...", source="agent")
+        elif event.type == EventType.MODEL_FINISHED:
+            data = event.data
+            logger.log_prompt(
+                agent_name=data.get("role", "unknown"),
+                prompt=data.get("prompt", ""),
+                response=data.get("response", ""),
+                system_prompt=data.get("system_prompt", ""),
+            )
         elif event.type == EventType.TOOL_CALLED:
             logger.debug(f"Tool: {event.data.get('tool', '?')}", source="agent")
-        elif event.type == EventType.MODEL_FINISHED:
-            pass  # Los prompts se registran en los métodos _run_*
 
     bus.subscribe("*", on_event)
 
