@@ -27,7 +27,12 @@ from src.logger import get_logger, AgentLogger
 from src.storage import StorageLayer
 
 from .technical_agent import build_technical_agent, build_medium_term_prompt, build_short_term_prompt
-from .economics_agent import build_economics_agent, build_economics_prompt
+from .economics_agent import (
+    build_market_context_agent,
+    build_company_analysis_agent,
+    build_market_context_prompt,
+    build_company_analysis_prompt,
+)
 from .trading_agent import build_trading_orchestrator, build_opportunity_prompt, build_entry_prompt
 
 # Máximo de símbolos por llamada a snapshots (límite de la API de Alpaca)
@@ -42,7 +47,8 @@ class PriceMonitor:
         alpaca: AlpacaClient,
         storage: StorageLayer,
         technical_agent,
-        economics_agent,
+        market_context_agent,
+        company_analysis_agent,
         trading_agent,
         logger: AgentLogger,
         gnews_api_key: str,
@@ -54,7 +60,8 @@ class PriceMonitor:
         self._alpaca = alpaca
         self._storage = storage
         self._technical_agent = technical_agent
-        self._economics_agent = economics_agent
+        self._market_context_agent = market_context_agent
+        self._company_analysis_agent = company_analysis_agent
         self._trading_agent = trading_agent
         self._logger = logger
         self._gnews_api_key = gnews_api_key
@@ -107,6 +114,9 @@ class PriceMonitor:
 
     async def _check_all(self, watchlist: list[dict]):
         """Consulta precios en batch y procesa los cambios detectados."""
+        # Actualizar contexto global de mercado si corresponde
+        await self._maybe_update_market_context()
+
         symbols = [item["symbol"] for item in watchlist]
 
         # Consultar precios en lotes de _SNAPSHOT_BATCH
@@ -200,7 +210,7 @@ class PriceMonitor:
     # ── Estado: WATCHING ──────────────────────────────────────────────────────
 
     async def _full_analysis(self, symbol: str, price: float) -> str | None:
-        """Análisis completo: TechnicalAgent (medio plazo) + EconomicsAgent → TradingAgent."""
+        """Análisis completo: TechnicalAgent (medio plazo) + market context global → TradingAgent."""
         self._logger.info(f"{symbol}: iniciando análisis completo", source="monitor")
 
         # 1. TechnicalAgent — medio plazo (90 días diarios)
@@ -209,18 +219,20 @@ class PriceMonitor:
             self._logger.warning(f"{symbol}: análisis técnico falló — saltando", source="monitor")
             return None
 
-        # 2. EconomicsAgent — noticias del símbolo + mercado
-        econ_report = await self._run_economics(symbol)
-        if econ_report is None:
-            self._logger.warning(f"{symbol}: análisis económico falló — usando neutral", source="monitor")
-            econ_report = {"sentiment": "NEUTRAL", "market_context": "NEUTRAL", "key_events": [], "confidence": 0, "summary": "No data"}
+        # 2. Market context global — leer el último informe de la BD
+        market_context = self._load_market_context()
+        self._logger.debug(
+            f"{symbol}: market context — sentiment: {market_context.get('market_sentiment', 'N/A') if market_context else 'sin datos'}",
+            source="monitor",
+        )
 
         # 3. TradingAgent — decide si hay oportunidad
-        prompt = build_opportunity_prompt(symbol, price, tech_report, econ_report, self._max_qty)
+        prompt = build_opportunity_prompt(symbol, price, tech_report, market_context, self._max_qty)
         decision = await self._run_trading_decision(symbol, "opportunity_eval", prompt)
 
         now = datetime.now(timezone.utc).isoformat()
-        summary = f"Tech: {tech_report.get('trend')} | Econ: {econ_report.get('sentiment')}"
+        market_sentiment = market_context.get("market_sentiment", "N/A") if market_context else "N/A"
+        summary = f"Tech: {tech_report.get('trend')} | Market: {market_sentiment}"
 
         self._storage.upsert_symbol_state(
             symbol,
@@ -250,7 +262,12 @@ class PriceMonitor:
             self._logger.warning(f"{symbol}: análisis técnico corto falló", source="monitor")
             return None
 
-        prompt = build_entry_prompt(symbol, price, tech_report, self._max_qty)
+        # Company analysis — noticias recientes de la empresa para evaluar riesgo de entrada
+        company_report = await self._run_company_analysis(symbol)
+        if company_report is None:
+            self._logger.warning(f"{symbol}: company analysis falló — continuando sin él", source="monitor")
+
+        prompt = build_entry_prompt(symbol, price, tech_report, company_report, self._max_qty)
         decision = await self._run_trading_decision(symbol, "entry_eval", prompt)
 
         if not decision:
@@ -404,26 +421,75 @@ class PriceMonitor:
             self._logger.error(f"{symbol}: error en TechnicalAgent (short): {e}", source="monitor", exc_info=True)
             return None
 
-    async def _run_economics(self, symbol: str) -> dict | None:
-        """Ejecuta EconomicsAgent con noticias del símbolo + mercado general."""
+    # ── Market context global ──────────────────────────────────────────────────
+
+    async def _maybe_update_market_context(self) -> None:
+        """Actualiza el informe de contexto global de mercado si ha pasado el intervalo."""
+        ctx = self._storage.get_latest_market_context()
+        if ctx and not self._force_analysis:
+            try:
+                last_dt = datetime.fromisoformat(ctx["created_at"])
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                elapsed_hours = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
+                if elapsed_hours < self._analysis_interval_hours:
+                    return
+            except Exception:
+                pass
+        await self._run_market_context()
+
+    async def _run_market_context(self) -> None:
+        """Obtiene noticias generales y genera el informe holístico de contexto global."""
+        self._logger.info("Actualizando contexto global de mercado...", source="monitor")
+        try:
+            from .tools.news_tool import SearchNewsTool
+            news_tool = SearchNewsTool(self._gnews_api_key)
+
+            market_raw = await news_tool.execute("stock market economy")
+            market_news = _parse_news_list(market_raw)
+
+            prompt = build_market_context_prompt(market_news)
+            response = await self._market_context_agent.run(prompt)
+            report = _parse_json_response(response)
+
+            self._storage.save_market_context(json.dumps(report), len(market_news))
+            self._logger.log_prompt("market_context", prompt, response)
+            self._logger.info(
+                f"Contexto global actualizado — sentiment: {report.get('market_sentiment', '?')} | "
+                f"risk: {report.get('risk_appetite', '?')}",
+                source="monitor",
+            )
+        except Exception as e:
+            self._logger.error(f"Error actualizando contexto global: {e}", source="monitor", exc_info=True)
+
+    def _load_market_context(self) -> dict | None:
+        """Lee el último informe de contexto global de la BD y lo deserializa."""
+        ctx_row = self._storage.get_latest_market_context()
+        if not ctx_row:
+            return None
+        try:
+            return json.loads(ctx_row["report"])
+        except Exception:
+            return None
+
+    async def _run_company_analysis(self, symbol: str) -> dict | None:
+        """Obtiene noticias de la empresa y genera un informe breve de riesgo de entrada."""
         try:
             from .tools.news_tool import SearchNewsTool
             news_tool = SearchNewsTool(self._gnews_api_key)
 
             company_raw = await news_tool.execute(symbol)
-            market_raw = await news_tool.execute("stock market")
-
             company_news = _parse_news_list(company_raw)
-            market_news = _parse_news_list(market_raw)
 
-            prompt = build_economics_prompt(symbol, company_news, market_news)
-            response = await self._economics_agent.run(prompt)
+            prompt = build_company_analysis_prompt(symbol, company_news)
+            response = await self._company_analysis_agent.run(prompt)
             report = _parse_json_response(response)
-            self._storage.save_agent_report(symbol, "economics", json.dumps(report))
-            self._logger.log_prompt("economics", prompt, response)
+
+            self._storage.save_agent_report(symbol, "company_analysis", json.dumps(report))
+            self._logger.log_prompt("company_analysis", prompt, response)
             return report
         except Exception as e:
-            self._logger.error(f"{symbol}: error en EconomicsAgent: {e}", source="monitor", exc_info=True)
+            self._logger.error(f"{symbol}: error en company analysis: {e}", source="monitor", exc_info=True)
             return None
 
     async def _run_trading_decision(
@@ -615,7 +681,8 @@ async def run_monitor(
 
     # Construir sub-agentes
     technical_agent = await build_technical_agent(config, bus, model_registry)
-    economics_agent = await build_economics_agent(config, bus, model_registry)
+    market_context_agent = await build_market_context_agent(config, bus, model_registry)
+    company_analysis_agent = await build_company_analysis_agent(config, bus, model_registry)
     trading_agent = await build_trading_orchestrator(config, bus, model_registry)
 
     # Arrancar monitor
@@ -623,7 +690,8 @@ async def run_monitor(
         alpaca=alpaca,
         storage=storage,
         technical_agent=technical_agent,
-        economics_agent=economics_agent,
+        market_context_agent=market_context_agent,
+        company_analysis_agent=company_analysis_agent,
         trading_agent=trading_agent,
         logger=logger,
         gnews_api_key=gnews_key,

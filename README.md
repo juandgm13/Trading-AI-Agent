@@ -11,15 +11,19 @@ Autonomous trading agent that monitors stock prices in real time using a **multi
 Each symbol has an independent state machine managed by `PriceMonitor`:
 
 ```
+Global market context (every analysis_interval_hours, default: 4h)
+  MarketContextAgent fetches general market news → holistic sentiment report (persisted in DB)
+
 WATCHING ──────────────────────────────────────────────┐
     │  (every analysis_interval_hours, default: 4h)    │
     │  TechnicalAgent (90-day daily bars)               │
-    │  EconomicsAgent (news + market context)           │
+    │  + global market context (read from DB)           │
     │  TradingAgent evaluates → opportunity?            │
     ▼                                                   │
 OPPORTUNITY_FOUND                                       │
     │  (every poll cycle, default: 60s)                │
     │  TechnicalAgent (5-day 15-min bars)               │
+    │  CompanyAnalysisAgent (company-specific news)     │
     │  TradingAgent decides → open position?            │
     ▼                                    │ REJECT        │
 POSITION_OPEN ◄──────────────────────────┘              │
@@ -33,10 +37,15 @@ POSITION_OPEN ◄─────────────────────
 | Agent | File | Output |
 |---|---|---|
 | `TechnicalAnalysisAgent` | `agents/technical_agent.py` | `{trend, signal, target_price, stop_loss, confidence, summary}` |
-| `EconomicsAgent` | `agents/economics_agent.py` | `{sentiment, market_context, key_events, confidence, summary}` |
+| `MarketContextAgent` | `agents/economics_agent.py` | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
+| `CompanyAnalysisAgent` | `agents/economics_agent.py` | `{sentiment, key_events, entry_risk, confidence, summary}` |
 | `TradingAgent` (orchestrator) | `agents/trading_agent.py` | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty, reasoning}` |
 
 The monitor pre-fetches all data (OHLCV bars via Alpaca, news via GNews) and injects it into each agent's prompt. Agents are pure text analyzers — no tool loops.
+
+**News analysis is split into two specialized roles:**
+- **MarketContextAgent** — runs every 4h, fetches general market news and produces a holistic macro view (sentiment, risk appetite, dominant themes). Shared across all symbols.
+- **CompanyAnalysisAgent** — runs on demand when a symbol reaches `OPPORTUNITY_FOUND`, fetches company-specific news and assesses entry risk (`LOW / MEDIUM / HIGH`).
 
 ### System diagram
 
@@ -56,18 +65,19 @@ The monitor pre-fetches all data (OHLCV bars via Alpaca, news via GNews) and inj
         ┌──────────────────────────────┐
         │      Sub-agent pipeline      │
         │  TechnicalAgent              │
-        │  EconomicsAgent              │
+        │  MarketContextAgent (4h)     │
+        │  CompanyAnalysisAgent (entry)│
         │  TradingAgent (orchestrator) │
         └──────────────┬───────────────┘
                        │ OPEN_POSITION
               ┌────────▼────────┐
               │   Alpaca API    │
-              │  (paper trade)  │
+              │ (paper / live)  │
               └────────┬────────┘
          ┌─────────────┼─────────────┐
          ▼             ▼             ▼
     SQLite DB      Gmail SMTP    logs/
-    (6 tables)    (HTML alerts)  agent.log
+    (7 tables)    (HTML alerts)  agent.log
                                 prompts.log
 ```
 
@@ -81,7 +91,7 @@ The monitor pre-fetches all data (OHLCV bars via Alpaca, news via GNews) and inj
 | **Agent Framework** | Custom local: `AgentBuilder` + `OllamaProvider` + `EventBus` + `SimplePlanner` |
 | **Market data + trading** | [Alpaca Markets](https://alpaca.markets/) — paper trading + Data API |
 | **News** | GNews API (free tier) |
-| **Database** | SQLite (stdlib) — 6 tables |
+| **Database** | SQLite (stdlib) — 7 tables |
 | **Logging** | `AgentLogger` — rotating files, configurable level, Tkinter callback |
 | **Alerts** | Gmail SMTP with App Password |
 | **Desktop UI** | Tkinter |
@@ -96,7 +106,7 @@ The monitor pre-fetches all data (OHLCV bars via Alpaca, news via GNews) and inj
 Trading-AI-Agent/
 ├── src/
 │   ├── alpaca.py          # AlpacaClient async (prices, orders, assets) — crypto filtered
-│   ├── storage.py         # StorageLayer — SQLite (6 tables)
+│   ├── storage.py         # StorageLayer — SQLite (7 tables)
 │   ├── logger.py          # AgentLogger — structured logging (agent.log + prompts.log)
 │   ├── ingestion.py       # NewsIngestionModule + Article dataclass
 │   └── alerting.py        # TradeAlerter — HTML trade email notifications
@@ -104,9 +114,9 @@ Trading-AI-Agent/
 ├── agents/
 │   ├── monitor.py         # PriceMonitor — state machine loop
 │   ├── technical_agent.py # TechnicalAnalysisAgent + prompt builders
-│   ├── economics_agent.py # EconomicsAgent + prompt builders
+│   ├── economics_agent.py # MarketContextAgent + CompanyAnalysisAgent + prompt builders
 │   ├── trading_agent.py   # TradingAgent (orchestrator) + prompt builders
-│   ├── trading_agent.yaml # Config: 4 model roles + trading params
+│   ├── trading_agent.yaml # Config: model roles + trading params
 │   ├── pipeline.py        # Legacy news pipeline (SimplePlanner)
 │   ├── trader.py          # Legacy ReAct agent
 │   └── tools/
@@ -117,7 +127,8 @@ Trading-AI-Agent/
 │       └── historical_bars_tool.py   # get_historical_bars → Alpaca OHLCV
 │
 ├── ui/
-│   ├── app.py                  # Main dashboard (metrics)
+│   ├── app.py                  # Summary dashboard (market context, states, trades)
+│   ├── components.py           # Shared UI components (paper/live trading banner)
 │   └── pages/
 │       ├── 1_Articulos.py      # Analyzed articles + filters
 │       ├── 2_Precios.py        # Price history per symbol
@@ -129,7 +140,7 @@ Trading-AI-Agent/
 ├── tests/
 │   ├── conftest.py             # Shared fixtures and skip markers
 │   ├── test_storage.py         # 20 tests · no credentials needed
-│   ├── test_monitor.py         # 12 tests · mocked (no credentials needed)
+│   ├── test_monitor.py         # 13 tests · mocked (no credentials needed)
 │   ├── test_alerting.py        # 5 tests  · mock SMTP + optional real email
 │   ├── test_tools.py           # 12 tests · validations + mocks + integration
 │   ├── test_alpaca.py          # 9 tests  · require ALPACA_API_KEY
@@ -162,13 +173,16 @@ trades           (id, symbol, side, qty, price, order_id, status,
 -- Monitored symbols
 watchlist        (symbol PK, company, threshold_pct, active)
 
--- State machine per symbol (NEW)
+-- State machine per symbol
 symbol_states    (symbol PK, state, last_analysis_at, analysis_summary,
                   entry_signal_at, target_price, stop_loss,
                   position_qty, position_open_at, updated_at)
 
--- Sub-agent report history (NEW)
+-- Sub-agent report history (per symbol)
 agent_reports    (id, symbol, agent_name, report, created_at)
+
+-- Global market context reports (updated every 4h)
+market_context   (id, report, news_count, created_at)
 ```
 
 ---
@@ -182,7 +196,7 @@ agent_reports    (id, symbol, agent_name, report, created_at)
 - [Alpaca Markets](https://alpaca.markets/) account (free paper trading)
 - [GNews](https://gnews.io/) API key (free tier)
 - Gmail with [App Password](https://support.google.com/accounts/answer/185833) (optional, for trade alerts)
-- [Agent-Framework](https://github.com/juandavidlozano/Agent-Framework) repo cloned at `../Agent-Framework`
+- `agent-framework` package installed (local dependency)
 
 ### Python environment
 
@@ -203,7 +217,7 @@ ollama pull qwen2.5:7b
 Copy `.env.example` to `.env` and fill in your values:
 
 ```bash
-# Alpaca paper trading
+# Alpaca — use paper-api for paper trading, api for live
 ALPACA_API_KEY=your_key
 ALPACA_SECRET_KEY=your_secret
 ALPACA_BASE_URL=https://paper-api.alpaca.markets
@@ -243,6 +257,18 @@ python main.py
 | **Open dashboard** | Launch Streamlit dashboard in browser |
 | **Clear log** | Clear the log area |
 
+### Dashboard pages
+
+| Page | Content |
+|---|---|
+| **Summary** | Global market context (sentiment, risk appetite, themes), symbol states overview, open positions, recent trades. Shows a banner indicating paper vs live mode. |
+| **Artículos** | Legacy news articles table |
+| **Precios** | Price history chart per symbol |
+| **Trades** | Full trade history with P&L |
+| **Portfolio** | Live Alpaca positions |
+| **Watchlist** | Add / remove monitored symbols |
+| **Estados** | Symbol state machine + per-agent report history |
+
 ### Monitor configuration (`agents/trading_agent.yaml`)
 
 ```yaml
@@ -261,7 +287,7 @@ models:
     model: qwen2.5:7b
     temperature: 0.1
     max_tokens: 1024
-  economics:   # EconomicsAgent
+  economics:   # MarketContextAgent + CompanyAnalysisAgent
     model: qwen2.5:7b
     temperature: 0.2
     max_tokens: 768
@@ -279,7 +305,8 @@ Logs are written to `logs/` (auto-created):
 
 ```
 [INFO] [monitor] Ciclo inicio — 42 símbolos a monitorizar
-[INFO] [monitor] Ciclo fin — 1 alertas: AAPL → OPPORTUNITY_FOUND
+[INFO] [monitor] Contexto global actualizado — sentiment: BULLISH | risk: RISK_ON
+[INFO] [monitor] AAPL: oportunidad detectada → OPPORTUNITY_FOUND
 [DEBUG] [monitor] MSFT: $320.50 | estado: WATCHING
 ```
 
@@ -311,10 +338,11 @@ Tests that require credentials are **automatically skipped** if the correspondin
 ## Design Principles
 
 - **State machine per symbol**: each symbol moves independently through WATCHING → OPPORTUNITY_FOUND → POSITION_OPEN, preventing conflicting signals across symbols.
+- **Shared market context**: macro news is analyzed once every 4h and shared across all symbols, avoiding redundant GNews API calls.
 - **Independent modules**: each component has a defined input/output contract. GNews → Bloomberg, Alpaca → IBKR, Gmail → Slack — swap without touching the rest.
 - **No crypto**: Alpaca assets are filtered to `us_equity` only (double-filtered: `asset_class` + `exchange != CRYPTO`).
 - **Structured logging**: all errors include stack traces (`exc_info=True`). Silent `except: pass` blocks are eliminated.
-- **Paper trading by default**: `ALPACA_BASE_URL=https://paper-api.alpaca.markets`. Switching to live requires explicitly changing the URL.
+- **Paper trading by default**: `ALPACA_BASE_URL=https://paper-api.alpaca.markets`. Switching to live requires explicitly changing the URL. The dashboard shows a clear banner indicating the active mode on every page.
 - **Order safety**: `PlaceOrderTool` validates quantity, verifies position before selling, and enforces a max shares-per-order limit.
 - **No credentials in code**: everything via `.env`, never committed.
-- **Future-ready**: the state machine + `agent_reports` table accumulates enough history for backtesting. Adding a `CryptoMonitor` or new agent role requires only a new YAML entry.
+- **Future-ready**: the state machine + `agent_reports` + `market_context` tables accumulate enough history for backtesting. Adding a `CryptoMonitor` or new agent role requires only a new YAML entry.

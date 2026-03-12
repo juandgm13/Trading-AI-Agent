@@ -41,14 +41,19 @@ The Tkinter UI provides:
 Each symbol has an independent state machine managed by `PriceMonitor`:
 
 ```
+Global market context (every analysis_interval_hours, default 4h)
+  MarketContextAgent fetches general market news → holistic sentiment report (persisted in DB)
+
 WATCHING ──────────────────────────────────────────────┐
     │  (every analysis_interval_hours, default 4h)      │
-    │  TechnicalAgent (medium-term) + EconomicsAgent    │
+    │  TechnicalAgent (medium-term)                     │
+    │  + global market context (read from DB)           │
     │  TradingAgent evaluates → opportunity?            │
     ▼                                                   │
 OPPORTUNITY_FOUND                                       │
     │  (every poll cycle)                               │
-    │  TechnicalAgent (short-term) → entry timing?      │
+    │  TechnicalAgent (short-term)                      │
+    │  + CompanyAnalysisAgent (company-specific news)   │
     │  TradingAgent decides → open position?            │
     ▼                                    │ REJECT        │
 POSITION_OPEN ◄──────────────────────────┘              │
@@ -62,7 +67,8 @@ POSITION_OPEN ◄─────────────────────
 | Agent | File | Model role | Input | Output |
 |---|---|---|---|---|
 | `TechnicalAnalysisAgent` | `agents/technical_agent.py` | `technical` | OHLCV bars (pre-fetched by monitor) | `{trend, signal, target_price, stop_loss, confidence, summary}` |
-| `EconomicsAgent` | `agents/economics_agent.py` | `economics` | News articles (pre-fetched by monitor) | `{sentiment, market_context, key_events, confidence, summary}` |
+| `MarketContextAgent` | `agents/economics_agent.py` | `economics` | General market news (GNews) | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
+| `CompanyAnalysisAgent` | `agents/economics_agent.py` | `economics` | Company-specific news (GNews) | `{sentiment, key_events, entry_risk, confidence, summary}` |
 | `TradingAgent` (orchestrator) | `agents/trading_agent.py` | `trader` | Sub-agent reports as context | `{decision, symbol, qty, reasoning}` |
 
 The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects it into each agent's prompt. Agents are purely text analyzers — no tool loops.
@@ -74,7 +80,8 @@ The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects i
 | **News Ingestion** | API credentials + query params | `Article { source, title, description, content, url, published_at }` |
 | **Deduplication** | `Article` | `DeduplicationResult { is_new: bool, article: Article }` |
 | **TechnicalAgent** | OHLCV bars JSON in prompt | `{trend, signal, target_price, stop_loss, confidence, summary}` |
-| **EconomicsAgent** | News articles JSON in prompt | `{sentiment, market_context, key_events, confidence, summary}` |
+| **MarketContextAgent** | General market news JSON | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
+| **CompanyAnalysisAgent** | Company news JSON | `{sentiment, key_events, entry_risk, confidence, summary}` |
 | **TradingAgent** | Sub-agent reports in prompt | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty, reasoning}` |
 | **Alerting** | Trade details | Email via Gmail SMTP |
 | **Storage** | Various | SQLite persistence |
@@ -97,6 +104,7 @@ The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects i
 | `watchlist` | Active symbols to monitor |
 | `symbol_states` | State machine state per symbol (WATCHING/OPPORTUNITY_FOUND/POSITION_OPEN) |
 | `agent_reports` | Historical sub-agent reports per symbol |
+| `market_context` | Global market context reports (holistic sentiment, updated every 4h) |
 
 ## Tech Stack
 

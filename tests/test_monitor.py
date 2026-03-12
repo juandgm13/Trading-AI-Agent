@@ -35,13 +35,23 @@ def _make_monitor(tmp_db, on_log=None):
         "summary": "Strong uptrend",
     }))
 
-    mock_econ = MagicMock()
-    mock_econ.run = AsyncMock(return_value=json.dumps({
-        "sentiment": "POSITIVE",
-        "market_context": "RISK_ON",
-        "key_events": ["Strong earnings"],
+    mock_market_ctx = MagicMock()
+    mock_market_ctx.run = AsyncMock(return_value=json.dumps({
+        "market_sentiment": "BULLISH",
+        "risk_appetite": "RISK_ON",
+        "dominant_themes": ["AI growth"],
+        "macro_risks": [],
         "confidence": 70,
-        "summary": "Positive news flow",
+        "summary": "Positive macro environment",
+    }))
+
+    mock_company = MagicMock()
+    mock_company.run = AsyncMock(return_value=json.dumps({
+        "sentiment": "POSITIVE",
+        "key_events": ["Strong earnings"],
+        "entry_risk": "LOW",
+        "confidence": 70,
+        "summary": "Good entry conditions",
     }))
 
     mock_trader = MagicMock()
@@ -58,14 +68,17 @@ def _make_monitor(tmp_db, on_log=None):
         alpaca=mock_alpaca,
         storage=tmp_db,
         technical_agent=mock_tech,
-        economics_agent=mock_econ,
+        market_context_agent=mock_market_ctx,
+        company_analysis_agent=mock_company,
         trading_agent=mock_trader,
         logger=logger,
         gnews_api_key="test-key",
         max_qty=10,
         analysis_interval_hours=4.0,
     )
-    return monitor, mock_alpaca, mock_tech, mock_econ, mock_trader
+    # Retorna (monitor, mock_alpaca, mock_tech, mock_market_ctx, mock_trader)
+    # mock_company accesible via monitor._company_analysis_agent
+    return monitor, mock_alpaca, mock_tech, mock_market_ctx, mock_trader
 
 
 # ── Estado WATCHING ────────────────────────────────────────────────────────────
@@ -130,7 +143,10 @@ async def test_opportunity_found_runs_short_term_analysis(tmp_db):
     state_row = tmp_db.get_symbol_state("AAPL")
 
     snap = {"close": 175.0, "volume": 1000, "timestamp": "t"}
-    await monitor._process_symbol("AAPL", snap, state_row)
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._process_symbol("AAPL", snap, state_row)
 
     mock_tech.run.assert_awaited()
     mock_trader.run.assert_awaited()
@@ -177,7 +193,10 @@ async def test_opportunity_found_reject_returns_to_watching(tmp_db):
     state_row = tmp_db.get_symbol_state("AAPL")
 
     snap = {"close": 175.0, "volume": 1000, "timestamp": "t"}
-    await monitor._process_symbol("AAPL", snap, state_row)
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._process_symbol("AAPL", snap, state_row)
 
     new_state = tmp_db.get_symbol_state("AAPL")
     assert new_state["state"] == "WATCHING"
@@ -307,7 +326,10 @@ async def test_check_all_uses_batch_snapshots(tmp_db):
     })
 
     watchlist = tmp_db.get_watchlist()
-    await monitor._check_all(watchlist)
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._check_all(watchlist)
 
     mock_alpaca.get_snapshots.assert_awaited_once()
     symbols_arg = mock_alpaca.get_snapshots.call_args[0][0]
@@ -333,6 +355,9 @@ async def test_check_all_saves_price_snapshots(tmp_db):
     })
 
     watchlist = tmp_db.get_watchlist()
-    await monitor._check_all(watchlist)
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._check_all(watchlist)
 
     assert tmp_db.get_last_price("AAPL") == pytest.approx(175.0)

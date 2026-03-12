@@ -99,6 +99,14 @@ class StorageLayer:
                     created_at  TEXT NOT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS market_context (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    report      TEXT NOT NULL,
+                    news_count  INTEGER NOT NULL DEFAULT 0,
+                    created_at  TEXT NOT NULL
+                )
+            """)
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
@@ -360,6 +368,37 @@ class StorageLayer:
                 """,
                 (symbol.upper(), agent_name, report, datetime.now(timezone.utc).isoformat()),
             )
+
+    # ── Market context (informe holístico global) ─────────────────────────────
+
+    def save_market_context(self, report: str, news_count: int) -> None:
+        """Persiste un nuevo informe de contexto global de mercado."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_context (report, news_count, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (report, news_count, datetime.now(timezone.utc).isoformat()),
+            )
+
+    def get_latest_market_context(self) -> dict | None:
+        """Devuelve el informe más reciente de contexto global, o None si no hay ninguno."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM market_context ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_market_context_history(self, limit: int = 10) -> list[dict]:
+        """Devuelve el historial de informes de contexto global."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM market_context ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def get_agent_reports(self, symbol: str, limit: int = 20) -> list[dict]:
         """Devuelve el historial de informes de sub-agentes para un símbolo."""

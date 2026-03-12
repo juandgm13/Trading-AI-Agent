@@ -3,11 +3,13 @@ import os
 import streamlit as st
 import pandas as pd
 from dotenv import load_dotenv
+from ui.components import trading_mode_banner
 
 load_dotenv()
 
 st.set_page_config(page_title="Portfolio", page_icon="💰", layout="wide")
-st.title("💰 Portfolio (Alpaca Paper)")
+trading_mode_banner()
+st.title("💰 Portfolio (Alpaca)")
 
 
 def _load_portfolio():

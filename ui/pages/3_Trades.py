@@ -1,8 +1,10 @@
 import streamlit as st
 import pandas as pd
 from src.storage import StorageLayer
+from ui.components import trading_mode_banner
 
 st.set_page_config(page_title="Historial de Trades", page_icon="💼", layout="wide")
+trading_mode_banner()
 st.title("💼 Historial de Trades")
 
 storage = StorageLayer(db_path="trading_agent.db")

@@ -1,7 +1,9 @@
 import streamlit as st
 from src.storage import StorageLayer
+from ui.components import trading_mode_banner
 
 st.set_page_config(page_title="Watchlist", page_icon="👁️", layout="wide")
+trading_mode_banner()
 st.title("👁️ Watchlist — Símbolos monitorizados")
 
 storage = StorageLayer(db_path="trading_agent.db")
