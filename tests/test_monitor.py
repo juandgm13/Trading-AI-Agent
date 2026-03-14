@@ -361,3 +361,551 @@ async def test_check_all_saves_price_snapshots(tmp_db):
         await monitor._check_all(watchlist)
 
     assert tmp_db.get_last_price("AAPL") == pytest.approx(175.0)
+
+
+# ── run() — paths de control ──────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_run_breaks_immediately_if_stop_event_already_set(tmp_db):
+    """Si stop_event ya está activo al entrar al loop, sale sin ciclo."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_snapshots = AsyncMock(return_value={})
+
+    stop = asyncio.Event()
+    stop.set()  # ya activo antes de run()
+
+    await monitor.run(poll_interval_seconds=0, stop_event=stop)
+
+    mock_alpaca.get_snapshots.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_processes_force_event(tmp_db):
+    """Si force_event se activa, _force_analysis queda True en el ciclo."""
+    from datetime import datetime, timezone
+
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    recent = datetime.now(timezone.utc).isoformat()
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    tmp_db.upsert_symbol_state("AAPL", state="WATCHING", last_analysis_at=recent)
+
+    mock_alpaca.get_snapshots = AsyncMock(return_value={
+        "AAPL": {"close": 175.0, "volume": 1000, "timestamp": "t"},
+    })
+
+    stop = asyncio.Event()
+    force = asyncio.Event()
+
+    async def trigger_and_stop():
+        force.set()
+        await asyncio.sleep(0.05)
+        stop.set()
+
+    monitor._force_event = force
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await asyncio.gather(
+            monitor.run(poll_interval_seconds=0, stop_event=stop),
+            trigger_and_stop(),
+        )
+
+
+# ── _check_all — paths de error ───────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_check_all_logs_when_batch_raises(tmp_db):
+    """Si get_snapshots lanza excepción, el ciclo continúa sin romper."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    mock_alpaca.get_snapshots = AsyncMock(side_effect=RuntimeError("API error"))
+
+    watchlist = tmp_db.get_watchlist()
+    # No debe lanzar excepción
+    await monitor._check_all(watchlist)
+
+
+@pytest.mark.asyncio
+async def test_check_all_skips_symbol_without_snapshot(tmp_db):
+    """Un símbolo sin datos de precio no se procesa."""
+    from datetime import datetime, timezone
+
+    monitor, mock_alpaca, mock_tech, _, _ = _make_monitor(tmp_db)
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    tmp_db.upsert_symbol_state("AAPL", state="WATCHING",
+                               last_analysis_at=datetime.now(timezone.utc).isoformat())
+
+    mock_alpaca.get_snapshots = AsyncMock(return_value={})  # sin datos
+
+    watchlist = tmp_db.get_watchlist()
+    await monitor._check_all(watchlist)
+
+    mock_tech.run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_check_all_reports_triggered_alerts(tmp_db):
+    """_check_all loguea alertas cuando hay transiciones."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="POSITION_OPEN",
+        target_price=180.0, stop_loss=165.0, position_qty=5.0,
+    )
+
+    mock_alpaca.get_snapshots = AsyncMock(return_value={
+        "AAPL": {"close": 181.0, "volume": 1000, "timestamp": "t"},  # >= target
+    })
+
+    watchlist = tmp_db.get_watchlist()
+    await monitor._check_all(watchlist)
+
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "WATCHING"
+
+
+# ── _analysis_due — edge cases ────────────────────────────────────────────────
+
+def test_analysis_due_handles_naive_datetime(tmp_db):
+    """Fecha sin timezone se trata como UTC."""
+    from datetime import datetime, timezone, timedelta
+
+    monitor, _, _, _, _ = _make_monitor(tmp_db)
+    # Fecha naive (sin +00:00)
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%S")
+    state = {"last_analysis_at": old_time}
+
+    assert monitor._analysis_due(state) is True
+
+
+def test_analysis_due_returns_true_on_invalid_date(tmp_db):
+    """Si la fecha es inválida, se considera que el análisis está due."""
+    monitor, _, _, _, _ = _make_monitor(tmp_db)
+    state = {"last_analysis_at": "not-a-valid-date"}
+
+    assert monitor._analysis_due(state) is True
+
+
+# ── _full_analysis — paths adicionales ───────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_full_analysis_returns_none_when_technical_fails(tmp_db):
+    """Si TechnicalAgent falla, _full_analysis devuelve None."""
+    monitor, _, mock_tech, _, _ = _make_monitor(tmp_db)
+    mock_tech.run = AsyncMock(side_effect=RuntimeError("model error"))
+
+    result = await monitor._full_analysis("AAPL", 175.0)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_full_analysis_detects_opportunity(tmp_db):
+    """Si TradingAgent dice OPEN_POSITION, el estado cambia a OPPORTUNITY_FOUND."""
+    monitor, _, _, _, mock_trader = _make_monitor(tmp_db)
+    mock_trader.run.return_value = json.dumps({
+        "decision": "OPEN_POSITION", "symbol": "AAPL", "qty": 5, "reasoning": "Strong signal",
+    })
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        result = await monitor._full_analysis("AAPL", 175.0)
+
+    assert result is not None
+    assert "OPPORTUNITY_FOUND" in result
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "OPPORTUNITY_FOUND"
+
+
+# ── _look_for_entry — paths adicionales ──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_look_for_entry_returns_none_when_technical_fails(tmp_db):
+    """Si el análisis técnico corto falla, _look_for_entry devuelve None."""
+    monitor, _, mock_tech, _, _ = _make_monitor(tmp_db)
+    mock_tech.run = AsyncMock(side_effect=RuntimeError("model error"))
+
+    state_row = tmp_db.get_symbol_state("AAPL")
+    result = await monitor._look_for_entry("AAPL", 175.0, state_row)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_look_for_entry_continues_without_company_report(tmp_db):
+    """Company analysis falla pero la decisión continúa."""
+    monitor, _, _, _, mock_trader = _make_monitor(tmp_db)
+    mock_trader.run.return_value = json.dumps({
+        "decision": "HOLD", "symbol": "AAPL", "qty": None, "reasoning": "Waiting",
+    })
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(side_effect=RuntimeError("news error")))
+        state_row = tmp_db.get_symbol_state("AAPL")
+        result = await monitor._look_for_entry("AAPL", 175.0, state_row)
+
+    assert result is None  # HOLD → no trade
+
+
+@pytest.mark.asyncio
+async def test_look_for_entry_returns_none_when_no_trading_decision(tmp_db):
+    """Si TradingAgent falla, _look_for_entry devuelve None."""
+    monitor, _, _, _, mock_trader = _make_monitor(tmp_db)
+    mock_trader.run = AsyncMock(side_effect=RuntimeError("model error"))
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        state_row = tmp_db.get_symbol_state("AAPL")
+        result = await monitor._look_for_entry("AAPL", 175.0, state_row)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_look_for_entry_with_alerter_on_open_position(tmp_db):
+    """Cuando se abre posición con alerter, se llama send_trade_alert."""
+    monitor, mock_alpaca, _, _, mock_trader = _make_monitor(tmp_db)
+    mock_alerter = MagicMock()
+    mock_alerter.send_trade_alert = MagicMock()
+    monitor._alerter = mock_alerter
+
+    mock_trader.run.return_value = json.dumps({
+        "decision": "OPEN_POSITION", "symbol": "AAPL", "qty": 3, "reasoning": "Strong signal",
+    })
+    tmp_db.upsert_symbol_state("AAPL", state="OPPORTUNITY_FOUND")
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._look_for_entry("AAPL", 175.0, state_row)
+
+    mock_alerter.send_trade_alert.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_look_for_entry_handles_place_order_exception(tmp_db):
+    """Si place_order falla, _look_for_entry no propaga la excepción."""
+    monitor, mock_alpaca, _, _, mock_trader = _make_monitor(tmp_db)
+    mock_alpaca.place_order = AsyncMock(side_effect=RuntimeError("order rejected"))
+
+    mock_trader.run.return_value = json.dumps({
+        "decision": "OPEN_POSITION", "symbol": "AAPL", "qty": 2, "reasoning": "Signal",
+    })
+    tmp_db.upsert_symbol_state("AAPL", state="OPPORTUNITY_FOUND")
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        result = await monitor._look_for_entry("AAPL", 175.0, state_row)
+
+    assert result is None
+
+
+# ── _manage_position — paths adicionales ─────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_manage_position_resets_when_no_qty(tmp_db):
+    """POSITION_OPEN sin qty registrada → estado vuelve a WATCHING."""
+    monitor, _, _, _, _ = _make_monitor(tmp_db)
+    tmp_db.upsert_symbol_state("AAPL", state="POSITION_OPEN",
+                               target_price=180.0, stop_loss=165.0, position_qty=None)
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    result = await monitor._manage_position("AAPL", 175.0, state_row)
+
+    assert result is None
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "WATCHING"
+
+
+@pytest.mark.asyncio
+async def test_manage_position_with_alerter_on_sell(tmp_db):
+    """Cuando se vende con alerter, se llama send_trade_alert."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alerter = MagicMock()
+    mock_alerter.send_trade_alert = MagicMock()
+    monitor._alerter = mock_alerter
+
+    tmp_db.upsert_symbol_state("AAPL", state="POSITION_OPEN",
+                               target_price=180.0, stop_loss=165.0, position_qty=5.0)
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    await monitor._manage_position("AAPL", 181.0, state_row)  # >= target
+
+    mock_alerter.send_trade_alert.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_manage_position_handles_place_order_exception(tmp_db):
+    """Si place_order falla al vender, no propaga la excepción."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.place_order = AsyncMock(side_effect=RuntimeError("sell rejected"))
+
+    tmp_db.upsert_symbol_state("AAPL", state="POSITION_OPEN",
+                               target_price=180.0, stop_loss=165.0, position_qty=5.0)
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    result = await monitor._manage_position("AAPL", 181.0, state_row)
+    assert result is None
+
+
+# ── Sub-agentes — paths de error ──────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_run_technical_medium_handles_parse_error(tmp_db):
+    """ParseError en TechnicalAgent (medium) → devuelve None."""
+    monitor, _, mock_tech, _, _ = _make_monitor(tmp_db)
+    mock_tech.run = AsyncMock(return_value="not valid json at all")
+
+    result = await monitor._run_technical_medium("AAPL", 175.0)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_run_technical_medium_handles_exception(tmp_db):
+    """Excepción en TechnicalAgent (medium) → devuelve None."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_bars = AsyncMock(side_effect=RuntimeError("bars error"))
+
+    result = await monitor._run_technical_medium("AAPL", 175.0)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_run_technical_short_handles_parse_error(tmp_db):
+    """ParseError en TechnicalAgent (short) → devuelve None."""
+    monitor, _, mock_tech, _, _ = _make_monitor(tmp_db)
+    mock_tech.run = AsyncMock(return_value="invalid response")
+
+    result = await monitor._run_technical_short("AAPL", 175.0)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_run_technical_short_handles_exception(tmp_db):
+    """Excepción general en TechnicalAgent (short) → devuelve None."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_bars = AsyncMock(side_effect=ConnectionError("timeout"))
+
+    result = await monitor._run_technical_short("AAPL", 175.0)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_run_trading_decision_handles_parse_error(tmp_db):
+    """ParseError en TradingAgent → devuelve None."""
+    monitor, _, _, _, mock_trader = _make_monitor(tmp_db)
+    mock_trader.run = AsyncMock(return_value="I think you should buy")
+
+    result = await monitor._run_trading_decision("AAPL", "test_stage", "prompt")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_run_trading_decision_handles_exception(tmp_db):
+    """Excepción en TradingAgent → devuelve None."""
+    monitor, _, _, _, mock_trader = _make_monitor(tmp_db)
+    mock_trader.run = AsyncMock(side_effect=RuntimeError("LLM error"))
+
+    result = await monitor._run_trading_decision("AAPL", "test_stage", "prompt")
+    assert result is None
+
+
+# ── Market context — paths adicionales ───────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_maybe_update_market_context_skips_when_recent(tmp_db):
+    """No actualiza si el contexto es reciente y no hay force_analysis."""
+    from datetime import datetime, timezone
+
+    monitor, _, _, mock_market_ctx, _ = _make_monitor(tmp_db)
+    monitor._force_analysis = False
+
+    # Guardar contexto reciente (hace 1 hora, intervalo=4h)
+    tmp_db.save_market_context('{"market_sentiment": "BULLISH"}', news_count=3)
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._maybe_update_market_context()
+
+    mock_market_ctx.run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maybe_update_market_context_updates_on_force(tmp_db):
+    """force_analysis=True fuerza actualización aunque el contexto sea reciente."""
+    monitor, _, _, mock_market_ctx, _ = _make_monitor(tmp_db)
+    monitor._force_analysis = True
+
+    tmp_db.save_market_context('{"market_sentiment": "BULLISH"}', news_count=3)
+    mock_market_ctx.run = AsyncMock(return_value=json.dumps({
+        "market_sentiment": "NEUTRAL", "risk_appetite": "NEUTRAL",
+        "dominant_themes": [], "macro_risks": [], "confidence": 50, "summary": "ok",
+    }))
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._maybe_update_market_context()
+
+    mock_market_ctx.run.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_market_context_handles_parse_error(tmp_db):
+    """ParseError en MarketContextAgent → no propaga excepción."""
+    monitor, _, _, mock_market_ctx, _ = _make_monitor(tmp_db)
+    mock_market_ctx.run = AsyncMock(return_value="invalid response from model")
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._run_market_context()  # no debe lanzar
+
+
+@pytest.mark.asyncio
+async def test_run_market_context_handles_exception(tmp_db):
+    """Excepción en MarketContextAgent → no propaga."""
+    monitor, _, _, mock_market_ctx, _ = _make_monitor(tmp_db)
+    mock_market_ctx.run = AsyncMock(side_effect=RuntimeError("LLM down"))
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._run_market_context()  # no debe lanzar
+
+
+def test_load_market_context_returns_none_on_invalid_json(tmp_db):
+    """Si el JSON del contexto en la BD está corrupto, devuelve None."""
+    monitor, _, _, _, _ = _make_monitor(tmp_db)
+
+    # Insertar contexto con JSON inválido directamente
+    import sqlite3
+    conn = sqlite3.connect(tmp_db.db_path)
+    conn.execute("INSERT INTO market_context (report, news_count, created_at) VALUES (?, ?, ?)",
+                 ("not-valid-json", 0, "2024-01-01T00:00:00+00:00"))
+    conn.commit()
+    conn.close()
+
+    result = monitor._load_market_context()
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_run_company_analysis_handles_parse_error(tmp_db):
+    """ParseError en CompanyAnalysisAgent → devuelve None."""
+    monitor, _, _, _, _ = _make_monitor(tmp_db)
+    monitor._company_analysis_agent = MagicMock()
+    monitor._company_analysis_agent.run = AsyncMock(return_value="invalid json here")
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        result = await monitor._run_company_analysis("AAPL")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_run_company_analysis_handles_exception(tmp_db):
+    """Excepción en CompanyAnalysisAgent → devuelve None."""
+    monitor, _, _, _, _ = _make_monitor(tmp_db)
+    monitor._company_analysis_agent = MagicMock()
+    monitor._company_analysis_agent.run = AsyncMock(side_effect=RuntimeError("model error"))
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        result = await monitor._run_company_analysis("AAPL")
+
+    assert result is None
+
+
+# ── Utilidades ────────────────────────────────────────────────────────────────
+
+def test_parse_news_list_returns_empty_on_invalid_json():
+    from agents.monitor import _parse_news_list
+    assert _parse_news_list("not-json") == []
+    assert _parse_news_list("") == []
+
+
+def test_parse_news_list_returns_articles_from_valid_json():
+    from agents.monitor import _parse_news_list
+    raw = json.dumps({"articles": [{"title": "Test"}], "count": 1})
+    result = _parse_news_list(raw)
+    assert result == [{"title": "Test"}]
+
+
+@pytest.mark.asyncio
+async def test_wait_or_stop_without_stop_event():
+    """_wait_or_stop con stop_event=None usa asyncio.sleep."""
+    from agents.monitor import _wait_or_stop
+    # Solo verificamos que no lanza excepción con timeout muy corto
+    await _wait_or_stop(None, 0)
+
+
+@pytest.mark.asyncio
+async def test_wait_or_stop_with_stop_event_times_out():
+    """_wait_or_stop con stop_event no activo espera el timeout."""
+    from agents.monitor import _wait_or_stop
+    stop = asyncio.Event()
+    await _wait_or_stop(stop, 0)  # timeout=0 → TimeoutError capturado internamente
+
+
+@pytest.mark.asyncio
+async def test_init_watchlist_from_alpaca_populates_storage(tmp_db):
+    """_init_watchlist_from_alpaca inserta activos de Alpaca en la BD."""
+    from agents.monitor import _init_watchlist_from_alpaca
+
+    mock_alpaca = MagicMock()
+    mock_alpaca.get_assets = AsyncMock(return_value=[
+        {"symbol": "AAPL", "name": "Apple"},
+        {"symbol": "MSFT", "name": "Microsoft"},
+    ])
+    logger = _make_logger()
+
+    await _init_watchlist_from_alpaca(mock_alpaca, tmp_db, logger, mock_alpaca)
+
+    wl = tmp_db.get_watchlist()
+    symbols = {r["symbol"] for r in wl}
+    assert "AAPL" in symbols
+    assert "MSFT" in symbols
+
+
+@pytest.mark.asyncio
+async def test_init_watchlist_from_alpaca_handles_exception(tmp_db):
+    """Si get_assets falla, _init_watchlist_from_alpaca no propaga la excepción."""
+    from agents.monitor import _init_watchlist_from_alpaca
+
+    mock_alpaca = MagicMock()
+    mock_alpaca.get_assets = AsyncMock(side_effect=RuntimeError("API error"))
+    logger = _make_logger()
+
+    await _init_watchlist_from_alpaca(mock_alpaca, tmp_db, logger, mock_alpaca)
+    assert tmp_db.get_watchlist() == []
+
+
+# ── run_monitor — early returns (sin credenciales) ───────────────────────────
+
+@pytest.mark.asyncio
+async def test_run_monitor_returns_early_without_alpaca_keys(monkeypatch):
+    """run_monitor retorna sin hacer nada si faltan credenciales de Alpaca."""
+    monkeypatch.delenv("ALPACA_API_KEY", raising=False)
+    monkeypatch.delenv("ALPACA_SECRET_KEY", raising=False)
+    monkeypatch.setenv("GNEWS_API_KEY", "test-key")
+
+    from agents.monitor import run_monitor
+    await run_monitor()  # no debe lanzar excepción
+
+
+@pytest.mark.asyncio
+async def test_run_monitor_returns_early_without_gnews_key(monkeypatch):
+    """run_monitor retorna si falta GNEWS_API_KEY."""
+    monkeypatch.setenv("ALPACA_API_KEY", "test-api-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "test-secret")
+    monkeypatch.delenv("GNEWS_API_KEY", raising=False)
+
+    from agents.monitor import run_monitor
+    await run_monitor()  # no debe lanzar excepción

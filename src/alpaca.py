@@ -5,11 +5,14 @@ Usa dos base URLs:
 - DATA_URL: para datos de mercado (barras, cotizaciones)
 - TRADING_URL: para cuenta, posiciones y órdenes
 """
+import json
 import aiohttp
 from datetime import datetime, timezone
 
 
 DATA_URL = "https://data.alpaca.markets/v2"
+
+_MAX_LOG_CHARS = 4000
 
 
 class AlpacaClient:
@@ -18,30 +21,50 @@ class AlpacaClient:
         api_key: str,
         secret_key: str,
         trading_url: str = "https://paper-api.alpaca.markets",
+        logger=None,
     ):
         self._api_key = api_key
         self._secret_key = secret_key
         self._trading_url = trading_url.rstrip("/")
+        self._logger = logger
         self._headers = {
             "APCA-API-KEY-ID": api_key,
             "APCA-API-SECRET-KEY": secret_key,
             "Accept": "application/json",
         }
 
+    def _log_response(self, method: str, url: str, status: int, data) -> None:
+        """Loguea la respuesta cruda de la API si el logger está en modo DEBUG."""
+        if self._logger is None or not self._logger.is_debug:
+            return
+        raw = json.dumps(data, ensure_ascii=False)
+        if len(raw) > _MAX_LOG_CHARS:
+            raw = raw[:_MAX_LOG_CHARS] + f"… [truncado {len(raw)} chars]"
+        self._logger.debug(f"{method} {url} → {status} | {raw}", source="alpaca")
+
     # ── Datos de mercado ──────────────────────────────────────────────────────
 
     async def get_bars(self, symbol: str, timeframe: str = "1Min", limit: int = 5) -> list[dict]:
         """Devuelve los últimos `limit` bars OHLCV para el símbolo."""
+        from datetime import timedelta
         url = f"{DATA_URL}/stocks/{symbol}/bars"
+        # Calcular start: ventana generosa para cubrir días no negociables
+        if "Day" in timeframe:
+            start = (datetime.now(timezone.utc) - timedelta(days=limit * 2)).strftime("%Y-%m-%dT00:00:00Z")
+        else:
+            start = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00Z")
         params = {
             "timeframe": timeframe,
             "limit": limit,
             "sort": "desc",
+            "start": start,
+            "feed": "iex",
         }
         async with aiohttp.ClientSession(headers=self._headers) as session:
             async with session.get(url, params=params) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
+                self._log_response("GET", url, resp.status, data)
         bars = data.get("bars") or []
         result = []
         for b in bars:
@@ -71,6 +94,7 @@ class AlpacaClient:
             async with session.get(url) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
+                self._log_response("GET", url, resp.status, data)
         return {
             "cash": float(data.get("cash", 0)),
             "equity": float(data.get("equity", 0)),
@@ -86,6 +110,7 @@ class AlpacaClient:
             async with session.get(url) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
+                self._log_response("GET", url, resp.status, data)
         return [
             {
                 "symbol": p.get("symbol"),
@@ -109,6 +134,7 @@ class AlpacaClient:
                     return None
                 resp.raise_for_status()
                 p = await resp.json()
+                self._log_response("GET", url, resp.status, p)
         return {
             "symbol": p.get("symbol"),
             "qty": float(p.get("qty", 0)),
@@ -151,6 +177,7 @@ class AlpacaClient:
             async with session.post(url, json=payload) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
+                self._log_response("POST", url, resp.status, data)
         return {
             "order_id": data.get("id"),
             "client_order_id": data.get("client_order_id"),
@@ -196,6 +223,7 @@ class AlpacaClient:
             async with session.get(url, params=params) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
+                self._log_response("GET", url, resp.status, data)
         return [
             {"symbol": a["symbol"], "name": a.get("name", "")}
             for a in data
@@ -235,6 +263,7 @@ class AlpacaClient:
             async with session.get(url, params=params) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
+                self._log_response("GET", url, resp.status, data)
         result = {}
         for symbol, snap in data.items():
             bar = snap.get("minuteBar") or snap.get("dailyBar") or {}

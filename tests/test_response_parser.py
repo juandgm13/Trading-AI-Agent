@@ -249,6 +249,26 @@ def test_validate_trading_decision_raises_on_no_json():
         validate_trading_decision("I think you should buy this stock immediately.")
 
 
+# ── Casos de cobertura adicional ──────────────────────────────────────────────
+
+def test_extract_json_markdown_block_with_invalid_json_falls_through_to_prose():
+    """
+    Bloque ```json cuyo contenido tiene { y } pero JSON inválido (clave sin comillas)
+    → captura el JSONDecodeError (L52-53) → fallback al JSON en el texto libre.
+    """
+    text = '```json\n{unquoted_key: "value"}\n```\nFallback: {"decision": "HOLD"}'
+    result = extract_json(text)
+    assert result["decision"] == "HOLD"
+
+
+def test_coerce_float_or_none_returns_none_on_unconvertible_value():
+    """_coerce_float_or_none devuelve None cuando el valor no es numérico."""
+    from src.response_parser import _coerce_float_or_none
+    assert _coerce_float_or_none("not-a-number") is None
+    assert _coerce_float_or_none([1, 2, 3]) is None
+    assert _coerce_float_or_none({"key": "val"}) is None
+
+
 def test_validate_trading_decision_embedded_in_prose():
     text = 'After careful analysis: {"decision": "HOLD", "symbol": "GOOG", "qty": null, "reasoning": "Mixed signals"} End of report.'
     result = validate_trading_decision(text)

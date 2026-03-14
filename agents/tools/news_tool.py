@@ -21,8 +21,8 @@ class SearchNewsTool(BaseTool):
         "required": ["query"],
     }
 
-    def __init__(self, gnews_api_key: str):
-        self._ingestion = NewsIngestionModule(api_key=gnews_api_key)
+    def __init__(self, gnews_api_key: str, logger=None):
+        self._ingestion = NewsIngestionModule(api_key=gnews_api_key, logger=logger)
 
     async def execute(self, query: str) -> str:
         articles = self._ingestion.fetch_articles(keywords=[query], max_total=10)

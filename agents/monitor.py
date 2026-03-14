@@ -454,7 +454,7 @@ class PriceMonitor:
         self._logger.info("Actualizando contexto global de mercado...", source="monitor")
         try:
             from .tools.news_tool import SearchNewsTool
-            news_tool = SearchNewsTool(self._gnews_api_key)
+            news_tool = SearchNewsTool(self._gnews_api_key, logger=self._logger)
 
             market_raw = await news_tool.execute("stock market economy")
             market_news = _parse_news_list(market_raw)
@@ -488,7 +488,7 @@ class PriceMonitor:
         """Obtiene noticias de la empresa y genera un informe breve de riesgo de entrada."""
         try:
             from .tools.news_tool import SearchNewsTool
-            news_tool = SearchNewsTool(self._gnews_api_key)
+            news_tool = SearchNewsTool(self._gnews_api_key, logger=self._logger)
 
             company_raw = await news_tool.execute(symbol)
             company_news = _parse_news_list(company_raw)
@@ -593,7 +593,7 @@ async def run_monitor(
         return
 
     # Inicializar Alpaca
-    alpaca = AlpacaClient(api_key, secret_key, trading_url)
+    alpaca = AlpacaClient(api_key, secret_key, trading_url, logger=logger)
     logger.info(f"Conectando a Alpaca ({trading_url})...", source="monitor")
     logger.info(
         f"API key: {api_key[:4]}...{api_key[-4:]}  |  Secret: {secret_key[:4]}...{secret_key[-4:]}",

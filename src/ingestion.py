@@ -1,3 +1,4 @@
+import json
 import requests
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,11 +14,15 @@ class Article:
     published_at: datetime
 
 
+_MAX_LOG_CHARS = 4000
+
+
 class NewsIngestionModule:
     BASE_URL = "https://gnews.io/api/v4/search"
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, logger=None):
         self.api_key = api_key
+        self._logger = logger
 
     MAX_PER_PAGE = 100
     MAX_TOTAL = 1000
@@ -48,6 +53,14 @@ class NewsIngestionModule:
                 break
             response.raise_for_status()
             data = response.json()
+            if self._logger is not None and self._logger.is_debug:
+                raw = json.dumps(data, ensure_ascii=False)
+                if len(raw) > _MAX_LOG_CHARS:
+                    raw = raw[:_MAX_LOG_CHARS] + f"… [truncado {len(raw)} chars]"
+                self._logger.debug(
+                    f"GET {self.BASE_URL} page={page} → {response.status_code} | {raw}",
+                    source="gnews",
+                )
 
             batch = data.get("articles", [])
             if not batch:

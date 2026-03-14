@@ -100,6 +100,11 @@ class AgentLogger:
         if self._on_log:
             self._on_log(f"[ERROR] {full}")
 
+    @property
+    def is_debug(self) -> bool:
+        """Retorna True si el nivel de log activo es DEBUG."""
+        return self._numeric_level <= 10
+
     def log_prompt(
         self,
         agent_name: str,

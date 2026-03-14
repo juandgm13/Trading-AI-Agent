@@ -182,6 +182,21 @@ class StorageLayer:
         with self._connect() as conn:
             conn.execute("DELETE FROM articles")
 
+    def reset_all(self):
+        """Borra todos los datos de todas las tablas (watchlist incluida)."""
+        tables = [
+            "articles",
+            "price_snapshots",
+            "trades",
+            "watchlist",
+            "symbol_states",
+            "agent_reports",
+            "market_context",
+        ]
+        with self._connect() as conn:
+            for table in tables:
+                conn.execute(f"DELETE FROM {table}")
+
     # ── Price snapshots ───────────────────────────────────────────────────────
 
     def save_price_snapshot(self, symbol: str, close: float, volume: int | None, bar_time: str):

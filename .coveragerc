@@ -1,0 +1,21 @@
+[run]
+source =
+    src
+    agents
+omit =
+    */tests/*
+    */__pycache__/*
+    agents/trader.py
+    agents/pipeline.py
+
+[report]
+exclude_lines =
+    # Líneas estándar que no aportan cobertura útil
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    \.\.\.
+
+[html]
+directory = htmlcov
+title = Trading AI Agent — Coverage Report

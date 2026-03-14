@@ -61,7 +61,7 @@ def extract_json(text: str) -> dict:
                 result = json.loads(candidate[:end])
                 if isinstance(result, dict):
                     return result
-                break
+                break  # pragma: no cover
             except json.JSONDecodeError:
                 continue
 

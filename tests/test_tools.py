@@ -172,6 +172,100 @@ async def test_place_order_buy_success_saves_to_db():
     mock_storage.save_trade.assert_called_once()
 
 
+# ── PlaceOrderTool: paths adicionales ────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_place_order_rejects_sell_exceeding_held_qty():
+    from agents.tools.order_tool import PlaceOrderTool
+
+    mock_alpaca = MagicMock()
+    mock_alpaca.get_position = AsyncMock(return_value={"qty": 3.0})
+    mock_storage = MagicMock()
+    tool = PlaceOrderTool(mock_alpaca, mock_storage, max_qty_per_order=10)
+
+    result = await tool.execute(symbol="AAPL", side="sell", qty=5, reason="test")
+    data = json.loads(result)
+    assert "error" in data
+    mock_alpaca.place_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_place_order_returns_error_when_order_raises():
+    from agents.tools.order_tool import PlaceOrderTool
+
+    mock_alpaca = MagicMock()
+    mock_alpaca.place_order = AsyncMock(side_effect=RuntimeError("API down"))
+    mock_storage = MagicMock()
+    tool = PlaceOrderTool(mock_alpaca, mock_storage, max_qty_per_order=10)
+
+    result = await tool.execute(symbol="AAPL", side="buy", qty=2, reason="test")
+    data = json.loads(result)
+    assert "error" in data
+    assert "API down" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_place_order_succeeds_when_get_latest_bar_raises():
+    """get_latest_bar falla silenciosamente — orden se completa igual."""
+    from agents.tools.order_tool import PlaceOrderTool
+
+    mock_alpaca = MagicMock()
+    mock_alpaca.place_order = AsyncMock(return_value={
+        "order_id": "ord-ok", "status": "accepted",
+        "symbol": "AAPL", "side": "buy", "qty": 1.0,
+    })
+    mock_alpaca.get_latest_bar = AsyncMock(side_effect=ConnectionError("timeout"))
+    mock_storage = MagicMock()
+    tool = PlaceOrderTool(mock_alpaca, mock_storage, max_qty_per_order=10)
+
+    result = await tool.execute(symbol="AAPL", side="buy", qty=1, reason="test")
+    data = json.loads(result)
+    assert data["order_id"] == "ord-ok"
+    assert data["approx_price"] is None  # no se obtuvo precio
+
+
+@pytest.mark.asyncio
+async def test_place_order_alerter_exception_does_not_fail_order():
+    """Si el alerter lanza excepción, la orden ya fue ejecutada y se devuelve OK."""
+    from agents.tools.order_tool import PlaceOrderTool
+
+    mock_alpaca = MagicMock()
+    mock_alpaca.place_order = AsyncMock(return_value={
+        "order_id": "ord-xy", "status": "accepted",
+        "symbol": "MSFT", "side": "buy", "qty": 1.0,
+    })
+    mock_alpaca.get_latest_bar = AsyncMock(return_value={"close": 320.0})
+    mock_storage = MagicMock()
+    mock_alerter = MagicMock()
+    mock_alerter.send_trade_alert = MagicMock(side_effect=Exception("SMTP error"))
+
+    tool = PlaceOrderTool(mock_alpaca, mock_storage, max_qty_per_order=10, alerter=mock_alerter)
+    result = await tool.execute(symbol="MSFT", side="buy", qty=1, reason="test")
+    data = json.loads(result)
+    assert data["order_id"] == "ord-xy"  # orden OK a pesar del fallo de alerta
+
+
+# ── SearchNewsTool: logger forwarding ────────────────────────────────────────
+
+def test_search_news_tool_accepts_logger_and_forwards_it():
+    """SearchNewsTool pasa el logger a NewsIngestionModule."""
+    from unittest.mock import MagicMock
+    from agents.tools.news_tool import SearchNewsTool
+
+    mock_logger = MagicMock()
+    tool = SearchNewsTool("fake-api-key", logger=mock_logger)
+
+    assert tool._ingestion._logger is mock_logger
+
+
+def test_search_news_tool_no_logger_by_default():
+    """Sin logger, NewsIngestionModule._logger es None."""
+    from agents.tools.news_tool import SearchNewsTool
+
+    tool = SearchNewsTool("fake-api-key")
+    assert tool._ingestion._logger is None
+
+
 @pytest.mark.asyncio
 async def test_place_order_calls_alerter_on_success():
     from agents.tools.order_tool import PlaceOrderTool

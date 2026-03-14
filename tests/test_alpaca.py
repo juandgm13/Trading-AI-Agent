@@ -1,9 +1,347 @@
 """
-Tests de AlpacaClient — requieren ALPACA_API_KEY y ALPACA_SECRET_KEY en .env.
-Usan paper trading, no ejecutan órdenes reales.
+Tests de AlpacaClient.
+
+Sección 1 — Unit tests de logging y métodos síncronos (sin credenciales, sin red).
+Sección 2 — Unit tests con HTTP mockeado (aiohttp).
+Sección 3 — Integration tests contra la API real (requieren .env con Alpaca).
 """
 import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 from conftest import requires_alpaca
+
+
+# ── Helper: mock de sesión aiohttp ────────────────────────────────────────────
+
+def _mock_http(method: str, status: int, json_data):
+    """
+    Devuelve un context manager que parchea aiohttp.ClientSession para que
+    la llamada HTTP indicada (get/post/delete) devuelva status + json_data.
+    """
+    mock_resp = MagicMock()
+    mock_resp.status = status
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json = AsyncMock(return_value=json_data)
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    getattr(mock_session, method).return_value = mock_req_ctx
+
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    return patch("aiohttp.ClientSession", return_value=mock_session_ctx)
+
+
+# ── Unit tests: AgentLogger.is_debug ─────────────────────────────────────────
+
+def test_logger_is_debug_true_at_debug_level():
+    from src.logger import AgentLogger
+    assert AgentLogger(level="DEBUG").is_debug is True
+
+
+def test_logger_is_debug_false_at_info_level():
+    from src.logger import AgentLogger
+    assert AgentLogger(level="INFO").is_debug is False
+
+
+def test_logger_is_debug_false_at_warning_level():
+    from src.logger import AgentLogger
+    assert AgentLogger(level="WARNING").is_debug is False
+
+
+def test_logger_is_debug_false_at_error_level():
+    from src.logger import AgentLogger
+    assert AgentLogger(level="ERROR").is_debug is False
+
+
+# ── Unit tests: AlpacaClient._log_response ────────────────────────────────────
+
+def test_log_response_calls_debug_when_is_debug():
+    from src.alpaca import AlpacaClient
+
+    mock_logger = MagicMock()
+    mock_logger.is_debug = True
+
+    client = AlpacaClient("key", "secret", logger=mock_logger)
+    client._log_response("GET", "https://api.alpaca.markets/v2/account", 200, {"cash": "100000"})
+
+    mock_logger.debug.assert_called_once()
+    msg = mock_logger.debug.call_args[0][0]
+    assert "GET" in msg
+    assert "200" in msg
+    assert "cash" in msg
+
+
+def test_log_response_includes_source_alpaca():
+    from src.alpaca import AlpacaClient
+
+    mock_logger = MagicMock()
+    mock_logger.is_debug = True
+
+    client = AlpacaClient("key", "secret", logger=mock_logger)
+    client._log_response("POST", "https://api.alpaca.markets/v2/orders", 200, {})
+
+    kwargs = mock_logger.debug.call_args[1]
+    assert kwargs.get("source") == "alpaca"
+
+
+def test_log_response_silent_when_is_debug_false():
+    from src.alpaca import AlpacaClient
+
+    mock_logger = MagicMock()
+    mock_logger.is_debug = False
+
+    client = AlpacaClient("key", "secret", logger=mock_logger)
+    client._log_response("GET", "https://api.alpaca.markets/v2/account", 200, {"cash": "100000"})
+
+    mock_logger.debug.assert_not_called()
+
+
+def test_log_response_silent_when_no_logger():
+    from src.alpaca import AlpacaClient
+
+    client = AlpacaClient("key", "secret")
+    # No debe lanzar excepción
+    client._log_response("GET", "https://api.alpaca.markets/v2/account", 200, {"cash": "100000"})
+
+
+def test_log_response_truncates_large_payload():
+    from src.alpaca import AlpacaClient, _MAX_LOG_CHARS
+
+    mock_logger = MagicMock()
+    mock_logger.is_debug = True
+
+    large_data = {"key": "x" * 10000}
+    client = AlpacaClient("key", "secret", logger=mock_logger)
+    client._log_response("GET", "https://api.alpaca.markets/v2/assets", 200, large_data)
+
+    msg = mock_logger.debug.call_args[0][0]
+    assert "truncado" in msg
+    # El mensaje truncado no debe exceder el límite + overhead razonable
+    assert len(msg) < _MAX_LOG_CHARS + 200
+
+
+def test_log_response_no_truncation_for_small_payload():
+    from src.alpaca import AlpacaClient
+
+    mock_logger = MagicMock()
+    mock_logger.is_debug = True
+
+    small_data = {"symbol": "AAPL", "close": 175.0}
+    client = AlpacaClient("key", "secret", logger=mock_logger)
+    client._log_response("GET", "https://api.alpaca.markets/v2/bars", 200, small_data)
+
+    msg = mock_logger.debug.call_args[0][0]
+    assert "truncado" not in msg
+    assert "AAPL" in msg
+
+
+def test_alpaca_client_accepts_logger_kwarg():
+    """AlpacaClient almacena el logger pasado como parámetro."""
+    from src.alpaca import AlpacaClient
+
+    mock_logger = MagicMock()
+    client = AlpacaClient("key", "secret", logger=mock_logger)
+    assert client._logger is mock_logger
+
+
+def test_alpaca_client_logger_none_by_default():
+    """Sin logger explícito, _logger es None."""
+    from src.alpaca import AlpacaClient
+
+    client = AlpacaClient("key", "secret")
+    assert client._logger is None
+
+
+# ── Unit tests: métodos síncronos ─────────────────────────────────────────────
+
+def test_is_crypto_detects_slash_format():
+    from src.alpaca import AlpacaClient
+    client = AlpacaClient("k", "s")
+    assert client.is_crypto("BTC/USD") is True
+    assert client.is_crypto("ETH/USDT") is True
+    assert client.is_crypto("XRP/BTC") is True
+
+
+def test_is_crypto_detects_known_bases():
+    from src.alpaca import AlpacaClient
+    client = AlpacaClient("k", "s")
+    assert client.is_crypto("BTC") is True
+    assert client.is_crypto("ETH") is True
+    assert client.is_crypto("DOGE") is True
+    assert client.is_crypto("SOL") is True
+
+
+def test_is_crypto_false_for_equities():
+    from src.alpaca import AlpacaClient
+    client = AlpacaClient("k", "s")
+    assert client.is_crypto("AAPL") is False
+    assert client.is_crypto("MSFT") is False
+    assert client.is_crypto("NVDA") is False
+    assert client.is_crypto("TSLA") is False
+
+
+def test_is_crypto_case_insensitive():
+    from src.alpaca import AlpacaClient
+    client = AlpacaClient("k", "s")
+    assert client.is_crypto("btc/usd") is True
+    assert client.is_crypto("aapl") is False
+
+
+# ── Unit tests: HTTP mockeado ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_latest_bar_raises_when_no_bars():
+    from src.alpaca import AlpacaClient
+
+    client = AlpacaClient("k", "s")
+    with _mock_http("get", 200, {"bars": []}):
+        with pytest.raises(ValueError, match="No bars returned"):
+            await client.get_latest_bar("AAPL")
+
+
+@pytest.mark.asyncio
+async def test_get_latest_bar_returns_first_bar():
+    from src.alpaca import AlpacaClient
+
+    bar_data = {"bars": [{"t": "2024-01-01", "o": 174.0, "h": 176.0, "l": 173.0, "c": 175.0, "v": 1000}]}
+    client = AlpacaClient("k", "s")
+    with _mock_http("get", 200, bar_data):
+        bar = await client.get_latest_bar("AAPL")
+    assert bar["close"] == 175.0
+    assert bar["volume"] == 1000
+
+
+@pytest.mark.asyncio
+async def test_get_position_returns_none_on_404():
+    from src.alpaca import AlpacaClient
+
+    mock_resp = MagicMock()
+    mock_resp.status = 404
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_req_ctx
+
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    client = AlpacaClient("k", "s")
+    with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+        result = await client.get_position("AAPL")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_position_returns_data_on_200():
+    from src.alpaca import AlpacaClient
+
+    pos_data = {
+        "symbol": "AAPL", "qty": "5", "avg_entry_price": "170.0",
+        "current_price": "175.0", "market_value": "875.0", "unrealized_pl": "25.0",
+    }
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json = AsyncMock(return_value=pos_data)
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_req_ctx
+
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    client = AlpacaClient("k", "s")
+    with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+        result = await client.get_position("AAPL")
+    assert result["symbol"] == "AAPL"
+    assert result["qty"] == pytest.approx(5.0)
+
+
+@pytest.mark.asyncio
+async def test_place_order_returns_expected_fields():
+    from src.alpaca import AlpacaClient
+
+    order_data = {
+        "id": "ord-001", "client_order_id": "cid-001",
+        "status": "accepted", "symbol": "AAPL",
+        "side": "buy", "qty": "2", "submitted_at": "2024-01-01T10:00:00Z",
+    }
+    client = AlpacaClient("k", "s")
+    with _mock_http("post", 200, order_data):
+        result = await client.place_order("AAPL", 2, "buy")
+
+    assert result["order_id"] == "ord-001"
+    assert result["status"] == "accepted"
+    assert result["symbol"] == "AAPL"
+    assert result["side"] == "buy"
+    assert result["qty"] == pytest.approx(2.0)
+    assert result["submitted_at"] == "2024-01-01T10:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_orders_completes_without_error():
+    from src.alpaca import AlpacaClient
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.delete.return_value = mock_req_ctx
+
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    client = AlpacaClient("k", "s")
+    with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+        await client.cancel_all_orders()  # no debe lanzar excepción
+
+    mock_resp.raise_for_status.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_is_available_returns_false_on_exception():
+    from src.alpaca import AlpacaClient
+
+    client = AlpacaClient("k", "s")
+    # get_account lanzará excepción porque aiohttp no puede conectar sin mock
+    # Usamos un mock que lanza
+    client.get_account = AsyncMock(side_effect=ConnectionError("Connection refused"))
+    ok, err = await client.is_available()
+
+    assert ok is False
+    assert "ConnectionError" in err
+
+
+@pytest.mark.asyncio
+async def test_is_available_returns_true_on_success():
+    from src.alpaca import AlpacaClient
+
+    client = AlpacaClient("k", "s")
+    client.get_account = AsyncMock(return_value={"cash": 100000.0, "equity": 100000.0})
+    ok, err = await client.is_available()
+
+    assert ok is True
+    assert err == ""
 
 
 @requires_alpaca

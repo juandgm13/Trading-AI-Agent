@@ -3,7 +3,7 @@ import sys
 import threading
 import subprocess
 import tkinter as tk
-from tkinter import scrolledtext
+from tkinter import scrolledtext, messagebox
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -108,6 +108,38 @@ def _open_dashboard():
     )
 
 
+def _reset_db_and_logs(log: scrolledtext.ScrolledText):
+    """Borra todos los datos de la BD y trunca los archivos de log."""
+    if not messagebox.askyesno(
+        "Confirmar reset",
+        "¿Borrar TODA la base de datos y los archivos de log?\n\nEsta acción no se puede deshacer.",
+        icon="warning",
+    ):
+        return
+
+    from src.storage import StorageLayer
+    db_path = PROJECT_ROOT / "trading_agent.db"
+    try:
+        StorageLayer(str(db_path)).reset_all()
+    except Exception as e:
+        messagebox.showerror("Error", f"Error al resetear la BD:\n{e}")
+        return
+
+    log_dir = PROJECT_ROOT / "logs"
+    cleared = []
+    for log_file in log_dir.glob("*.log*"):
+        try:
+            log_file.write_text("", encoding="utf-8")
+            cleared.append(log_file.name)
+        except Exception:
+            pass
+
+    redirector = _TextRedirector(log)
+    redirector.write("[reset] Base de datos borrada.\n")
+    if cleared:
+        redirector.write(f"[reset] Logs truncados: {', '.join(cleared)}\n")
+
+
 def _clear_log(log: scrolledtext.ScrolledText):
     log.configure(state="normal")
     log.delete("1.0", tk.END)
@@ -162,6 +194,18 @@ def main():
         width=12,
         height=2,
         command=lambda: _clear_log(log),
+    ).pack(side="right", padx=4)
+
+    tk.Button(
+        toolbar,
+        text="Reset BD + Logs",
+        width=15,
+        height=2,
+        fg="white",
+        bg="#c0392b",
+        activebackground="#e74c3c",
+        activeforeground="white",
+        command=lambda: _reset_db_and_logs(log),
     ).pack(side="right", padx=4)
 
     # ── Log ───────────────────────────────────────────────────────────────────
