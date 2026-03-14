@@ -62,6 +62,7 @@ async def build_trading_orchestrator(
         .tools([])
         .model_role("trader")
         .system_prompt(TRADING_ORCHESTRATOR_PROMPT)
+        .stateless()
         .with_config(config)
         .with_event_bus(bus)
         .with_model_registry(model_registry)
