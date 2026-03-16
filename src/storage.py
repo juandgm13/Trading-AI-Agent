@@ -73,7 +73,10 @@ class StorageLayer:
                     symbol        TEXT PRIMARY KEY,
                     company       TEXT,
                     threshold_pct REAL DEFAULT 2.0,
-                    active        INTEGER DEFAULT 1
+                    active        INTEGER DEFAULT 1,
+                    exchange      TEXT,
+                    marginable    INTEGER DEFAULT 0,
+                    shortable     INTEGER DEFAULT 0
                 )
             """)
             conn.execute("""
@@ -87,6 +90,7 @@ class StorageLayer:
                     stop_loss        REAL,
                     position_qty     REAL,
                     position_open_at TEXT,
+                    chart_path       TEXT,
                     updated_at       TEXT NOT NULL
                 )
             """)
@@ -269,18 +273,29 @@ class StorageLayer:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def upsert_watchlist(self, symbol: str, company: str = "", threshold_pct: float = 2.0):
+    def upsert_watchlist(
+        self,
+        symbol: str,
+        company: str = "",
+        threshold_pct: float = 2.0,
+        exchange: str = "",
+        marginable: bool = False,
+        shortable: bool = False,
+    ):
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO watchlist (symbol, company, threshold_pct, active)
-                VALUES (?, ?, ?, 1)
+                INSERT INTO watchlist (symbol, company, threshold_pct, active, exchange, marginable, shortable)
+                VALUES (?, ?, ?, 1, ?, ?, ?)
                 ON CONFLICT(symbol) DO UPDATE SET
                     company       = excluded.company,
                     threshold_pct = excluded.threshold_pct,
-                    active        = 1
+                    active        = 1,
+                    exchange      = excluded.exchange,
+                    marginable    = excluded.marginable,
+                    shortable     = excluded.shortable
                 """,
-                (symbol.upper(), company, threshold_pct),
+                (symbol.upper(), company, threshold_pct, exchange, int(marginable), int(shortable)),
             )
 
     def deactivate_watchlist(self, symbol: str):
@@ -310,6 +325,7 @@ class StorageLayer:
             "stop_loss": None,
             "position_qty": None,
             "position_open_at": None,
+            "chart_path": None,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -330,8 +346,8 @@ class StorageLayer:
                     INSERT INTO symbol_states
                         (symbol, state, last_analysis_at, analysis_summary,
                          entry_signal_at, target_price, stop_loss,
-                         position_qty, position_open_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         position_qty, position_open_at, chart_path, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         symbol,
@@ -343,6 +359,7 @@ class StorageLayer:
                         kwargs.get("stop_loss"),
                         kwargs.get("position_qty"),
                         kwargs.get("position_open_at"),
+                        kwargs.get("chart_path"),
                         now,
                     ),
                 )
@@ -351,7 +368,7 @@ class StorageLayer:
                 allowed = {
                     "state", "last_analysis_at", "analysis_summary",
                     "entry_signal_at", "target_price", "stop_loss",
-                    "position_qty", "position_open_at",
+                    "position_qty", "position_open_at", "chart_path",
                 }
                 updates = {k: v for k, v in kwargs.items() if k in allowed}
                 updates["updated_at"] = now
