@@ -225,7 +225,14 @@ class AlpacaClient:
                 data = await resp.json()
                 self._log_response("GET", url, resp.status, data)
         return [
-            {"symbol": a["symbol"], "name": a.get("name", "")}
+            {
+                "symbol": a["symbol"],
+                "name": a.get("name", ""),
+                "exchange": a.get("exchange", ""),
+                "tradable": a.get("tradable", False),
+                "marginable": a.get("marginable", False),
+                "shortable": a.get("shortable", False),
+            }
             for a in data
             if a.get("tradable")
             and a.get("status") == "active"

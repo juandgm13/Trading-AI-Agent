@@ -33,13 +33,18 @@ if not watchlist:
     st.info("La watchlist está vacía. Añade símbolos arriba.")
 else:
     for item in watchlist:
-        col1, col2, col3, col4 = st.columns([2, 3, 2, 1])
+        col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 3, 2, 1, 1, 1, 1])
         col1.write(f"**{item['symbol']}**")
         col2.write(item.get("company") or "—")
         col3.write(f"Threshold: {item['threshold_pct']}%")
-        if col4.button("Eliminar", key=f"del_{item['symbol']}"):
+        col4.write(item.get("exchange") or "—")
+        col5.write("✓" if item.get("marginable") else "✗")
+        col6.write("✓" if item.get("shortable") else "✗")
+        if col7.button("Eliminar", key=f"del_{item['symbol']}"):
             storage.deactivate_watchlist(item["symbol"])
             st.rerun()
+
+    st.caption("Columnas: Ticker | Empresa | Threshold | Exchange | Marginable | Shortable | Acción")
 
 st.divider()
 st.caption(
