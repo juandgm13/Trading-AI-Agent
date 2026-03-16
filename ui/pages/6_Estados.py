@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from pathlib import Path
 from src.storage import StorageLayer
 from ui.components import trading_mode_banner
 
@@ -42,6 +43,22 @@ else:
 
     df_display = df[list(display_cols.keys())].rename(columns=display_cols)
     st.dataframe(df_display, use_container_width=True)
+
+    # ── Gráficos de evidencia ─────────────────────────────────────────────────
+    symbols_with_charts = [
+        s for s in states
+        if s.get("chart_path") and Path(s["chart_path"]).exists()
+    ]
+    if symbols_with_charts:
+        st.divider()
+        st.subheader("Gráficos de evidencia")
+        for s in symbols_with_charts:
+            chart_path = s["chart_path"]
+            symbol = s["symbol"]
+            state = s["state"]
+            with st.expander(f"{symbol} — {state_colors.get(state, '⚪')} {state}"):
+                st.image(chart_path, use_container_width=True)
+                st.caption(f"Ruta: {chart_path}")
 
 st.divider()
 
