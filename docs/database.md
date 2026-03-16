@@ -58,14 +58,17 @@ trades (
 ```
 
 ### `watchlist`
-Symbols actively monitored by `PriceMonitor`.
+Symbols actively monitored by `PriceMonitor`. Includes Alpaca asset metadata populated at startup.
 
 ```sql
 watchlist (
     symbol          TEXT PRIMARY KEY,
     company         TEXT DEFAULT '',
     threshold_pct   REAL DEFAULT 2.0,
-    active          INTEGER DEFAULT 1
+    active          INTEGER DEFAULT 1,
+    exchange        TEXT DEFAULT '',        -- e.g. NASDAQ, NYSE
+    marginable      INTEGER DEFAULT 0,      -- 1 = yes
+    shortable       INTEGER DEFAULT 0       -- 1 = yes
 )
 ```
 
@@ -83,6 +86,7 @@ symbol_states (
     stop_loss           REAL,
     position_qty        REAL,
     position_open_at    TEXT,
+    chart_path          TEXT,   -- absolute path to last evidence PNG (may be NULL)
     updated_at          TEXT NOT NULL
 )
 ```
@@ -116,7 +120,9 @@ market_context (
 
 | Method | Description |
 |---|---|
-| `upsert_symbol_state(symbol, **kwargs)` | Create or update state for a symbol |
+| `upsert_watchlist(symbol, company, threshold_pct, exchange, marginable, shortable)` | Create or update watchlist entry with Alpaca metadata |
+| `get_watchlist()` | Get all active watchlist entries including metadata |
+| `upsert_symbol_state(symbol, **kwargs)` | Create or update state for a symbol (accepts `chart_path`) |
 | `get_symbol_state(symbol)` | Get current state row for a symbol |
 | `get_all_symbol_states()` | Get all symbol states |
 | `save_agent_report(symbol, agent_name, report)` | Persist a sub-agent JSON report |
@@ -128,3 +134,14 @@ market_context (
 | `get_trades(limit)` | Retrieve trade history |
 | `save_price_snapshot(symbol, close, volume, bar_time)` | Record a price snapshot |
 | `get_last_price(symbol)` | Get the most recent close price for a symbol |
+
+## Notes on schema migrations
+
+New columns added to existing tables (`watchlist.exchange`, `watchlist.marginable`, `watchlist.shortable`, `symbol_states.chart_path`) are defined in `CREATE TABLE IF NOT EXISTS` statements with `DEFAULT` values. **Existing databases do not automatically gain these columns** — use `ALTER TABLE` to add them manually if upgrading from an earlier version:
+
+```sql
+ALTER TABLE watchlist ADD COLUMN exchange TEXT DEFAULT '';
+ALTER TABLE watchlist ADD COLUMN marginable INTEGER DEFAULT 0;
+ALTER TABLE watchlist ADD COLUMN shortable INTEGER DEFAULT 0;
+ALTER TABLE symbol_states ADD COLUMN chart_path TEXT;
+```

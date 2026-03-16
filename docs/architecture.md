@@ -24,8 +24,8 @@ stateDiagram-v2
 
 | State | Trigger | Agents involved |
 |---|---|---|
-| `WATCHING` | Every `analysis_interval_hours` (default 4h) or force event | TechnicalAgent (90-day bars) + market context from DB → TradingAgent |
-| `OPPORTUNITY_FOUND` | Every poll cycle (default 60s) | TechnicalAgent (5-day 15-min bars) + CompanyAnalysisAgent → TradingAgent |
+| `WATCHING` | Every `analysis_interval_hours` (default 4h) or force event | **TechnicalWatchingAgent** (90-day bars) + market context from DB → **TradingOpportunityAgent** |
+| `OPPORTUNITY_FOUND` | Every poll cycle (default 60s) | **TechnicalEntryAgent** (5-day 15-min bars) + CompanyAnalysisAgent → **TradingEntryAgent** |
 | `POSITION_OPEN` | Every poll cycle | Price check only (no LLM call) |
 | Global | Every `analysis_interval_hours` | MarketContextAgent (general market news → DB) |
 
@@ -37,24 +37,31 @@ stateDiagram-v2
 flowchart TD
     UI["Tkinter Launcher<br/>Monitor ON/OFF · Analizar ahora · Dashboard"]
     PM["PriceMonitor<br/>async loop · 60s poll"]
-    TA["TechnicalAgent"]
+    TWA["TechnicalWatchingAgent<br/>WATCHING state · 90-day bars"]
+    TEA["TechnicalEntryAgent<br/>OPPORTUNITY_FOUND · 15-min bars"]
     MC["MarketContextAgent<br/>every 4h · global"]
     CA["CompanyAnalysisAgent<br/>on OPPORTUNITY_FOUND"]
-    TR["TradingAgent<br/>orchestrator"]
+    TOA["TradingOpportunityAgent<br/>WATCHING → OPPORTUNITY_FOUND"]
+    TENT["TradingEntryAgent<br/>OPPORTUNITY_FOUND → POSITION_OPEN"]
     ALP["Alpaca API<br/>paper / live"]
     DB[("SQLite<br/>7 tables")]
     EMAIL["Gmail SMTP<br/>HTML alerts"]
     LOGS["logs/<br/>agent.log · prompts.log"]
+    CHARTS["charts/<br/>PNG evidence charts"]
     DASH["Streamlit Dashboard"]
 
     UI -->|start/stop| PM
-    PM --> TA
+    PM --> TWA
+    PM --> TEA
     PM --> MC
     PM --> CA
-    TA --> TR
-    MC --> TR
-    CA --> TR
-    TR -->|OPEN_POSITION| ALP
+    TWA --> TOA
+    MC --> TOA
+    TEA --> TENT
+    CA --> TENT
+    TOA -->|OPPORTUNITY_FOUND| CHARTS
+    TENT -->|OPEN_POSITION| ALP
+    TENT -->|OPEN_POSITION| CHARTS
     ALP --> DB
     ALP --> EMAIL
     PM --> DB
@@ -66,9 +73,12 @@ flowchart TD
 
 ## Agent diagrams
 
-### TechnicalAnalysisAgent
+### TechnicalWatchingAgent / TechnicalEntryAgent
 
-Analyzes OHLCV price bars to identify trends and entry/exit levels. Called in two modes: medium-term (90 daily bars) for `WATCHING` analysis, and short-term (96 × 15-min bars) for `OPPORTUNITY_FOUND` entry timing.
+Two separate agent instances with different system prompts and model temperatures. Both analyze OHLCV bars, but with different focuses:
+
+- **TechnicalWatchingAgent** (`model_role: technical`, temp 0.1) — macro trend, support/resistance zones, medium-term setup. Used in `WATCHING` state with 90 daily bars.
+- **TechnicalEntryAgent** (`model_role: technical_entry`, temp 0.1) — precise entry timing, mandatory target/stop for BUY. Used in `OPPORTUNITY_FOUND` with 96 × 15-min bars.
 
 ```mermaid
 flowchart TB
@@ -77,7 +87,7 @@ flowchart TB
         --- I2["Current price"]
     end
 
-    AG["TechnicalAnalysisAgent<br/>model: technical · qwen2.5:7b"]
+    AG["TechnicalWatchingAgent or TechnicalEntryAgent<br/>model: technical or technical_entry · qwen2.5:7b"]
 
     subgraph OUT["📤 Output · JSON"]
         O1["trend: BULLISH · BEARISH · SIDEWAYS"]
@@ -121,7 +131,7 @@ flowchart TB
 
 ### CompanyAnalysisAgent
 
-Fetches company-specific news when a symbol reaches `OPPORTUNITY_FOUND` and assesses the risk of opening a position right now. Result is passed directly to `TradingAgent` as context.
+Fetches company-specific news when a symbol reaches `OPPORTUNITY_FOUND` and assesses the risk of opening a position right now. Result is passed directly to `TradingEntryAgent` as context.
 
 ```mermaid
 flowchart TB
@@ -145,34 +155,52 @@ flowchart TB
 
 ---
 
-### TradingAgent (orchestrator)
+### TradingOpportunityAgent / TradingEntryAgent
 
-Makes the final trading decision based on sub-agent reports. Called twice per symbol cycle: once to detect opportunities (`WATCHING → OPPORTUNITY_FOUND`) and once to decide entry (`OPPORTUNITY_FOUND → POSITION_OPEN`).
+Two separate orchestrator agents, each with a distinct system prompt and temperature:
+
+- **TradingOpportunityAgent** (`model_role: trader_opportunity`, temp 0.3) — "Is this worth watching more closely?" Biased toward `HOLD` when signals conflict. Runs in `WATCHING` state.
+- **TradingEntryAgent** (`model_role: trader_entry`, temp 0.1) — "Should we enter NOW?" Strict: all conditions (BUY signal, RISK_ON/NEUTRAL market, LOW/MEDIUM entry risk, confidence ≥ 60) must be met. Runs in `OPPORTUNITY_FOUND` state.
+
+> **Position sizing**: The LLM always returns `qty: null`. The monitor calculates `qty = max(1, int(max_position_value / price))` deterministically from `MAX_POSITION_VALUE`.
 
 ```mermaid
 flowchart TB
     subgraph IN["📥 Input · JSON + text"]
         I1["TechnicalAgent report"]
-        --- I2["MarketContext report or CompanyAnalysis report"]
-        --- I3["Current price · max_qty"]
+        --- I2["MarketContext or CompanyAnalysis report"]
+        --- I3["Current price · max_position_value ($)"]
     end
 
-    AG["TradingAgent — orchestrator<br/>model: trader · qwen2.5:7b"]
+    AG["TradingOpportunityAgent or TradingEntryAgent<br/>model: trader_opportunity or trader_entry · qwen2.5:7b"]
 
     subgraph OUT["📤 Output · JSON"]
         O1["decision: OPEN_POSITION · HOLD · REJECT"]
         --- O2["symbol"]
-        --- O3["qty"]
+        --- O3["qty: null (ignored — calculated by monitor)"]
         --- O4["reasoning"]
     end
 
     IN --> AG --> OUT
 ```
 
-**Decision rules:**
+**Decision rules (TradingEntryAgent):**
 - `OPEN_POSITION` — technical signal is BUY, market is RISK_ON or NEUTRAL, company entry_risk is LOW or MEDIUM, confidence ≥ 60.
 - `HOLD` — signals conflict, confidence is low, or market is RISK_OFF but not severely.
 - `REJECT` — signals clearly unfavorable, entry_risk is HIGH, or market is strongly BEARISH.
+
+---
+
+## Evidence charts
+
+At each state transition that involves a positive decision, the monitor generates a candlestick PNG via `src/chart_generator.py` (using `mplfinance`):
+
+| Event | Chart timeframe | Stored in |
+|---|---|---|
+| `WATCHING → OPPORTUNITY_FOUND` | Daily (90-bar window) | `symbol_states.chart_path` + `charts/` dir |
+| `OPPORTUNITY_FOUND → POSITION_OPEN` | 15-min (96-bar window) | `symbol_states.chart_path` + `charts/` dir |
+
+The chart path is logged as `file:///absolute/path.png` and displayed in the **Estados** dashboard page.
 
 ---
 
@@ -180,13 +208,16 @@ flowchart TB
 
 | Module | Input | Output |
 |---|---|---|
-| **TechnicalAgent** | OHLCV bars JSON | `{trend, signal, target_price, stop_loss, confidence, summary}` |
+| **TechnicalWatchingAgent** | 90 daily OHLCV bars JSON | `{trend, signal, target_price, stop_loss, confidence, summary}` |
+| **TechnicalEntryAgent** | 96 × 15-min OHLCV bars JSON | `{trend, signal, target_price, stop_loss, confidence, summary}` |
 | **MarketContextAgent** | General news JSON | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
 | **CompanyAnalysisAgent** | Company news JSON | `{sentiment, key_events, entry_risk, confidence, summary}` |
-| **TradingAgent** | Sub-agent reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty, reasoning}` |
-| **AlpacaClient** | Credentials + params | Prices, orders, assets (async REST) |
+| **TradingOpportunityAgent** | Technical + market reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
+| **TradingEntryAgent** | Technical + company reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
+| **AlpacaClient** | Credentials + params | Prices, orders, assets with exchange/marginable/shortable metadata (async REST) |
 | **StorageLayer** | Various | SQLite persistence (7 tables) |
 | **TradeAlerter** | Trade details | HTML email via Gmail SMTP |
+| **ChartGenerator** | Symbol, OHLCV bars, timeframe | Absolute path to PNG file |
 
 ## Key design constraints
 
@@ -195,3 +226,6 @@ flowchart TB
 - All crypto symbols are filtered out (`asset_class=us_equity`, `exchange != CRYPTO`).
 - SQLite deduplication uses `url` as unique key for articles; `symbol` as primary key for `symbol_states`.
 - `AgentLogger` writes to `logs/agent.log` and `logs/prompts.log` (rotating, configurable via `LOG_LEVEL`).
+- Position size is calculated deterministically by the monitor (`max(1, int(MAX_POSITION_VALUE / price))`); the LLM always returns `qty: null`.
+- Stop signal is checked at the beginning of each symbol iteration (not only at the `while` loop boundary), so the monitor halts within one symbol's analysis time.
+- Prompt separation by state: `WATCHING` uses macro-focused prompts; `OPPORTUNITY_FOUND` uses timing-focused prompts with stricter conditions.

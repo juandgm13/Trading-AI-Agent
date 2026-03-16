@@ -29,11 +29,17 @@ Full trade history with a calculated P&L column (matched buy→sell pairs per sy
 Live Alpaca account data: equity, cash, and open positions with target/stop-loss values pulled from `symbol_states`.
 
 ### 5 · Watchlist (`ui/pages/5_Watchlist.py`)
-View and manage the list of monitored symbols. Add new symbols or deactivate existing ones.
+View and manage the list of monitored symbols. Includes Alpaca asset metadata columns:
+- **Exchange** — e.g. NASDAQ, NYSE
+- **Marginable** — ✓ / ✗
+- **Shortable** — ✓ / ✗
+
+Add new symbols or deactivate existing ones.
 
 ### 6 · Estados (`ui/pages/6_Estados.py`)
 - State machine table for all symbols (state, last analysis, target, stop-loss, position details).
 - Per-symbol agent report history: browse the full JSON output of each sub-agent call.
+- **Gráficos de evidencia** — if a symbol has a `chart_path` stored in `symbol_states` and the PNG file exists on disk, the candlestick chart is displayed inline with `st.image()`.
 
 ## Shared components (`ui/components.py`)
 

@@ -21,6 +21,7 @@ Configuration via `.env` file (never commit this):
 - `GMAIL_USER` / `GMAIL_APP_PASSWORD` – Gmail SMTP credentials
 - `OLLAMA_BASE_URL` – defaults to `http://localhost:11434`
 - `WATCHLIST_SYMBOLS` – comma-separated symbols (e.g. `AAPL,MSFT`); if empty, loads all Alpaca US equities
+- `MAX_POSITION_VALUE` – max USD per open position (default: `500`)
 - `LOG_LEVEL` – `DEBUG | INFO | WARNING | ERROR` (default: `INFO`)
 
 ## Running
@@ -46,15 +47,15 @@ Global market context (every analysis_interval_hours, default 4h)
 
 WATCHING ──────────────────────────────────────────────┐
     │  (every analysis_interval_hours, default 4h)      │
-    │  TechnicalAgent (medium-term)                     │
+    │  TechnicalWatchingAgent (medium-term daily bars)  │
     │  + global market context (read from DB)           │
-    │  TradingAgent evaluates → opportunity?            │
+    │  TradingOpportunityAgent → HOLD (watch) / REJECT  │
     ▼                                                   │
 OPPORTUNITY_FOUND                                       │
     │  (every poll cycle)                               │
-    │  TechnicalAgent (short-term)                      │
+    │  TechnicalEntryAgent (short-term 15min bars)      │
     │  + CompanyAnalysisAgent (company-specific news)   │
-    │  TradingAgent decides → open position?            │
+    │  TradingEntryAgent → OPEN_POSITION / HOLD / REJECT│
     ▼                                    │ REJECT        │
 POSITION_OPEN ◄──────────────────────────┘              │
     │  (every poll cycle)                               │
@@ -62,16 +63,29 @@ POSITION_OPEN ◄─────────────────────
     │  price <= stop_loss    → SELL → WATCHING ─────────┘
 ```
 
+**Stop behaviour**: when the stop signal is received, the monitor finishes
+processing the current symbol and then exits — it does not abandon mid-cycle.
+
 ### Agent roles (all use `simple` planner, text-in / JSON-out)
 
 | Agent | File | Model role | Input | Output |
 |---|---|---|---|---|
-| `TechnicalAnalysisAgent` | `agents/technical_agent.py` | `technical` | OHLCV bars (pre-fetched by monitor) | `{trend, signal, target_price, stop_loss, confidence, summary}` |
+| `TechnicalWatchingAgent` | `agents/technical_agent.py` | `technical` | OHLCV daily bars (90d, pre-fetched) | `{trend, signal, target_price, stop_loss, confidence, summary}` |
+| `TechnicalEntryAgent` | `agents/technical_agent.py` | `technical_entry` | OHLCV 15min bars (5d, pre-fetched) | `{trend, signal, target_price, stop_loss, confidence, summary}` |
 | `MarketContextAgent` | `agents/economics_agent.py` | `economics` | General market news (GNews) | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
 | `CompanyAnalysisAgent` | `agents/economics_agent.py` | `economics` | Company-specific news (GNews) | `{sentiment, key_events, entry_risk, confidence, summary}` |
-| `TradingAgent` (orchestrator) | `agents/trading_agent.py` | `trader` | Sub-agent reports as context | `{decision, symbol, qty, reasoning}` |
+| `TradingOpportunityAgent` | `agents/trading_agent.py` | `trader_opportunity` | Technical + market context reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
+| `TradingEntryAgent` | `agents/trading_agent.py` | `trader_entry` | Technical + company reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
 
 The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects it into each agent's prompt. Agents are purely text analyzers — no tool loops.
+
+**Prompt separation by state:**
+- `TECHNICAL_WATCHING_PROMPT`: macro trend detection, support/resistance, no tight targets required.
+- `TECHNICAL_ENTRY_PROMPT`: precise entry timing, tight target/stop mandatory for BUY signals.
+- `TRADING_OPPORTUNITY_PROMPT`: "should we watch more closely?" — biased toward HOLD over REJECT.
+- `TRADING_ENTRY_PROMPT`: "enter NOW?" — strict, all conditions must be met for OPEN_POSITION.
+
+**Position sizing**: `qty = max(1, int(MAX_POSITION_VALUE / current_price))`. The LLM never sets qty — it always returns `null`. Sizing is handled entirely by the monitor.
 
 ### Module contracts
 
@@ -79,10 +93,13 @@ The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects i
 |---|---|---|
 | **News Ingestion** | API credentials + query params | `Article { source, title, description, content, url, published_at }` |
 | **Deduplication** | `Article` | `DeduplicationResult { is_new: bool, article: Article }` |
-| **TechnicalAgent** | OHLCV bars JSON in prompt | `{trend, signal, target_price, stop_loss, confidence, summary}` |
+| **TechnicalWatchingAgent** | OHLCV daily bars JSON | `{trend, signal, target_price, stop_loss, confidence, summary}` |
+| **TechnicalEntryAgent** | OHLCV 15min bars JSON | `{trend, signal, target_price, stop_loss, confidence, summary}` |
 | **MarketContextAgent** | General market news JSON | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
 | **CompanyAnalysisAgent** | Company news JSON | `{sentiment, key_events, entry_risk, confidence, summary}` |
-| **TradingAgent** | Sub-agent reports in prompt | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty, reasoning}` |
+| **TradingOpportunityAgent** | Sub-agent reports in prompt | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
+| **TradingEntryAgent** | Sub-agent reports in prompt | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
+| **ChartGenerator** | symbol, bars, timeframe, event_label | PNG path (saved to `charts/`) |
 | **Alerting** | Trade details | Email via Gmail SMTP |
 | **Storage** | Various | SQLite persistence |
 
@@ -93,6 +110,9 @@ The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects i
 - All crypto symbols are filtered out from Alpaca assets and watchlist (`asset_class=us_equity`, `exchange != CRYPTO`).
 - SQLite deduplication uses `url` as unique key for articles; `symbol` as primary key for `symbol_states`.
 - `AgentLogger` writes to `logs/agent.log` and `logs/prompts.log` (rotating, configurable via `LOG_LEVEL`).
+- **Position value limit**: `MAX_POSITION_VALUE` (env) overrides `max_position_value` (yaml). LLM qty is ignored.
+- **Evidence charts**: PNG candlestick charts are generated via `mplfinance` at state transitions (opportunity detected, position opened) and stored in `charts/`. Path is persisted in `symbol_states.chart_path`.
+- **Stop on symbol boundary**: `stop_event` is checked at the start of each symbol in `_check_all()`, not only at the top of the main loop.
 
 ### SQLite tables
 
@@ -101,8 +121,8 @@ The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects i
 | `articles` | News articles + LLM analysis results |
 | `price_snapshots` | Historical price data per symbol |
 | `trades` | Executed orders (buy/sell) |
-| `watchlist` | Active symbols to monitor |
-| `symbol_states` | State machine state per symbol (WATCHING/OPPORTUNITY_FOUND/POSITION_OPEN) |
+| `watchlist` | Active symbols (`symbol`, `company`, `threshold_pct`, `exchange`, `marginable`, `shortable`) |
+| `symbol_states` | State machine state per symbol — includes `chart_path` for evidence PNG |
 | `agent_reports` | Historical sub-agent reports per symbol |
 | `market_context` | Global market context reports (holistic sentiment, updated every 4h) |
 
@@ -114,32 +134,32 @@ The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects i
 - **News source**: GNews free tier
 - **Database**: SQLite (standard library)
 - **Alerts**: Gmail SMTP with App Password
+- **Charts**: `mplfinance` — candlestick PNG saved to `charts/`
 - **UI**: Tkinter (control panel) + Streamlit (dashboard)
-- **Dependencies**: `agent-framework` (local), `aiohttp`, `requests`, `python-dotenv`, `streamlit`
+- **Dependencies**: `agent-framework` (local), `aiohttp`, `requests`, `python-dotenv`, `streamlit`, `mplfinance`
 
 ## File map
 
 ```
 agents/
-  monitor.py          PriceMonitor — state machine loop
-  technical_agent.py  TechnicalAnalysisAgent + prompt builders
-  economics_agent.py  EconomicsAgent + prompt builders
-  trading_agent.py    TradingAgent (orchestrator) + prompt builders
-  trader.py           Legacy ReAct agent (kept for reference)
-  pipeline.py         Legacy news pipeline (kept for reference)
-  trading_agent.yaml  Model config + trading params
+  monitor.py          PriceMonitor — state machine loop (4 specialized agents)
+  technical_agent.py  TechnicalWatchingAgent + TechnicalEntryAgent + prompt builders
+  economics_agent.py  MarketContextAgent + CompanyAnalysisAgent + prompt builders
+  trading_agent.py    TradingOpportunityAgent + TradingEntryAgent + prompt builders
+  trading_agent.yaml  Model config (5 roles) + trading params
   tools/
-    price_tool.py         GetPriceTool
-    news_tool.py          SearchNewsTool
-    portfolio_tool.py     GetPortfolioTool
-    order_tool.py         PlaceOrderTool
-    historical_bars_tool.py  GetHistoricalBarsTool (new)
+    price_tool.py            GetPriceTool
+    news_tool.py             SearchNewsTool
+    portfolio_tool.py        GetPortfolioTool
+    order_tool.py            PlaceOrderTool
+    historical_bars_tool.py  GetHistoricalBarsTool
 src/
-  alpaca.py    AlpacaClient (async REST)
-  storage.py   StorageLayer (SQLite)
-  logger.py    AgentLogger (structured logging)
-  ingestion.py NewsIngestionModule (GNews)
-  alerting.py  TradeAlerter (Gmail SMTP)
+  alpaca.py          AlpacaClient (async REST) — get_assets returns exchange/marginable/shortable
+  storage.py         StorageLayer (SQLite)
+  logger.py          AgentLogger (structured logging)
+  ingestion.py       NewsIngestionModule (GNews)
+  alerting.py        TradeAlerter (Gmail SMTP)
+  chart_generator.py generate_candlestick_chart (mplfinance PNG)
 ui/
   app.py             Streamlit main page
   pages/
@@ -147,9 +167,20 @@ ui/
     2_Precios.py     Price history chart
     3_Trades.py      Trade history + P&L
     4_Portfolio.py   Live portfolio (Alpaca)
-    5_Watchlist.py   Watchlist management
-    6_Estados.py     Symbol state machine + agent reports (new)
+    5_Watchlist.py   Watchlist management (shows exchange/marginable/shortable)
+    6_Estados.py     Symbol states + agent reports + evidence charts
 main.py      Tkinter UI + thread management
-tests/       pytest suite
+tests/       pytest suite (274 tests, ~94% coverage)
+charts/      Evidence PNG charts (auto-created, gitignored)
 logs/        agent.log + prompts.log (auto-created)
 ```
+
+## trading_agent.yaml — model roles
+
+| Role | Temperature | Purpose |
+|---|---|---|
+| `technical` | 0.1 | Medium-term daily bar analysis (WATCHING state) |
+| `technical_entry` | 0.1 | Short-term 15min bar analysis (OPPORTUNITY_FOUND state) |
+| `economics` | 0.2 | Market context + company news analysis |
+| `trader_opportunity` | 0.3 | Should we watch more closely? (higher temp → more HOLD) |
+| `trader_entry` | 0.1 | Enter NOW? (lower temp → stricter OPEN_POSITION) |
