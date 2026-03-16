@@ -2,8 +2,9 @@
 Tests de las funciones build_* y prompt builders de los agentes.
 
 Cubren:
-  - build_technical_agent, build_market_context_agent, build_company_analysis_agent
-    build_economics_agent, build_trading_orchestrator  (AgentBuilder mockeado)
+  - build_technical_watching_agent, build_technical_entry_agent
+  - build_market_context_agent, build_company_analysis_agent, build_economics_agent
+  - build_trading_opportunity_agent, build_trading_entry_agent  (AgentBuilder mockeado)
   - build_medium_term_prompt, build_short_term_prompt
   - build_market_context_prompt, build_company_analysis_prompt, build_economics_prompt
   - build_opportunity_prompt, build_entry_prompt
@@ -35,32 +36,61 @@ def _make_deps():
     return MagicMock(), MagicMock(), MagicMock()
 
 
-# ── build_technical_agent ─────────────────────────────────────────────────────
+# ── build_technical_watching_agent ────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_build_technical_agent_returns_agent():
-    from agents.technical_agent import build_technical_agent
+    from agents.technical_agent import build_technical_watching_agent
 
     mock_builder, mock_agent = _make_builder_mock()
     config, bus, registry = _make_deps()
 
     with patch("agents.technical_agent.AgentBuilder", return_value=mock_builder):
-        agent = await build_technical_agent(config, bus, registry)
+        agent = await build_technical_watching_agent(config, bus, registry)
 
     assert agent is mock_agent
 
 
 @pytest.mark.asyncio
 async def test_build_technical_agent_uses_correct_role():
-    from agents.technical_agent import build_technical_agent
+    from agents.technical_agent import build_technical_watching_agent
 
     mock_builder, _ = _make_builder_mock()
     config, bus, registry = _make_deps()
 
     with patch("agents.technical_agent.AgentBuilder", return_value=mock_builder):
-        await build_technical_agent(config, bus, registry)
+        await build_technical_watching_agent(config, bus, registry)
 
     mock_builder.model_role.assert_called_once_with("technical")
+    mock_builder.stateless.assert_called_once()
+
+
+# ── build_technical_entry_agent ───────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_build_technical_entry_agent_returns_agent():
+    from agents.technical_agent import build_technical_entry_agent
+
+    mock_builder, mock_agent = _make_builder_mock()
+    config, bus, registry = _make_deps()
+
+    with patch("agents.technical_agent.AgentBuilder", return_value=mock_builder):
+        agent = await build_technical_entry_agent(config, bus, registry)
+
+    assert agent is mock_agent
+
+
+@pytest.mark.asyncio
+async def test_build_technical_entry_agent_uses_correct_role():
+    from agents.technical_agent import build_technical_entry_agent
+
+    mock_builder, _ = _make_builder_mock()
+    config, bus, registry = _make_deps()
+
+    with patch("agents.technical_agent.AgentBuilder", return_value=mock_builder):
+        await build_technical_entry_agent(config, bus, registry)
+
+    mock_builder.model_role.assert_called_once_with("technical_entry")
     mock_builder.stateless.assert_called_once()
 
 
@@ -136,32 +166,61 @@ async def test_build_economics_agent_returns_agent():
     assert agent is mock_agent
 
 
-# ── build_trading_orchestrator ────────────────────────────────────────────────
+# ── build_trading_opportunity_agent ───────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_build_trading_orchestrator_returns_agent():
-    from agents.trading_agent import build_trading_orchestrator
+    from agents.trading_agent import build_trading_opportunity_agent
 
     mock_builder, mock_agent = _make_builder_mock()
     config, bus, registry = _make_deps()
 
     with patch("agents.trading_agent.AgentBuilder", return_value=mock_builder):
-        agent = await build_trading_orchestrator(config, bus, registry)
+        agent = await build_trading_opportunity_agent(config, bus, registry)
 
     assert agent is mock_agent
 
 
 @pytest.mark.asyncio
 async def test_build_trading_orchestrator_uses_trader_role():
-    from agents.trading_agent import build_trading_orchestrator
+    from agents.trading_agent import build_trading_opportunity_agent
 
     mock_builder, _ = _make_builder_mock()
     config, bus, registry = _make_deps()
 
     with patch("agents.trading_agent.AgentBuilder", return_value=mock_builder):
-        await build_trading_orchestrator(config, bus, registry)
+        await build_trading_opportunity_agent(config, bus, registry)
 
-    mock_builder.model_role.assert_called_once_with("trader")
+    mock_builder.model_role.assert_called_once_with("trader_opportunity")
+
+
+# ── build_trading_entry_agent ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_build_trading_entry_agent_returns_agent():
+    from agents.trading_agent import build_trading_entry_agent
+
+    mock_builder, mock_agent = _make_builder_mock()
+    config, bus, registry = _make_deps()
+
+    with patch("agents.trading_agent.AgentBuilder", return_value=mock_builder):
+        agent = await build_trading_entry_agent(config, bus, registry)
+
+    assert agent is mock_agent
+
+
+@pytest.mark.asyncio
+async def test_build_trading_entry_agent_uses_trader_entry_role():
+    from agents.trading_agent import build_trading_entry_agent
+
+    mock_builder, _ = _make_builder_mock()
+    config, bus, registry = _make_deps()
+
+    with patch("agents.trading_agent.AgentBuilder", return_value=mock_builder):
+        await build_trading_entry_agent(config, bus, registry)
+
+    mock_builder.model_role.assert_called_once_with("trader_entry")
+    mock_builder.stateless.assert_called_once()
 
 
 # ── Prompt builders: technical_agent ─────────────────────────────────────────
@@ -273,19 +332,19 @@ def test_build_opportunity_prompt_with_market_context():
 
     tech = {"trend": "BULLISH", "signal": "BUY", "confidence": 75}
     ctx = {"market_sentiment": "BULLISH", "risk_appetite": "RISK_ON"}
-    prompt = build_opportunity_prompt("AAPL", 175.0, tech, ctx, max_qty=10)
+    prompt = build_opportunity_prompt("AAPL", 175.0, tech, ctx, max_position_value=500)
 
     assert "AAPL" in prompt
     assert "175.00" in prompt
     assert "BULLISH" in prompt
-    assert "10" in prompt
+    assert "500" in prompt
 
 
 def test_build_opportunity_prompt_without_market_context():
     from agents.trading_agent import build_opportunity_prompt
 
     tech = {"trend": "NEUTRAL", "signal": "HOLD", "confidence": 50}
-    prompt = build_opportunity_prompt("MSFT", 320.0, tech, None, max_qty=5)
+    prompt = build_opportunity_prompt("MSFT", 320.0, tech, None, max_position_value=500)
 
     assert "MSFT" in prompt
     assert "Not available" in prompt
@@ -296,7 +355,7 @@ def test_build_entry_prompt_with_company_report():
 
     tech = {"trend": "BULLISH", "signal": "BUY", "confidence": 80}
     company = {"sentiment": "POSITIVE", "entry_risk": "LOW"}
-    prompt = build_entry_prompt("NVDA", 500.0, tech, company, max_qty=3)
+    prompt = build_entry_prompt("NVDA", 500.0, tech, company, max_position_value=500)
 
     assert "NVDA" in prompt
     assert "500.00" in prompt
@@ -307,7 +366,7 @@ def test_build_entry_prompt_without_company_report():
     from agents.trading_agent import build_entry_prompt
 
     tech = {"trend": "BULLISH", "signal": "BUY", "confidence": 70}
-    prompt = build_entry_prompt("TSLA", 250.0, tech, None, max_qty=2)
+    prompt = build_entry_prompt("TSLA", 250.0, tech, None, max_position_value=500)
 
     assert "TSLA" in prompt
     assert "Not available" in prompt

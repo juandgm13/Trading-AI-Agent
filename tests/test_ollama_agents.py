@@ -40,7 +40,7 @@ def agent_deps():
     ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 
     registry = ModelRegistry()
-    for role in ("technical", "economics", "trader"):
+    for role in ("technical", "technical_entry", "economics", "trader_opportunity", "trader_entry"):
         cfg = config.models.get(role)
         if cfg:
             registry.register(role, OllamaProvider(cfg.model, base_url=ollama_url))
@@ -55,10 +55,10 @@ def agent_deps():
 @pytest.mark.asyncio
 async def test_technical_agent_returns_valid_json(agent_deps, capsys):
     """TechnicalAnalysisAgent devuelve un JSON que pasa validate_technical_report."""
-    from agents.technical_agent import build_technical_agent, build_medium_term_prompt
+    from agents.technical_agent import build_technical_watching_agent, build_medium_term_prompt
 
     config, bus, registry = agent_deps
-    agent = await build_technical_agent(config, bus, registry)
+    agent = await build_technical_watching_agent(config, bus, registry)
 
     # Datos mínimos pero realistas
     bars = [
@@ -84,10 +84,10 @@ async def test_technical_agent_returns_valid_json(agent_deps, capsys):
 @pytest.mark.asyncio
 async def test_technical_agent_short_term_returns_valid_json(agent_deps):
     """TechnicalAnalysisAgent (corto plazo) devuelve JSON válido."""
-    from agents.technical_agent import build_technical_agent, build_short_term_prompt
+    from agents.technical_agent import build_technical_watching_agent, build_short_term_prompt
 
     config, bus, registry = agent_deps
-    agent = await build_technical_agent(config, bus, registry)
+    agent = await build_technical_watching_agent(config, bus, registry)
 
     bars = [
         {"timestamp": f"2025-03-03T{h:02d}:00:00Z", "open": 175.0 + h * 0.1, "high": 175.5 + h * 0.1,
@@ -211,10 +211,10 @@ async def test_company_analysis_agent_negative_news(agent_deps):
 @pytest.mark.asyncio
 async def test_trading_agent_returns_valid_decision(agent_deps):
     """TradingAgent devuelve un JSON que pasa validate_trading_decision."""
-    from agents.trading_agent import build_trading_orchestrator, build_opportunity_prompt
+    from agents.trading_agent import build_trading_opportunity_agent, build_opportunity_prompt
 
     config, bus, registry = agent_deps
-    agent = await build_trading_orchestrator(config, bus, registry)
+    agent = await build_trading_opportunity_agent(config, bus, registry)
 
     tech_report = {
         "trend": "BULLISH", "signal": "BUY",
@@ -226,7 +226,7 @@ async def test_trading_agent_returns_valid_decision(agent_deps):
         "dominant_themes": ["AI growth"], "macro_risks": [],
         "confidence": 70, "summary": "Positive macro environment.",
     }
-    prompt = build_opportunity_prompt("AAPL", 178.0, tech_report, market_context, max_qty=10)
+    prompt = build_opportunity_prompt("AAPL", 178.0, tech_report, market_context, max_position_value=500)
     response = await agent.run(prompt)
     print(f"\n[TradingAgent bullish] raw response:\n{response}")
 
@@ -236,18 +236,16 @@ async def test_trading_agent_returns_valid_decision(agent_deps):
 
     assert result["decision"] in {"OPEN_POSITION", "HOLD", "REJECT"}
     assert isinstance(result["reasoning"], str)
-    if result["decision"] == "OPEN_POSITION":
-        assert result["qty"] is not None and result["qty"] > 0
 
 
 @requires_ollama
 @pytest.mark.asyncio
 async def test_trading_agent_rejects_on_bearish(agent_deps):
     """TradingAgent tiende a HOLD/REJECT con señales bajistas."""
-    from agents.trading_agent import build_trading_orchestrator, build_opportunity_prompt
+    from agents.trading_agent import build_trading_opportunity_agent, build_opportunity_prompt
 
     config, bus, registry = agent_deps
-    agent = await build_trading_orchestrator(config, bus, registry)
+    agent = await build_trading_opportunity_agent(config, bus, registry)
 
     tech_report = {
         "trend": "BEARISH", "signal": "SELL",
@@ -259,7 +257,7 @@ async def test_trading_agent_rejects_on_bearish(agent_deps):
         "dominant_themes": ["Rate fears"], "macro_risks": ["Recession"],
         "confidence": 75, "summary": "Risk-off environment.",
     }
-    prompt = build_opportunity_prompt("XYZ", 50.0, tech_report, market_context, max_qty=10)
+    prompt = build_opportunity_prompt("XYZ", 50.0, tech_report, market_context, max_position_value=500)
     response = await agent.run(prompt)
     print(f"\n[TradingAgent bearish] raw response:\n{response}")
 

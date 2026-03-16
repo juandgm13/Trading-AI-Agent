@@ -67,13 +67,15 @@ def _make_monitor(tmp_db, on_log=None):
     monitor = PriceMonitor(
         alpaca=mock_alpaca,
         storage=tmp_db,
-        technical_agent=mock_tech,
+        technical_watching_agent=mock_tech,
+        technical_entry_agent=mock_tech,
         market_context_agent=mock_market_ctx,
         company_analysis_agent=mock_company,
-        trading_agent=mock_trader,
+        trading_opportunity_agent=mock_trader,
+        trading_entry_agent=mock_trader,
         logger=logger,
         gnews_api_key="test-key",
-        max_qty=10,
+        max_position_value=500.0,
         analysis_interval_hours=4.0,
     )
     # Retorna (monitor, mock_alpaca, mock_tech, mock_market_ctx, mock_trader)
@@ -175,7 +177,8 @@ async def test_opportunity_found_opens_position_on_decision(tmp_db):
     mock_alpaca.place_order.assert_awaited_once()
     new_state = tmp_db.get_symbol_state("AAPL")
     assert new_state["state"] == "POSITION_OPEN"
-    assert new_state["position_qty"] == 5.0
+    # qty se calcula como max(1, int(max_position_value / price)) = max(1, int(500/175)) = 2
+    assert new_state["position_qty"] == 2.0
 
 
 @pytest.mark.asyncio
@@ -654,42 +657,42 @@ async def test_manage_position_handles_place_order_exception(tmp_db):
 
 @pytest.mark.asyncio
 async def test_run_technical_medium_handles_parse_error(tmp_db):
-    """ParseError en TechnicalAgent (medium) → devuelve None."""
+    """ParseError en TechnicalAgent (medium) → devuelve (None, bars)."""
     monitor, _, mock_tech, _, _ = _make_monitor(tmp_db)
     mock_tech.run = AsyncMock(return_value="not valid json at all")
 
-    result = await monitor._run_technical_medium("AAPL", 175.0)
-    assert result is None
+    report, bars = await monitor._run_technical_medium("AAPL", 175.0)
+    assert report is None
 
 
 @pytest.mark.asyncio
 async def test_run_technical_medium_handles_exception(tmp_db):
-    """Excepción en TechnicalAgent (medium) → devuelve None."""
+    """Excepción en TechnicalAgent (medium) → devuelve (None, [])."""
     monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
     mock_alpaca.get_bars = AsyncMock(side_effect=RuntimeError("bars error"))
 
-    result = await monitor._run_technical_medium("AAPL", 175.0)
-    assert result is None
+    report, bars = await monitor._run_technical_medium("AAPL", 175.0)
+    assert report is None
 
 
 @pytest.mark.asyncio
 async def test_run_technical_short_handles_parse_error(tmp_db):
-    """ParseError en TechnicalAgent (short) → devuelve None."""
+    """ParseError en TechnicalAgent (short) → devuelve (None, bars)."""
     monitor, _, mock_tech, _, _ = _make_monitor(tmp_db)
     mock_tech.run = AsyncMock(return_value="invalid response")
 
-    result = await monitor._run_technical_short("AAPL", 175.0)
-    assert result is None
+    report, bars = await monitor._run_technical_short("AAPL", 175.0)
+    assert report is None
 
 
 @pytest.mark.asyncio
 async def test_run_technical_short_handles_exception(tmp_db):
-    """Excepción general en TechnicalAgent (short) → devuelve None."""
+    """Excepción general en TechnicalAgent (short) → devuelve (None, [])."""
     monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
     mock_alpaca.get_bars = AsyncMock(side_effect=ConnectionError("timeout"))
 
-    result = await monitor._run_technical_short("AAPL", 175.0)
-    assert result is None
+    report, bars = await monitor._run_technical_short("AAPL", 175.0)
+    assert report is None
 
 
 @pytest.mark.asyncio
@@ -698,7 +701,7 @@ async def test_run_trading_decision_handles_parse_error(tmp_db):
     monitor, _, _, _, mock_trader = _make_monitor(tmp_db)
     mock_trader.run = AsyncMock(return_value="I think you should buy")
 
-    result = await monitor._run_trading_decision("AAPL", "test_stage", "prompt")
+    result = await monitor._run_trading_decision("AAPL", "test_stage", "prompt", mock_trader)
     assert result is None
 
 
@@ -708,7 +711,7 @@ async def test_run_trading_decision_handles_exception(tmp_db):
     monitor, _, _, _, mock_trader = _make_monitor(tmp_db)
     mock_trader.run = AsyncMock(side_effect=RuntimeError("LLM error"))
 
-    result = await monitor._run_trading_decision("AAPL", "test_stage", "prompt")
+    result = await monitor._run_trading_decision("AAPL", "test_stage", "prompt", mock_trader)
     assert result is None
 
 
@@ -866,7 +869,7 @@ async def test_init_watchlist_from_alpaca_populates_storage(tmp_db):
     ])
     logger = _make_logger()
 
-    await _init_watchlist_from_alpaca(mock_alpaca, tmp_db, logger, mock_alpaca)
+    await _init_watchlist_from_alpaca(mock_alpaca, tmp_db, logger)
 
     wl = tmp_db.get_watchlist()
     symbols = {r["symbol"] for r in wl}
@@ -883,7 +886,7 @@ async def test_init_watchlist_from_alpaca_handles_exception(tmp_db):
     mock_alpaca.get_assets = AsyncMock(side_effect=RuntimeError("API error"))
     logger = _make_logger()
 
-    await _init_watchlist_from_alpaca(mock_alpaca, tmp_db, logger, mock_alpaca)
+    await _init_watchlist_from_alpaca(mock_alpaca, tmp_db, logger)
     assert tmp_db.get_watchlist() == []
 
 
@@ -909,3 +912,188 @@ async def test_run_monitor_returns_early_without_gnews_key(monkeypatch):
 
     from agents.monitor import run_monitor
     await run_monitor()  # no debe lanzar excepción
+
+
+# ── F3: stop_event dentro del loop de símbolos ───────────────────────────────
+
+@pytest.mark.asyncio
+async def test_check_all_stops_mid_loop_on_stop_event(tmp_db):
+    """stop_event activo a mitad del loop interrumpe el procesamiento de símbolos."""
+    from datetime import datetime, timezone
+
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+
+    recent = datetime.now(timezone.utc).isoformat()
+    for sym in ["AAPL", "MSFT", "NVDA"]:
+        tmp_db.upsert_watchlist(sym, "", 2.0)
+        tmp_db.upsert_symbol_state(sym, state="WATCHING", last_analysis_at=recent)
+
+    mock_alpaca.get_snapshots = AsyncMock(return_value={
+        "AAPL": {"close": 175.0, "volume": 1000, "timestamp": "t"},
+        "MSFT": {"close": 320.0, "volume": 2000, "timestamp": "t"},
+        "NVDA": {"close": 500.0, "volume": 3000, "timestamp": "t"},
+    })
+
+    stop = asyncio.Event()
+    process_calls = []
+    original_process = monitor._process_symbol
+
+    async def _patched_process(symbol, snap, state_row):
+        process_calls.append(symbol)
+        stop.set()  # activar stop después del primer símbolo procesado
+        return await original_process(symbol, snap, state_row)
+
+    monitor._process_symbol = _patched_process
+
+    watchlist = tmp_db.get_watchlist()
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._check_all(watchlist, stop_event=stop)
+
+    # Solo debe haberse procesado 1 símbolo antes del break
+    assert len(process_calls) == 1
+
+
+# ── F5: _generate_chart ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_generate_chart_returns_path_on_success(tmp_db, tmp_path):
+    """_generate_chart retorna la ruta del PNG cuando chart_generator funciona."""
+    import unittest.mock as mock_mod
+
+    monitor, _, _, _, _ = _make_monitor(tmp_db)
+    bars = [
+        {"timestamp": "2025-01-02T00:00:00Z", "open": 170.0, "high": 175.0, "low": 169.0, "close": 173.0, "volume": 1_000_000},
+    ]
+    fake_path = str(tmp_path / "AAPL_opportunity_test.png")
+
+    with mock_mod.patch("src.chart_generator.generate_candlestick_chart", return_value=fake_path):
+        path = monitor._generate_chart("AAPL", bars, "1Day", "opportunity")
+
+    assert path == fake_path
+
+
+@pytest.mark.asyncio
+async def test_generate_chart_returns_none_on_empty_bars(tmp_db):
+    """_generate_chart retorna None si la lista de barras está vacía."""
+    monitor, _, _, _, _ = _make_monitor(tmp_db)
+    path = monitor._generate_chart("AAPL", [], "1Day", "opportunity")
+    assert path is None
+
+
+@pytest.mark.asyncio
+async def test_generate_chart_returns_none_on_exception(tmp_db):
+    """_generate_chart captura excepciones y devuelve None."""
+    import unittest.mock as mock_mod
+
+    monitor, _, _, _, _ = _make_monitor(tmp_db)
+    bars = [{"timestamp": "2025-01-02T00:00:00Z", "open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 100}]
+
+    with mock_mod.patch("src.chart_generator.generate_candlestick_chart", side_effect=RuntimeError("mpl error")):
+        path = monitor._generate_chart("AAPL", bars, "1Day", "opportunity")
+
+    assert path is None
+
+
+# ── Alerter: exception swallowing en buy y sell ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_look_for_entry_alerter_exception_is_swallowed(tmp_db):
+    """Si el alerter lanza excepción al enviar alerta de compra, no se propaga."""
+    monitor, mock_alpaca, _, _, mock_trader = _make_monitor(tmp_db)
+    mock_trader.run.return_value = json.dumps({
+        "decision": "OPEN_POSITION", "symbol": "AAPL", "qty": None, "reasoning": "go",
+    })
+    mock_alerter = MagicMock()
+    mock_alerter.send_trade_alert.side_effect = RuntimeError("SMTP error")
+    monitor._alerter = mock_alerter
+
+    tmp_db.upsert_symbol_state("AAPL", state="OPPORTUNITY_FOUND")
+    state_row = tmp_db.get_symbol_state("AAPL")
+    snap = {"close": 175.0, "volume": 1000, "timestamp": "t"}
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._process_symbol("AAPL", snap, state_row)  # no debe lanzar
+
+    mock_alerter.send_trade_alert.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_manage_position_alerter_exception_is_swallowed(tmp_db):
+    """Si el alerter lanza excepción al enviar alerta de venta, no se propaga."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alerter = MagicMock()
+    mock_alerter.send_trade_alert.side_effect = RuntimeError("SMTP gone")
+    monitor._alerter = mock_alerter
+
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="POSITION_OPEN",
+        target_price=180.0, stop_loss=165.0, position_qty=3.0,
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+    snap = {"close": 185.0, "volume": 1000, "timestamp": "t"}
+
+    result = await monitor._process_symbol("AAPL", snap, state_row)  # no debe lanzar
+
+    assert result is not None
+    mock_alerter.send_trade_alert.assert_called_once()
+
+
+# ── _maybe_update_market_context: naive datetime y exception path ─────────────
+
+@pytest.mark.asyncio
+async def test_maybe_update_market_context_handles_naive_datetime(tmp_db):
+    """Contexto reciente con datetime naive (sin timezone) se trata como reciente."""
+    from datetime import datetime, timezone, timedelta
+    import sqlite3
+
+    monitor, _, _, _, _ = _make_monitor(tmp_db)
+    monitor._force_analysis = False
+
+    # Insertar contexto con timestamp naive reciente (30 min atrás, intervalo=4h)
+    naive_ts = (datetime.now(timezone.utc) - timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S")
+    with sqlite3.connect(tmp_db.db_path) as conn:
+        conn.execute(
+            "INSERT INTO market_context (report, news_count, created_at) VALUES (?, ?, ?)",
+            ('{"market_sentiment": "NEUTRAL"}', 1, naive_ts),
+        )
+
+    call_count = 0
+
+    async def _patched_run():
+        nonlocal call_count
+        call_count += 1
+
+    monitor._run_market_context = _patched_run
+    await monitor._maybe_update_market_context()
+
+    assert call_count == 0  # no debe actualizar (el contexto es reciente)
+
+
+@pytest.mark.asyncio
+async def test_maybe_update_market_context_handles_invalid_date(tmp_db):
+    """Si la fecha del contexto es inválida, se ignora y se actualiza el contexto."""
+    import sqlite3
+
+    monitor, _, _, _, _ = _make_monitor(tmp_db)
+    monitor._force_analysis = False
+
+    with sqlite3.connect(tmp_db.db_path) as conn:
+        conn.execute(
+            "INSERT INTO market_context (report, news_count, created_at) VALUES (?, ?, ?)",
+            ('{"market_sentiment": "NEUTRAL"}', 1, "not-a-valid-date"),
+        )
+
+    call_count = 0
+
+    async def _patched_run():
+        nonlocal call_count
+        call_count += 1
+
+    monitor._run_market_context = _patched_run
+    await monitor._maybe_update_market_context()
+
+    assert call_count == 1  # fecha inválida → actualiza

@@ -217,6 +217,44 @@ async def test_get_latest_bar_returns_first_bar():
 
 
 @pytest.mark.asyncio
+async def test_get_bars_day_timeframe_uses_wider_start_window():
+    """Para timeframe 1Day, start = limit*2 días atrás (branch Day en get_bars)."""
+    from datetime import datetime, timezone, timedelta
+    from src.alpaca import AlpacaClient
+
+    bar_data = {"bars": [{"t": "2024-01-01", "o": 170.0, "h": 175.0, "l": 169.0, "c": 173.0, "v": 1_000_000}]}
+    client = AlpacaClient("k", "s")
+
+    captured_params = {}
+
+    def _fake_get(url, params=None):
+        captured_params.update(params or {})
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = AsyncMock(return_value=bar_data)
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+        ctx.__aexit__ = AsyncMock(return_value=None)
+        return ctx
+
+    mock_session = MagicMock()
+    mock_session.get.side_effect = _fake_get
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    limit = 90
+    with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+        await client.get_bars("AAPL", timeframe="1Day", limit=limit)
+
+    start_str = captured_params.get("start", "")
+    expected_min = (datetime.now(timezone.utc) - timedelta(days=limit * 2 + 1)).strftime("%Y-%m-%d")
+    assert start_str[:10] >= expected_min  # start >= limit*2 días atrás
+    assert captured_params["timeframe"] == "1Day"
+
+
+@pytest.mark.asyncio
 async def test_get_position_returns_none_on_404():
     from src.alpaca import AlpacaClient
 
