@@ -1,11 +1,11 @@
 models:
-  analyzer:          # news pipeline legacy
+  technical:         # TechnicalAnalysisAgent (medio plazo — WATCHING)
     provider: ollama
     model: qwen2.5:7b
     temperature: 0.1
-    max_tokens: 512
+    max_tokens: 1024
 
-  technical:         # TechnicalAnalysisAgent
+  technical_entry:   # TechnicalAnalysisAgent (corto plazo — OPPORTUNITY_FOUND)
     provider: ollama
     model: qwen2.5:7b
     temperature: 0.1
@@ -17,24 +17,30 @@ models:
     temperature: 0.2
     max_tokens: 768
 
-  trader:            # TradingAgent (orquestador)
+  trader_opportunity:  # TradingAgent — ¿vale la pena vigilar más? (temperatura más alta → más apertura a HOLD)
+    provider: ollama
+    model: qwen2.5:7b
+    temperature: 0.3
+    max_tokens: 512
+
+  trader_entry:        # TradingAgent — ¿entrar AHORA? (temperatura baja → más estricto)
     provider: ollama
     model: qwen2.5:7b
     temperature: 0.1
     max_tokens: 512
 
 agents:
-  trading_analyzer:
-    planner: simple
-    tools: []
-    model_role: analyzer
-    description: "Analyzes financial news articles and returns structured JSON"
-
   technical_analysis:
     planner: simple
     tools: []
     model_role: technical
-    description: "Analyzes OHLCV bar data and returns technical signal JSON"
+    description: "Analyzes OHLCV bar data (medium-term) and returns technical signal JSON"
+
+  technical_entry:
+    planner: simple
+    tools: []
+    model_role: technical_entry
+    description: "Analyzes OHLCV bar data (short-term entry timing) and returns technical signal JSON"
 
   economics_analysis:
     planner: simple
@@ -42,15 +48,21 @@ agents:
     model_role: economics
     description: "Analyzes news sentiment and market context, returns JSON"
 
-  trading_orchestrator:
+  trading_opportunity:
     planner: simple
     tools: []
-    model_role: trader
-    description: "Evaluates sub-agent reports and decides BUY/SELL/HOLD"
+    model_role: trader_opportunity
+    description: "Evaluates medium-term reports and decides whether to watch more closely"
+
+  trading_entry:
+    planner: simple
+    tools: []
+    model_role: trader_entry
+    description: "Evaluates short-term reports and decides whether to open a position NOW"
 
 trading:
   analysis_interval_hours: 4   # cada cuántas horas hacer análisis completo (WATCHING)
-  max_qty_per_order: 10
+  max_position_value: 500       # valor máximo en USD por posición
   max_daily_trades: 5
   poll_interval_seconds: 60
   paper_mode: true
