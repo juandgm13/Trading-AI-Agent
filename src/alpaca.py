@@ -240,6 +240,51 @@ class AlpacaClient:
             and a.get("class") == "us_equity"
         ]
 
+    async def get_asset(self, symbol: str) -> dict | None:
+        """
+        Devuelve metadatos de un activo individual, o None si no existe o no es negociable.
+
+        Returns:
+            dict con {symbol, name, exchange, marginable, shortable} o None.
+        """
+        url = f"{self._trading_url}/v2/assets/{symbol}"
+        async with aiohttp.ClientSession(headers=self._headers) as session:
+            async with session.get(url) as resp:
+                if resp.status == 404:
+                    return None
+                resp.raise_for_status()
+                a = await resp.json()
+                self._log_response("GET", url, resp.status, a)
+        if not a.get("tradable") or a.get("exchange") == "CRYPTO":
+            return None
+        return {
+            "symbol": a["symbol"],
+            "name": a.get("name", ""),
+            "exchange": a.get("exchange", ""),
+            "marginable": a.get("marginable", False),
+            "shortable": a.get("shortable", False),
+        }
+
+    async def get_clock(self) -> dict:
+        """
+        Devuelve el estado del reloj del mercado.
+
+        Returns:
+            dict con {is_open, next_open, next_close, timestamp}.
+        """
+        url = f"{self._trading_url}/v2/clock"
+        async with aiohttp.ClientSession(headers=self._headers) as session:
+            async with session.get(url) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                self._log_response("GET", url, resp.status, data)
+        return {
+            "is_open": data.get("is_open", False),
+            "next_open": data.get("next_open"),
+            "next_close": data.get("next_close"),
+            "timestamp": data.get("timestamp"),
+        }
+
     def is_crypto(self, symbol: str) -> bool:
         """
         Heurística rápida para detectar símbolos de criptomonedas.

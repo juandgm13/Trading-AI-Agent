@@ -478,3 +478,132 @@ async def test_get_assets_returns_nonempty_list(alpaca):
     first = assets[0]
     assert "symbol" in first
     assert "name" in first
+
+
+# ── Unit tests: get_asset ─────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_asset_returns_fields():
+    from src.alpaca import AlpacaClient
+
+    asset_data = {
+        "symbol": "AAPL",
+        "name": "Apple Inc.",
+        "exchange": "NASDAQ",
+        "tradable": True,
+        "marginable": True,
+        "shortable": True,
+        "class": "us_equity",
+    }
+    client = AlpacaClient("k", "s")
+    with _mock_http("get", 200, asset_data):
+        result = await client.get_asset("AAPL")
+
+    assert result is not None
+    assert result["symbol"] == "AAPL"
+    assert result["name"] == "Apple Inc."
+    assert result["exchange"] == "NASDAQ"
+    assert result["marginable"] is True
+    assert result["shortable"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_asset_not_found_returns_none():
+    from src.alpaca import AlpacaClient
+
+    mock_resp = MagicMock()
+    mock_resp.status = 404
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_req_ctx
+
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    client = AlpacaClient("k", "s")
+    with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+        result = await client.get_asset("XYZNOTREAL")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_asset_crypto_returns_none():
+    """get_asset devuelve None para activos con exchange=CRYPTO."""
+    from src.alpaca import AlpacaClient
+
+    asset_data = {
+        "symbol": "BTCUSD",
+        "name": "Bitcoin",
+        "exchange": "CRYPTO",
+        "tradable": True,
+        "marginable": False,
+        "shortable": False,
+    }
+    client = AlpacaClient("k", "s")
+    with _mock_http("get", 200, asset_data):
+        result = await client.get_asset("BTCUSD")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_asset_non_tradable_returns_none():
+    """get_asset devuelve None para activos no negociables."""
+    from src.alpaca import AlpacaClient
+
+    asset_data = {
+        "symbol": "AAPL",
+        "name": "Apple Inc.",
+        "exchange": "NASDAQ",
+        "tradable": False,
+        "marginable": False,
+        "shortable": False,
+    }
+    client = AlpacaClient("k", "s")
+    with _mock_http("get", 200, asset_data):
+        result = await client.get_asset("AAPL")
+    assert result is None
+
+
+# ── Unit tests: get_clock ─────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_clock_market_open():
+    from src.alpaca import AlpacaClient
+
+    clock_data = {
+        "is_open": True,
+        "next_open": "2026-03-18T13:30:00Z",
+        "next_close": "2026-03-17T20:00:00Z",
+        "timestamp": "2026-03-17T15:00:00Z",
+    }
+    client = AlpacaClient("k", "s")
+    with _mock_http("get", 200, clock_data):
+        result = await client.get_clock()
+
+    assert result["is_open"] is True
+    assert result["next_close"] == "2026-03-17T20:00:00Z"
+    assert result["timestamp"] == "2026-03-17T15:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_get_clock_market_closed():
+    from src.alpaca import AlpacaClient
+
+    clock_data = {
+        "is_open": False,
+        "next_open": "2026-03-18T13:30:00Z",
+        "next_close": "2026-03-18T20:00:00Z",
+        "timestamp": "2026-03-17T22:00:00Z",
+    }
+    client = AlpacaClient("k", "s")
+    with _mock_http("get", 200, clock_data):
+        result = await client.get_clock()
+
+    assert result["is_open"] is False
+    assert result["next_open"] == "2026-03-18T13:30:00Z"
