@@ -135,6 +135,57 @@ class PriceMonitor:
 
     async def _check_all(self, watchlist: list[dict], stop_event: asyncio.Event | None = None):
         """Consulta precios en batch y procesa los cambios detectados."""
+        # Verificar horario de mercado
+        clock = None
+        try:
+            clock = await self._alpaca.get_clock()
+            if not clock["is_open"]:
+                next_open_str = clock.get("next_open", "")
+                if next_open_str:
+                    next_open_utc = datetime.fromisoformat(next_open_str.replace("Z", "+00:00"))
+                    wait_secs = max(60, (next_open_utc - datetime.now(timezone.utc)).total_seconds())
+                    next_open_local = next_open_utc.astimezone().strftime("%H:%M %Z")
+                else:
+                    wait_secs = 300
+                    next_open_local = "desconocida"
+
+                self._logger.info(
+                    f"Mercado cerrado — apertura a las {next_open_local}",
+                    source="monitor",
+                )
+                self._logger.debug(
+                    f"Mercado cerrado — esperando {wait_secs:.0f}s ({wait_secs / 60:.1f} min)",
+                    source="monitor",
+                )
+
+                # Cancelar órdenes pendientes (tipo 'day' caducan igual, pero limpieza explícita)
+                try:
+                    await self._alpaca.cancel_all_orders()
+                    self._logger.info("Órdenes pendientes canceladas (mercado cerrado)", source="monitor")
+                except Exception as e:
+                    self._logger.warning(f"No se pudieron cancelar órdenes pendientes: {e}", source="monitor")
+
+                await _interruptible_sleep(wait_secs, stop_event)
+                return
+        except Exception as e:
+            self._logger.warning(f"No se pudo verificar horario de mercado: {e}", source="monitor")
+
+        # ¿Cierre inminente? (< 5 min para next_close)
+        close_imminent = False
+        next_close_str = clock.get("next_close", "") if clock else ""
+        if next_close_str:
+            try:
+                next_close_utc = datetime.fromisoformat(next_close_str.replace("Z", "+00:00"))
+                mins_to_close = (next_close_utc - datetime.now(timezone.utc)).total_seconds() / 60
+                if mins_to_close < 5:
+                    close_imminent = True
+                    self._logger.info(
+                        f"Cierre de mercado en {mins_to_close:.1f} min — análisis nuevos omitidos",
+                        source="monitor",
+                    )
+            except Exception:
+                pass
+
         # Actualizar contexto global de mercado si corresponde
         await self._maybe_update_market_context()
 
@@ -604,6 +655,11 @@ async def _wait_or_stop(stop_event: asyncio.Event | None, seconds: int):
             pass
     else:
         await asyncio.sleep(seconds)
+
+
+async def _interruptible_sleep(seconds: float, stop_event: asyncio.Event | None):
+    """Duerme hasta `seconds` segundos, interrumpible por stop_event."""
+    await _wait_or_stop(stop_event, int(seconds))
 
 
 async def _init_watchlist_from_alpaca(
