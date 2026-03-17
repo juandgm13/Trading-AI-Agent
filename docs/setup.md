@@ -79,7 +79,7 @@ trading:
   paper_mode: true
 ```
 
-> **Position sizing**: `qty = max(1, int(max_position_value / current_price))`. The LLM does not decide quantity — it always returns `qty: null`.
+> **Position sizing**: `TradingEntryAgent` recommends a qty (integer ≥ 1). The monitor caps it to `max(1, int(max_position_value / current_price))`. If the agent returns `null`, the cap is used as fallback.
 
 Model roles can be pointed to different Ollama models independently:
 
@@ -106,6 +106,21 @@ models:
     temperature: 0.1
     max_tokens: 512
 ```
+
+## Watchlist initialization
+
+When `WATCHLIST_SYMBOLS` is set in `.env`, each symbol is enriched by calling `GET /v2/assets/{symbol}` to populate `name`, `exchange`, `marginable`, and `shortable` in the database. If the API returns `404` or the symbol is non-tradable, a minimal entry (symbol only) is inserted as fallback.
+
+If `WATCHLIST_SYMBOLS` is **not** set, the full list of active Alpaca US equity assets is loaded via `GET /v2/assets`.
+
+## Market hours standby
+
+At the start of every poll cycle, the monitor calls `GET /v2/clock`. If the market is closed:
+1. Logs `"Mercado cerrado — standby hasta <next_open>"`
+2. Sleeps until `next_open` (minimum 60 s, respecting `stop_event`)
+3. Skips the rest of the cycle — no LLM calls, no Alpaca data requests
+
+If the clock API is unreachable, the cycle continues normally (non-blocking).
 
 ## Evidence charts
 

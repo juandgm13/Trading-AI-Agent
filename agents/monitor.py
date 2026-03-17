@@ -219,11 +219,19 @@ class PriceMonitor:
                 continue
 
             state_row = self._storage.get_symbol_state(symbol)
-            triggered = await self._process_symbol(symbol, snap, state_row)
-            if triggered:
-                alerts_triggered.append(triggered)
 
-            # Guardar snapshot
+            # Si cierre inminente, solo gestionar posiciones ya abiertas
+            if close_imminent and state_row.get("state", "WATCHING") != "POSITION_OPEN":
+                self._logger.debug(
+                    f"{symbol}: análisis omitido — cierre de mercado en < 5 min",
+                    source="monitor",
+                )
+            else:
+                triggered = await self._process_symbol(symbol, snap, state_row)
+                if triggered:
+                    alerts_triggered.append(triggered)
+
+            # Guardar snapshot de precio siempre (independientemente del skip)
             self._storage.save_price_snapshot(
                 symbol,
                 snap["close"],

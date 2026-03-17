@@ -5,10 +5,10 @@
 | File | Tests | Requirements |
 |---|---|---|
 | `test_storage.py` | 20 | None (in-memory SQLite) |
-| `test_monitor.py` | 30 | None (fully mocked) |
+| `test_monitor.py` | 72 | None (fully mocked) |
 | `test_alerting.py` | 5 | None (mock SMTP) |
 | `test_tools.py` | 12 | Partial (some require Alpaca) |
-| `test_alpaca.py` | 10 | `ALPACA_API_KEY` + `ALPACA_SECRET_KEY` |
+| `test_alpaca.py` | 30 | Unit: none · Integration: `ALPACA_API_KEY` + `ALPACA_SECRET_KEY` |
 | `test_agent_builders.py` | 32 | None (AgentBuilder mocked) |
 | `test_chart_generator.py` | 9 | None (mplfinance mocked) |
 | `test_ollama_agents.py` | ~10 | Ollama running locally |
@@ -56,7 +56,9 @@ Covers `PriceMonitor` state machine using fully mocked Alpaca, LLM agents, and `
 - **OPPORTUNITY_FOUND**: runs short-term analysis + company analysis; opens position on OPEN_POSITION; returns to WATCHING on REJECT
 - **POSITION_OPEN**: sells at target price, sells at stop-loss, holds between levels
 - **F3 stop mid-loop**: `stop_event` set mid-cycle exits at the next symbol boundary
-- **F4 position sizing**: qty is calculated as `max(1, int(max_position_value / price))`, LLM qty is ignored
+- **Market standby**: `_check_all` returns early when `get_clock()` returns `is_open=False`; cycle continues normally when `get_clock()` raises; local time shown in log (not raw UTC ISO); `cancel_all_orders()` called on standby; cancel exceptions swallowed
+- **Close imminent guard**: symbols in WATCHING/OPPORTUNITY_FOUND skip `_process_symbol` when `next_close < 5 min`; POSITION_OPEN symbols are always processed; price snapshot is saved regardless of skip
+- **Qty logic**: agent qty is used when ≤ max_qty; capped to max_qty when exceeded; max_qty used as fallback when agent returns `null`
 - **F5 chart generation**: `_generate_chart` returns path on success, None on empty bars, None and logs on exception
 - **Alerter exceptions**: buy/sell alerter exceptions are swallowed and do not interrupt the trade flow
 - **Loop**: `monitor.stop()` exits cleanly; `_check_all` batches snapshot calls

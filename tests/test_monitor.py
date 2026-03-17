@@ -24,6 +24,7 @@ def _make_monitor(tmp_db, on_log=None):
         {"timestamp": "t", "open": 175.0, "high": 176.0, "low": 174.0, "close": 175.0, "volume": 1000}
     ])
     mock_alpaca.place_order = AsyncMock(return_value={"order_id": "ord-test", "status": "submitted"})
+    mock_alpaca.get_clock = AsyncMock(return_value={"is_open": True, "next_open": None, "next_close": None, "timestamp": None})
 
     mock_tech = MagicMock()
     mock_tech.run = AsyncMock(return_value=json.dumps({
@@ -1097,3 +1098,409 @@ async def test_maybe_update_market_context_handles_invalid_date(tmp_db):
     await monitor._maybe_update_market_context()
 
     assert call_count == 1  # fecha inválida → actualiza
+
+
+# ── Standby de mercado ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_check_all_standby_when_market_closed(tmp_db):
+    """Si get_clock devuelve is_open=False, _check_all retorna sin procesar símbolos."""
+    from datetime import datetime, timezone
+
+    monitor, mock_alpaca, mock_tech, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": False,
+        "next_open": "2099-01-01T13:30:00+00:00",  # futuro lejano para evitar espera real
+        "next_close": None,
+        "timestamp": None,
+    })
+
+    recent = datetime.now(timezone.utc).isoformat()
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    tmp_db.upsert_symbol_state("AAPL", state="WATCHING", last_analysis_at=recent)
+
+    mock_alpaca.get_snapshots = AsyncMock(return_value={
+        "AAPL": {"close": 175.0, "volume": 1000, "timestamp": "t"},
+    })
+
+    # Parchear _interruptible_sleep para no esperar realmente
+    import agents.monitor as monitor_mod
+    original_sleep = monitor_mod._interruptible_sleep
+
+    async def _instant_sleep(secs, stop_event):
+        pass  # no esperar
+
+    monitor_mod._interruptible_sleep = _instant_sleep
+    try:
+        watchlist = tmp_db.get_watchlist()
+        await monitor._check_all(watchlist)
+    finally:
+        monitor_mod._interruptible_sleep = original_sleep
+
+    # get_snapshots nunca debe llamarse cuando el mercado está cerrado
+    mock_alpaca.get_snapshots.assert_not_awaited()
+    mock_tech.run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_check_all_continues_when_get_clock_fails(tmp_db):
+    """Si get_clock lanza excepción, _check_all continúa el ciclo normalmente."""
+    from datetime import datetime, timezone
+
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_clock = AsyncMock(side_effect=RuntimeError("clock API error"))
+
+    recent = datetime.now(timezone.utc).isoformat()
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    tmp_db.upsert_symbol_state("AAPL", state="WATCHING", last_analysis_at=recent)
+
+    mock_alpaca.get_snapshots = AsyncMock(return_value={
+        "AAPL": {"close": 175.0, "volume": 1000, "timestamp": "t"},
+    })
+
+    watchlist = tmp_db.get_watchlist()
+    # No debe lanzar excepción y debe llamar a get_snapshots
+    await monitor._check_all(watchlist)
+
+    mock_alpaca.get_snapshots.assert_awaited_once()
+
+
+# ── Qty del agente ────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_entry_uses_agent_qty_when_within_limit(tmp_db):
+    """Si el agente recomienda qty <= max_qty, se usa la qty del agente."""
+    monitor, mock_alpaca, _, _, mock_trader = _make_monitor(tmp_db)
+    # max_qty = max(1, int(500/175)) = 2; agente sugiere 1 (dentro del límite)
+    mock_trader.run.return_value = json.dumps({
+        "decision": "OPEN_POSITION",
+        "symbol": "AAPL",
+        "qty": 1,
+        "reasoning": "Conservative entry",
+    })
+
+    tmp_db.upsert_symbol_state("AAPL", state="OPPORTUNITY_FOUND")
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._process_symbol("AAPL", {"close": 175.0, "volume": 1000, "timestamp": "t"}, state_row)
+
+    new_state = tmp_db.get_symbol_state("AAPL")
+    assert new_state["state"] == "POSITION_OPEN"
+    assert new_state["position_qty"] == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_entry_caps_agent_qty_at_max(tmp_db):
+    """Si el agente recomienda qty > max_qty, se capa al máximo permitido."""
+    monitor, mock_alpaca, _, _, mock_trader = _make_monitor(tmp_db)
+    # max_qty = max(1, int(500/175)) = 2; agente sugiere 10 → se capa a 2
+    mock_trader.run.return_value = json.dumps({
+        "decision": "OPEN_POSITION",
+        "symbol": "AAPL",
+        "qty": 10,
+        "reasoning": "Aggressive entry",
+    })
+
+    tmp_db.upsert_symbol_state("AAPL", state="OPPORTUNITY_FOUND")
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._process_symbol("AAPL", {"close": 175.0, "volume": 1000, "timestamp": "t"}, state_row)
+
+    new_state = tmp_db.get_symbol_state("AAPL")
+    assert new_state["state"] == "POSITION_OPEN"
+    assert new_state["position_qty"] == pytest.approx(2.0)  # cappado a max_qty
+
+
+@pytest.mark.asyncio
+async def test_entry_uses_max_qty_when_agent_returns_null(tmp_db):
+    """Si el agente devuelve qty=null, se usa max_qty como fallback."""
+    monitor, mock_alpaca, _, _, mock_trader = _make_monitor(tmp_db)
+    mock_trader.run.return_value = json.dumps({
+        "decision": "OPEN_POSITION",
+        "symbol": "AAPL",
+        "qty": None,
+        "reasoning": "Signal confirmed",
+    })
+
+    tmp_db.upsert_symbol_state("AAPL", state="OPPORTUNITY_FOUND")
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        await monitor._process_symbol("AAPL", {"close": 175.0, "volume": 1000, "timestamp": "t"}, state_row)
+
+    new_state = tmp_db.get_symbol_state("AAPL")
+    assert new_state["state"] == "POSITION_OPEN"
+    # max(1, int(500/175)) = 2
+    assert new_state["position_qty"] == pytest.approx(2.0)
+
+
+# ── Standby de mercado — refinamientos ────────────────────────────────────────
+
+def _patch_sleep(monitor_mod):
+    """Helper: parchea _interruptible_sleep para no esperar realmente."""
+    async def _instant_sleep(secs, stop_event):
+        pass
+    original = monitor_mod._interruptible_sleep
+    monitor_mod._interruptible_sleep = _instant_sleep
+    return original
+
+
+@pytest.mark.asyncio
+async def test_check_all_standby_logs_local_time(tmp_db):
+    """El mensaje INFO de mercado cerrado muestra hora en formato HH:MM, no ISO UTC."""
+    import agents.monitor as monitor_mod
+
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": False,
+        "next_open": "2099-01-01T13:30:00+00:00",
+        "next_close": None,
+        "timestamp": None,
+    })
+    mock_alpaca.cancel_all_orders = AsyncMock()
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+
+    log_messages = []
+    monitor._logger = MagicMock()
+    monitor._logger.info = MagicMock(side_effect=lambda msg, **kw: log_messages.append(msg))
+    monitor._logger.debug = MagicMock()
+    monitor._logger.warning = MagicMock()
+
+    original = _patch_sleep(monitor_mod)
+    try:
+        await monitor._check_all(tmp_db.get_watchlist())
+    finally:
+        monitor_mod._interruptible_sleep = original
+
+    # El mensaje INFO de apertura debe contener ":" (formato hora HH:MM)
+    apertura_msgs = [m for m in log_messages if "apertura" in m]
+    assert apertura_msgs, "No se encontró mensaje de apertura"
+    assert ":" in apertura_msgs[0]
+    # No debe contener el ISO string completo (ej. "2099-01-01")
+    assert "2099" not in apertura_msgs[0]
+
+
+@pytest.mark.asyncio
+async def test_check_all_standby_logs_debug_wait(tmp_db):
+    """El debug log de espera contiene la duración en segundos."""
+    import agents.monitor as monitor_mod
+
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": False,
+        "next_open": "2099-01-01T13:30:00+00:00",
+        "next_close": None,
+        "timestamp": None,
+    })
+    mock_alpaca.cancel_all_orders = AsyncMock()
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+
+    debug_messages = []
+    monitor._logger = MagicMock()
+    monitor._logger.info = MagicMock()
+    monitor._logger.debug = MagicMock(side_effect=lambda msg, **kw: debug_messages.append(msg))
+    monitor._logger.warning = MagicMock()
+
+    original = _patch_sleep(monitor_mod)
+    try:
+        await monitor._check_all(tmp_db.get_watchlist())
+    finally:
+        monitor_mod._interruptible_sleep = original
+
+    espera_msgs = [m for m in debug_messages if "esperando" in m]
+    assert espera_msgs, "No se encontró mensaje de debug de espera"
+    assert "s" in espera_msgs[0] or "min" in espera_msgs[0]
+
+
+@pytest.mark.asyncio
+async def test_check_all_standby_cancels_orders(tmp_db):
+    """cancel_all_orders se llama cuando is_open=False."""
+    import agents.monitor as monitor_mod
+
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": False,
+        "next_open": "2099-01-01T13:30:00+00:00",
+        "next_close": None,
+        "timestamp": None,
+    })
+    mock_alpaca.cancel_all_orders = AsyncMock()
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+
+    original = _patch_sleep(monitor_mod)
+    try:
+        await monitor._check_all(tmp_db.get_watchlist())
+    finally:
+        monitor_mod._interruptible_sleep = original
+
+    mock_alpaca.cancel_all_orders.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_check_all_standby_cancel_exception_swallowed(tmp_db):
+    """Si cancel_all_orders lanza, la excepción no se propaga y el ciclo retorna normalmente."""
+    import agents.monitor as monitor_mod
+
+    monitor, mock_alpaca, mock_tech, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": False,
+        "next_open": "2099-01-01T13:30:00+00:00",
+        "next_close": None,
+        "timestamp": None,
+    })
+    mock_alpaca.cancel_all_orders = AsyncMock(side_effect=RuntimeError("cancel failed"))
+    mock_alpaca.get_snapshots = AsyncMock(return_value={})
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+
+    original = _patch_sleep(monitor_mod)
+    try:
+        # No debe lanzar excepción
+        await monitor._check_all(tmp_db.get_watchlist())
+    finally:
+        monitor_mod._interruptible_sleep = original
+
+    # El ciclo retorna antes de get_snapshots (mercado cerrado)
+    mock_alpaca.get_snapshots.assert_not_awaited()
+    mock_tech.run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_check_all_close_imminent_skips_watching(tmp_db):
+    """Símbolo en WATCHING no llama a _process_symbol cuando cierre < 5 min."""
+    from datetime import datetime, timezone, timedelta
+
+    monitor, mock_alpaca, mock_tech, _, _ = _make_monitor(tmp_db)
+    # next_close en 3 minutos → cierre inminente
+    soon = (datetime.now(timezone.utc) + timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": True,
+        "next_open": None,
+        "next_close": soon,
+        "timestamp": None,
+    })
+    mock_alpaca.get_snapshots = AsyncMock(return_value={
+        "AAPL": {"close": 175.0, "volume": 1000, "timestamp": "t"},
+    })
+
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    tmp_db.upsert_symbol_state("AAPL", state="WATCHING")
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value='{"articles":[]}'))
+        await monitor._check_all(tmp_db.get_watchlist())
+
+    mock_tech.run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_check_all_close_imminent_skips_opportunity(tmp_db):
+    """Símbolo en OPPORTUNITY_FOUND no llama a _process_symbol cuando cierre < 5 min."""
+    from datetime import datetime, timezone, timedelta
+
+    monitor, mock_alpaca, mock_tech, _, _ = _make_monitor(tmp_db)
+    soon = (datetime.now(timezone.utc) + timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": True,
+        "next_open": None,
+        "next_close": soon,
+        "timestamp": None,
+    })
+    mock_alpaca.get_snapshots = AsyncMock(return_value={
+        "AAPL": {"close": 175.0, "volume": 1000, "timestamp": "t"},
+    })
+
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    tmp_db.upsert_symbol_state("AAPL", state="OPPORTUNITY_FOUND")
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value='{"articles":[]}'))
+        await monitor._check_all(tmp_db.get_watchlist())
+
+    mock_tech.run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_check_all_close_imminent_keeps_position_open(tmp_db):
+    """Símbolo en POSITION_OPEN sí llama a _process_symbol aunque cierre sea inminente."""
+    from datetime import datetime, timezone, timedelta
+
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    soon = (datetime.now(timezone.utc) + timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": True,
+        "next_open": None,
+        "next_close": soon,
+        "timestamp": None,
+    })
+    mock_alpaca.get_snapshots = AsyncMock(return_value={
+        "AAPL": {"close": 175.0, "volume": 1000, "timestamp": "t"},
+    })
+
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    tmp_db.upsert_symbol_state(
+        "AAPL",
+        state="POSITION_OPEN",
+        target_price=200.0,
+        stop_loss=160.0,
+        position_qty=2.0,
+        position_open_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    process_called = []
+    original_process = monitor._process_symbol
+
+    async def _spy_process(symbol, snap, state_row):
+        process_called.append(symbol)
+        return await original_process(symbol, snap, state_row)
+
+    monitor._process_symbol = _spy_process
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value='{"articles":[]}'))
+        await monitor._check_all(tmp_db.get_watchlist())
+
+    assert "AAPL" in process_called
+
+
+@pytest.mark.asyncio
+async def test_check_all_close_imminent_saves_price_snapshot(tmp_db):
+    """El snapshot de precio se guarda aunque el análisis se omita por cierre inminente."""
+    from datetime import datetime, timezone, timedelta
+
+    monitor, mock_alpaca, mock_tech, _, _ = _make_monitor(tmp_db)
+    soon = (datetime.now(timezone.utc) + timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": True,
+        "next_open": None,
+        "next_close": soon,
+        "timestamp": None,
+    })
+    mock_alpaca.get_snapshots = AsyncMock(return_value={
+        "AAPL": {"close": 175.0, "volume": 1000, "timestamp": "t"},
+    })
+
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    tmp_db.upsert_symbol_state("AAPL", state="WATCHING")
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value='{"articles":[]}'))
+        await monitor._check_all(tmp_db.get_watchlist())
+
+    # El agente no debe haberse invocado (análisis omitido)
+    mock_tech.run.assert_not_awaited()
+    # Pero el snapshot de precio debe haberse guardado
+    snapshots = tmp_db.get_price_history("AAPL", limit=1)
+    assert snapshots, "Snapshot no guardado cuando análisis omitido por cierre inminente"
+    assert snapshots[0]["close"] == pytest.approx(175.0)

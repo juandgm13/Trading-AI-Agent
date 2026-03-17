@@ -75,7 +75,7 @@ processing the current symbol and then exits — it does not abandon mid-cycle.
 | `MarketContextAgent` | `agents/economics_agent.py` | `economics` | General market news (GNews) | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
 | `CompanyAnalysisAgent` | `agents/economics_agent.py` | `economics` | Company-specific news (GNews) | `{sentiment, key_events, entry_risk, confidence, summary}` |
 | `TradingOpportunityAgent` | `agents/trading_agent.py` | `trader_opportunity` | Technical + market context reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
-| `TradingEntryAgent` | `agents/trading_agent.py` | `trader_entry` | Technical + company reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
+| `TradingEntryAgent` | `agents/trading_agent.py` | `trader_entry` | Technical + company reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: <int or null>, reasoning}` |
 
 The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects it into each agent's prompt. Agents are purely text analyzers — no tool loops.
 
@@ -85,7 +85,7 @@ The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects i
 - `TRADING_OPPORTUNITY_PROMPT`: "should we watch more closely?" — biased toward HOLD over REJECT.
 - `TRADING_ENTRY_PROMPT`: "enter NOW?" — strict, all conditions must be met for OPEN_POSITION.
 
-**Position sizing**: `qty = max(1, int(MAX_POSITION_VALUE / current_price))`. The LLM never sets qty — it always returns `null`. Sizing is handled entirely by the monitor.
+**Position sizing**: `TradingEntryAgent` recommends a qty (integer ≥ 1). The monitor applies a hard cap: `max_qty = max(1, int(MAX_POSITION_VALUE / current_price))`. Final qty = `min(agent_qty, max_qty)`. If the agent returns `null`, the monitor falls back to `max_qty`.
 
 ### Module contracts
 
@@ -98,7 +98,9 @@ The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects i
 | **MarketContextAgent** | General market news JSON | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
 | **CompanyAnalysisAgent** | Company news JSON | `{sentiment, key_events, entry_risk, confidence, summary}` |
 | **TradingOpportunityAgent** | Sub-agent reports in prompt | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
-| **TradingEntryAgent** | Sub-agent reports in prompt | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
+| **TradingEntryAgent** | Sub-agent reports in prompt | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: <int or null>, reasoning}` |
+| **AlpacaClient.get_asset()** | Symbol string | `{symbol, name, exchange, marginable, shortable}` or `None` |
+| **AlpacaClient.get_clock()** | — | `{is_open, next_open, next_close, timestamp}` |
 | **ChartGenerator** | symbol, bars, timeframe, event_label | PNG path (saved to `charts/`) |
 | **Alerting** | Trade details | Email via Gmail SMTP |
 | **Storage** | Various | SQLite persistence |
@@ -110,9 +112,11 @@ The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects i
 - All crypto symbols are filtered out from Alpaca assets and watchlist (`asset_class=us_equity`, `exchange != CRYPTO`).
 - SQLite deduplication uses `url` as unique key for articles; `symbol` as primary key for `symbol_states`.
 - `AgentLogger` writes to `logs/agent.log` and `logs/prompts.log` (rotating, configurable via `LOG_LEVEL`).
-- **Position value limit**: `MAX_POSITION_VALUE` (env) overrides `max_position_value` (yaml). LLM qty is ignored.
+- **Position value limit**: `MAX_POSITION_VALUE` (env) overrides `max_position_value` (yaml). Agent qty is capped to `max(1, int(MAX_POSITION_VALUE / price))`; `null` falls back to the cap.
 - **Evidence charts**: PNG candlestick charts are generated via `mplfinance` at state transitions (opportunity detected, position opened) and stored in `charts/`. Path is persisted in `symbol_states.chart_path`.
 - **Stop on symbol boundary**: `stop_event` is checked at the start of each symbol in `_check_all()`, not only at the top of the main loop.
+- **Market hours standby**: at the start of each `_check_all()` cycle, the monitor calls `AlpacaClient.get_clock()`. If `is_open=False`, it logs the next open time and sleeps until then (min 60s, interruptible by `stop_event`). If the clock API fails, the cycle continues normally.
+- **Watchlist enrichment from ENV**: when `WATCHLIST_SYMBOLS` is set, each symbol is enriched via `AlpacaClient.get_asset()` to populate `name`, `exchange`, `marginable`, and `shortable`. Falls back to a minimal entry if the API returns `None`.
 
 ### SQLite tables
 
@@ -170,7 +174,7 @@ ui/
     5_Watchlist.py   Watchlist management (shows exchange/marginable/shortable)
     6_Estados.py     Symbol states + agent reports + evidence charts
 main.py      Tkinter UI + thread management
-tests/       pytest suite (274 tests, ~94% coverage)
+tests/       pytest suite (285 tests, ~93% coverage)
 charts/      Evidence PNG charts (auto-created, gitignored)
 logs/        agent.log + prompts.log (auto-created)
 ```
@@ -184,3 +188,15 @@ logs/        agent.log + prompts.log (auto-created)
 | `economics` | 0.2 | Market context + company news analysis |
 | `trader_opportunity` | 0.3 | Should we watch more closely? (higher temp → more HOLD) |
 | `trader_entry` | 0.1 | Enter NOW? (lower temp → stricter OPEN_POSITION) |
+
+## Documentation rule
+
+**After every code modification, update `docs/` accordingly.** The files to keep in sync are:
+
+| File | What to update |
+|---|---|
+| `docs/architecture.md` | Agent contracts, state machine, design constraints, module contracts |
+| `docs/setup.md` | Configuration options, position sizing, logging examples |
+| `docs/database.md` | Schema changes, new columns, StorageLayer methods |
+| `docs/testing.md` | Test counts per file, new test categories |
+| `docs/dashboard.md` | New dashboard pages or UI changes |

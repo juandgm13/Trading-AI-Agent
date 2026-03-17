@@ -162,7 +162,7 @@ Two separate orchestrator agents, each with a distinct system prompt and tempera
 - **TradingOpportunityAgent** (`model_role: trader_opportunity`, temp 0.3) — "Is this worth watching more closely?" Biased toward `HOLD` when signals conflict. Runs in `WATCHING` state.
 - **TradingEntryAgent** (`model_role: trader_entry`, temp 0.1) — "Should we enter NOW?" Strict: all conditions (BUY signal, RISK_ON/NEUTRAL market, LOW/MEDIUM entry risk, confidence ≥ 60) must be met. Runs in `OPPORTUNITY_FOUND` state.
 
-> **Position sizing**: The LLM always returns `qty: null`. The monitor calculates `qty = max(1, int(max_position_value / price))` deterministically from `MAX_POSITION_VALUE`.
+> **Position sizing**: `TradingEntryAgent` recommends a `qty` (integer ≥ 1). The monitor applies a hard cap: `max_qty = max(1, int(max_position_value / price))`. Final qty = `min(agent_qty, max_qty)`. If the agent returns `null`, the monitor falls back to `max_qty`.
 
 ```mermaid
 flowchart TB
@@ -177,7 +177,7 @@ flowchart TB
     subgraph OUT["📤 Output · JSON"]
         O1["decision: OPEN_POSITION · HOLD · REJECT"]
         --- O2["symbol"]
-        --- O3["qty: null (ignored — calculated by monitor)"]
+        --- O3["qty: integer (TradingEntryAgent) or null (opportunity phase)"]
         --- O4["reasoning"]
     end
 
@@ -213,8 +213,10 @@ The chart path is logged as `file:///absolute/path.png` and displayed in the **E
 | **MarketContextAgent** | General news JSON | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
 | **CompanyAnalysisAgent** | Company news JSON | `{sentiment, key_events, entry_risk, confidence, summary}` |
 | **TradingOpportunityAgent** | Technical + market reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
-| **TradingEntryAgent** | Technical + company reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
-| **AlpacaClient** | Credentials + params | Prices, orders, assets with exchange/marginable/shortable metadata (async REST) |
+| **TradingEntryAgent** | Technical + company reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: <int or null>, reasoning}` |
+| **AlpacaClient.get_asset()** | Symbol string | `{symbol, name, exchange, marginable, shortable}` or `None` |
+| **AlpacaClient.get_clock()** | — | `{is_open, next_open, next_close, timestamp}` |
+| **AlpacaClient** | Credentials + params | Prices, orders, assets, clock (async REST) |
 | **StorageLayer** | Various | SQLite persistence (7 tables) |
 | **TradeAlerter** | Trade details | HTML email via Gmail SMTP |
 | **ChartGenerator** | Symbol, OHLCV bars, timeframe | Absolute path to PNG file |
@@ -226,6 +228,8 @@ The chart path is logged as `file:///absolute/path.png` and displayed in the **E
 - All crypto symbols are filtered out (`asset_class=us_equity`, `exchange != CRYPTO`).
 - SQLite deduplication uses `url` as unique key for articles; `symbol` as primary key for `symbol_states`.
 - `AgentLogger` writes to `logs/agent.log` and `logs/prompts.log` (rotating, configurable via `LOG_LEVEL`).
-- Position size is calculated deterministically by the monitor (`max(1, int(MAX_POSITION_VALUE / price))`); the LLM always returns `qty: null`.
+- **Position sizing**: `TradingEntryAgent` recommends a qty; the monitor caps it to `max(1, int(MAX_POSITION_VALUE / price))`. Fallback to the cap if the agent returns `null`.
 - Stop signal is checked at the beginning of each symbol iteration (not only at the `while` loop boundary), so the monitor halts within one symbol's analysis time.
+- **Market hours standby**: `_check_all()` calls `get_clock()` at the start of every cycle. If the market is closed, it sleeps until `next_open` (interruptible). If `get_clock()` fails, the cycle continues normally.
+- **Watchlist enrichment**: when `WATCHLIST_SYMBOLS` is set, each symbol is enriched via `get_asset()` (name, exchange, marginable, shortable). Falls back to minimal entry on API failure.
 - Prompt separation by state: `WATCHING` uses macro-focused prompts; `OPPORTUNITY_FOUND` uses timing-focused prompts with stricter conditions.
