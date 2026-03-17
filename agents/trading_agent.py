@@ -58,20 +58,22 @@ Required JSON structure:
 {
   "decision": "OPEN_POSITION" | "HOLD" | "REJECT",
   "symbol": "<ticker>",
-  "qty": null,
+  "qty": <integer number of shares to buy, or null if not OPEN_POSITION>,
   "reasoning": "<one paragraph explaining the decision>"
 }
 
 Decision rules:
 - OPEN_POSITION: Short-term signal is BUY with high confidence (>= 70), market is RISK_ON or NEUTRAL,
-  entry_risk is LOW or MEDIUM. All conditions must be met. qty is always null (sizing handled externally).
+  entry_risk is LOW or MEDIUM. All conditions must be met.
+  qty must be an integer number of shares (>= 1) when decision is OPEN_POSITION.
+  Do not exceed max_position_value — the system will cap your qty if needed.
 - HOLD: Conditions are close but not ideal. Wait for a better entry within the same opportunity.
   Use when: signal is HOLD/WAIT, confidence is 50-70, or entry_risk is MEDIUM with mixed signals.
 - REJECT: Setup has deteriorated, signal reversed to BEARISH, entry_risk is HIGH, or market turned RISK_OFF.
   Rejecting returns the symbol to WATCHING state.
 
 Be strict: this is a real trade execution decision. When in doubt, HOLD rather than REJECT.
-Never recommend qty — position sizing is calculated externally based on max_position_value.\
+Set qty to null for HOLD or REJECT decisions.\
 """
 
 
@@ -171,7 +173,7 @@ def build_entry_prompt(
         f"Decide whether to execute a trade for {symbol} RIGHT NOW.\n"
         f"Current price: ${current_price:.2f}\n"
         f"Max position value: ${max_position_value:.0f} USD "
-        f"(approximately {int(max_position_value / current_price)} shares at current price)\n\n"
+        f"(max {int(max_position_value / current_price)} shares at current price — recommend your desired qty)\n\n"
         f"Short-term Technical Analysis (15-minute bars):\n{json.dumps(tech_report, indent=2)}\n\n"
         f"Company News Analysis:\n{company_section}\n\n"
         f"This opportunity was flagged in a previous cycle. Is this the right moment to enter? "

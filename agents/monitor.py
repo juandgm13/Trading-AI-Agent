@@ -308,8 +308,18 @@ class PriceMonitor:
             return None
 
         if decision.get("decision") == "OPEN_POSITION":
-            # F4: calcular qty por valor máximo en dólares (ignorar qty del LLM)
-            qty = max(1, int(self._max_position_value / price))
+            # Calcular qty máxima por valor máximo en dólares
+            max_qty = max(1, int(self._max_position_value / price))
+            agent_qty = decision.get("qty")
+            if isinstance(agent_qty, (int, float)) and agent_qty >= 1:
+                qty = min(int(agent_qty), max_qty)
+                if int(agent_qty) > max_qty:
+                    self._logger.info(
+                        f"{symbol}: qty del agente ({int(agent_qty)}) excede límite — usando {qty}",
+                        source="monitor",
+                    )
+            else:
+                qty = max_qty  # fallback si el agente devuelve null
             target = tech_report.get("target_price")
             stop = tech_report.get("stop_loss")
 
@@ -686,9 +696,22 @@ async def run_monitor(
                     logger.warning(
                         f"{sym} excluido (crypto — usar Binance en el futuro)", source="monitor"
                     )
+                    continue
+                try:
+                    asset = await alpaca.get_asset(sym)
+                except Exception:
+                    asset = None
+                if asset:
+                    storage.upsert_watchlist(
+                        asset["symbol"],
+                        asset.get("name", ""),
+                        exchange=asset.get("exchange", ""),
+                        marginable=asset.get("marginable", False),
+                        shortable=asset.get("shortable", False),
+                    )
                 else:
-                    storage.upsert_watchlist(sym)
-                    filtered.append(sym)
+                    storage.upsert_watchlist(sym)  # fallback mínimo
+                filtered.append(sym)
             logger.info(f"Watchlist inicializada desde .env: {', '.join(filtered)}", source="monitor")
         else:
             await _init_watchlist_from_alpaca(alpaca, storage, logger)
