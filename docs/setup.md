@@ -76,7 +76,6 @@ trading:
   analysis_interval_hours: 4    # how often to run full analysis (WATCHING state)
   max_position_value: 500       # max dollar value per position (replaces max_qty_per_order)
   poll_interval_seconds: 60     # polling interval in seconds
-  paper_mode: true
 ```
 
 > **Position sizing**: `TradingEntryAgent` recommends a qty (integer ≥ 1). The monitor caps it to `max(1, int(max_position_value / current_price))`. If the agent returns `null`, the cap is used as fallback.

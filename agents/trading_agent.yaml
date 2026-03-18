@@ -63,6 +63,4 @@ agents:
 trading:
   analysis_interval_hours: 4   # cada cuántas horas hacer análisis completo (WATCHING)
   max_position_value: 500       # valor máximo en USD por posición
-  max_daily_trades: 5
   poll_interval_seconds: 60
-  paper_mode: true
