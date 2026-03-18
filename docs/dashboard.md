@@ -34,7 +34,7 @@ View and manage the list of monitored symbols. Includes Alpaca asset metadata co
 - **Marginable** — ✓ / ✗
 - **Shortable** — ✓ / ✗
 
-Add new symbols or deactivate existing ones.
+Add new symbols (ticker + optional company name) or deactivate existing ones.
 
 ### 6 · Estados (`ui/pages/6_Estados.py`)
 - State machine table for all symbols (state, last analysis, target, stop-loss, position details).
