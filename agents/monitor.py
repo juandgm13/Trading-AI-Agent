@@ -92,6 +92,7 @@ class PriceMonitor:
         self._analysis_interval_hours = analysis_interval_hours
         self._alerter = alerter
         self._force_event = force_event
+        self._market_status_callback = None
         self._running = True
         self._force_analysis = False
 
@@ -151,6 +152,9 @@ class PriceMonitor:
                     wait_secs = 300
                     next_open_local = "desconocida"
 
+                if self._market_status_callback:
+                    self._market_status_callback(False, next_open_str)
+
                 self._logger.info(
                     f"Mercado cerrado — apertura a las {next_open_local}",
                     source="monitor",
@@ -171,6 +175,10 @@ class PriceMonitor:
                 return
         except Exception as e:
             self._logger.warning(f"No se pudo verificar horario de mercado: {e}", source="monitor")
+        else:
+            # Mercado abierto — notificar a la UI
+            if clock and clock.get("is_open") and self._market_status_callback:
+                self._market_status_callback(True, None)
 
         # ¿Cierre inminente? (< 5 min para next_close)
         close_imminent = False
@@ -828,6 +836,7 @@ async def run_monitor(
     on_log=None,
     stop_event: asyncio.Event | None = None,
     force_event: asyncio.Event | None = None,
+    market_status_callback=None,
 ):
     """
     Inicializa todos los componentes y arranca el loop de monitorización.
@@ -986,6 +995,7 @@ async def run_monitor(
         alerter=alerter,
         force_event=force_event,
     )
+    monitor._market_status_callback = market_status_callback
     await monitor.run(poll_interval_seconds=poll_interval, stop_event=stop_event)
 
 
@@ -993,6 +1003,12 @@ def run_monitor_sync(
     on_log=None,
     stop_event: asyncio.Event | None = None,
     force_event: asyncio.Event | None = None,
+    market_status_callback=None,
 ):
     """Wrapper síncrono para Tkinter thread."""
-    asyncio.run(run_monitor(on_log=on_log, stop_event=stop_event, force_event=force_event))
+    asyncio.run(run_monitor(
+        on_log=on_log,
+        stop_event=stop_event,
+        force_event=force_event,
+        market_status_callback=market_status_callback,
+    ))

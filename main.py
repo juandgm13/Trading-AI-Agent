@@ -39,6 +39,8 @@ def _toggle_monitor(
     log: scrolledtext.ScrolledText,
     btn_monitor: tk.Button,
     btn_analyze: tk.Button,
+    market_label: tk.Label,
+    root: tk.Tk,
 ):
     global _monitor_stop_event, _monitor_force_event, _monitor_thread
 
@@ -58,6 +60,27 @@ def _toggle_monitor(
         btn_analyze.configure(state="normal")
         redirector.write("[monitor] Iniciando...\n")
 
+        def _on_market_status(is_open: bool, next_open: str | None):
+            """Callback invocado desde el thread del monitor — actualiza el label en el thread de Tkinter."""
+            def _update():
+                if is_open:
+                    market_label.configure(text="", bg="SystemButtonFace")
+                else:
+                    if next_open:
+                        try:
+                            from datetime import datetime
+                            next_open_utc = datetime.fromisoformat(next_open.replace("Z", "+00:00"))
+                            next_open_local = next_open_utc.astimezone().strftime("%H:%M %Z")
+                        except Exception:
+                            next_open_local = "desconocida"
+                    else:
+                        next_open_local = "desconocida"
+                    market_label.configure(
+                        text=f"⚠  Mercado cerrado — próxima apertura: {next_open_local}",
+                        bg="#fff3cd",
+                    )
+            root.after(0, _update)
+
         def monitor_thread_fn():
             global _monitor_stop_event, _monitor_force_event
             loop = asyncio.new_event_loop()
@@ -74,12 +97,14 @@ def _toggle_monitor(
                         on_log=on_log,
                         stop_event=_monitor_stop_event,
                         force_event=_monitor_force_event,
+                        market_status_callback=_on_market_status,
                     )
                 )
             finally:
                 loop.close()
                 btn_monitor.configure(text="Monitor ON", bg="SystemButtonFace")
                 btn_analyze.configure(state="disabled")
+                root.after(0, lambda: market_label.configure(text="", bg="SystemButtonFace"))
 
         _monitor_thread = threading.Thread(target=monitor_thread_fn, daemon=True)
         _monitor_thread.start()
@@ -156,6 +181,17 @@ def main():
     toolbar = tk.Frame(root, pady=8, padx=8)
     toolbar.pack(fill="x")
 
+    # ── Label de estado del mercado ───────────────────────────────────────────
+    market_label = tk.Label(
+        root,
+        text="",
+        font=("Arial", 10, "bold"),
+        anchor="w",
+        padx=8,
+        pady=4,
+    )
+    market_label.pack(fill="x")
+
     log = scrolledtext.ScrolledText(root, state="disabled", font=("Consolas", 10))
 
     btn_monitor = tk.Button(
@@ -175,7 +211,7 @@ def main():
     )
 
     btn_monitor.configure(
-        command=lambda: _toggle_monitor(log, btn_monitor, btn_analyze)
+        command=lambda: _toggle_monitor(log, btn_monitor, btn_analyze, market_label, root)
     )
     btn_monitor.pack(side="left", padx=4)
     btn_analyze.pack(side="left", padx=4)
