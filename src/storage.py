@@ -111,6 +111,17 @@ class StorageLayer:
                     created_at  TEXT NOT NULL
                 )
             """)
+            # Migraciones — añadir columnas nuevas si no existen
+            _migrations = [
+                "ALTER TABLE symbol_states ADD COLUMN pending_order_id TEXT",
+                "ALTER TABLE trades ADD COLUMN pnl REAL",
+                "ALTER TABLE trades ADD COLUMN fees REAL",
+            ]
+            for _sql in _migrations:
+                try:
+                    conn.execute(_sql)
+                except Exception:
+                    pass  # columna ya existe
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
@@ -242,18 +253,30 @@ class StorageLayer:
         status: str,
         trigger: str,
         reason: str,
+        pnl: float | None = None,
+        fees: float | None = None,
     ):
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO trades (symbol, side, qty, price, order_id, status, trigger, reason, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO trades (symbol, side, qty, price, order_id, status, trigger, reason, pnl, fees, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    symbol, side, qty, price, order_id, status, trigger, reason,
+                    symbol, side, qty, price, order_id, status, trigger, reason, pnl, fees,
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
+
+    def get_last_buy_trade(self, symbol: str) -> dict | None:
+        """Devuelve el último trade de compra para el símbolo, o None si no existe."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM trades WHERE symbol = ? AND side = 'buy' ORDER BY created_at DESC LIMIT 1",
+                (symbol.upper(),),
+            ).fetchone()
+        return dict(row) if row else None
 
     def get_trades(self, limit: int = 50) -> list[dict]:
         with self._connect() as conn:
@@ -326,6 +349,7 @@ class StorageLayer:
             "position_qty": None,
             "position_open_at": None,
             "chart_path": None,
+            "pending_order_id": None,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -346,8 +370,8 @@ class StorageLayer:
                     INSERT INTO symbol_states
                         (symbol, state, last_analysis_at, analysis_summary,
                          entry_signal_at, target_price, stop_loss,
-                         position_qty, position_open_at, chart_path, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         position_qty, position_open_at, chart_path, pending_order_id, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         symbol,
@@ -360,6 +384,7 @@ class StorageLayer:
                         kwargs.get("position_qty"),
                         kwargs.get("position_open_at"),
                         kwargs.get("chart_path"),
+                        kwargs.get("pending_order_id"),
                         now,
                     ),
                 )
@@ -368,7 +393,7 @@ class StorageLayer:
                 allowed = {
                     "state", "last_analysis_at", "analysis_summary",
                     "entry_signal_at", "target_price", "stop_loss",
-                    "position_qty", "position_open_at", "chart_path",
+                    "position_qty", "position_open_at", "chart_path", "pending_order_id",
                 }
                 updates = {k: v for k, v in kwargs.items() if k in allowed}
                 updates["updated_at"] = now

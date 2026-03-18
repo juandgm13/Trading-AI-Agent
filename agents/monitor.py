@@ -4,7 +4,9 @@ PriceMonitor — loop de monitorización con máquina de estados por símbolo.
 Estados por símbolo:
   WATCHING         → análisis completo cada analysis_interval_hours
   OPPORTUNITY_FOUND → análisis de corto plazo cada ciclo
+  OPENING          → orden de compra enviada, esperando confirmación de fill
   POSITION_OPEN    → seguimiento de target_price y stop_loss
+  CLOSING          → orden de venta enviada, esperando confirmación de fill
 
 Si WATCHLIST_SYMBOLS no está definido en .env, se usan TODOS los activos
 negociables de Alpaca (US equities activos). Los precios se consultan en
@@ -220,8 +222,8 @@ class PriceMonitor:
 
             state_row = self._storage.get_symbol_state(symbol)
 
-            # Si cierre inminente, solo gestionar posiciones ya abiertas
-            if close_imminent and state_row.get("state", "WATCHING") != "POSITION_OPEN":
+            # Si cierre inminente, solo gestionar posiciones abiertas u órdenes en vuelo
+            if close_imminent and state_row.get("state", "WATCHING") not in ("POSITION_OPEN", "OPENING", "CLOSING"):
                 self._logger.debug(
                     f"{symbol}: análisis omitido — cierre de mercado en < 5 min",
                     source="monitor",
@@ -264,8 +266,16 @@ class PriceMonitor:
             source="monitor",
         )
 
-        if state == "POSITION_OPEN":
+        if state == "CLOSING":
+            triggered = await self._check_closing(symbol, state_row)
+            return triggered
+
+        elif state == "POSITION_OPEN":
             triggered = await self._manage_position(symbol, current_price, state_row)
+            return triggered
+
+        elif state == "OPENING":
+            triggered = await self._check_opening(symbol, state_row)
             return triggered
 
         elif state == "OPPORTUNITY_FOUND":
@@ -393,39 +403,20 @@ class PriceMonitor:
 
             try:
                 result = await self._alpaca.place_order(symbol, qty, "buy")
-                now = datetime.now(timezone.utc).isoformat()
-                self._storage.save_trade(
-                    symbol=symbol,
-                    side="buy",
-                    qty=qty,
-                    price=price,
-                    order_id=result.get("order_id"),
-                    status=result.get("status", "submitted"),
-                    trigger="entry_signal",
-                    reason=decision.get("reasoning", ""),
-                )
                 self._storage.upsert_symbol_state(
                     symbol,
-                    state="POSITION_OPEN",
+                    state="OPENING",
                     target_price=target,
                     stop_loss=stop,
                     position_qty=float(qty),
-                    position_open_at=now,
+                    pending_order_id=result.get("order_id"),
                     chart_path=chart_path,
                 )
-                if self._alerter:
-                    try:
-                        self._alerter.send_trade_alert(
-                            symbol=symbol,
-                            side="buy",
-                            qty=qty,
-                            price=price,
-                            order_id=result.get("order_id"),
-                            reason=decision.get("reasoning", ""),
-                        )
-                    except Exception:
-                        pass
-                return f"{symbol} BUY×{qty} @ ${price:.2f}"
+                self._logger.info(
+                    f"{symbol}: orden de compra enviada (order_id={result.get('order_id')}) → OPENING",
+                    source="monitor",
+                )
+                return f"{symbol} BUY×{qty} enviada (OPENING)"
             except Exception as e:
                 self._logger.error(f"{symbol}: error al abrir posición: {e}", source="monitor", exc_info=True)
 
@@ -465,15 +456,139 @@ class PriceMonitor:
         self._logger.info(f"{symbol}: cerrando posición — {reason}", source="monitor")
         try:
             result = await self._alpaca.place_order(symbol, qty, "sell")
+            self._storage.upsert_symbol_state(
+                symbol,
+                state="CLOSING",
+                pending_order_id=result.get("order_id"),
+                analysis_summary=reason,  # guardamos el motivo de cierre para usarlo al confirmar fill
+            )
+            self._logger.info(
+                f"{symbol}: orden de venta enviada (order_id={result.get('order_id')}) → CLOSING",
+                source="monitor",
+            )
+            return f"{symbol} SELL×{qty} enviada (CLOSING)"
+        except Exception as e:
+            self._logger.error(f"{symbol}: error al cerrar posición: {e}", source="monitor", exc_info=True)
+        return None
+
+    # ── Estado: OPENING ───────────────────────────────────────────────────────
+
+    async def _check_opening(self, symbol: str, state_row: dict) -> str | None:
+        """Verifica el estado de la orden de compra pendiente."""
+        order_id = state_row.get("pending_order_id")
+        if not order_id:
+            self._logger.warning(f"{symbol}: OPENING sin pending_order_id → WATCHING", source="monitor")
+            self._storage.upsert_symbol_state(symbol, state="WATCHING", pending_order_id=None)
+            return None
+
+        try:
+            order = await self._alpaca.get_order(order_id)
+        except Exception as e:
+            self._logger.error(f"{symbol}: error consultando orden {order_id}: {e}", source="monitor", exc_info=True)
+            return None
+
+        if order is None:
+            self._logger.warning(f"{symbol}: orden {order_id} no encontrada → WATCHING", source="monitor")
+            self._storage.upsert_symbol_state(symbol, state="WATCHING", pending_order_id=None)
+            return None
+
+        status = order.get("status", "")
+        if status == "filled":
+            fill_price = order.get("filled_avg_price")
+            fill_qty = order.get("filled_qty") or state_row.get("position_qty", 0)
+            now = datetime.now(timezone.utc).isoformat()
+
+            self._storage.save_trade(
+                symbol=symbol,
+                side="buy",
+                qty=fill_qty,
+                price=fill_price,
+                order_id=order_id,
+                status="filled",
+                trigger="entry_signal",
+                reason="",
+            )
+            self._storage.upsert_symbol_state(
+                symbol,
+                state="POSITION_OPEN",
+                position_open_at=now,
+                pending_order_id=None,
+            )
+            price_str = f"${fill_price:.2f}" if fill_price else "precio de mercado"
+            self._logger.info(
+                f"{symbol}: orden de compra ejecutada — {fill_qty:.0f} acc. @ {price_str} → POSITION_OPEN",
+                source="monitor",
+            )
+            if self._alerter:
+                try:
+                    self._alerter.send_trade_alert(
+                        symbol=symbol,
+                        side="buy",
+                        qty=fill_qty,
+                        price=fill_price,
+                        order_id=order_id,
+                        reason=f"Orden ejecutada @ {price_str}",
+                    )
+                except Exception:
+                    pass
+            return f"{symbol} BUY FILLED @ {price_str}"
+
+        elif status in ("cancelled", "expired", "rejected"):
+            self._logger.info(
+                f"{symbol}: orden de compra {status} → WATCHING",
+                source="monitor",
+            )
+            self._storage.upsert_symbol_state(
+                symbol, state="WATCHING", pending_order_id=None, entry_signal_at=None
+            )
+        else:
+            self._logger.debug(f"{symbol}: orden de compra pendiente (status: {status})", source="monitor")
+        return None
+
+    # ── Estado: CLOSING ───────────────────────────────────────────────────────
+
+    async def _check_closing(self, symbol: str, state_row: dict) -> str | None:
+        """Verifica el estado de la orden de venta pendiente y calcula P&L al fill."""
+        order_id = state_row.get("pending_order_id")
+        if not order_id:
+            self._logger.warning(f"{symbol}: CLOSING sin pending_order_id → POSITION_OPEN", source="monitor")
+            self._storage.upsert_symbol_state(symbol, state="POSITION_OPEN", pending_order_id=None)
+            return None
+
+        try:
+            order = await self._alpaca.get_order(order_id)
+        except Exception as e:
+            self._logger.error(f"{symbol}: error consultando orden de cierre {order_id}: {e}", source="monitor", exc_info=True)
+            return None
+
+        if order is None:
+            self._logger.warning(f"{symbol}: orden de cierre {order_id} no encontrada → POSITION_OPEN", source="monitor")
+            self._storage.upsert_symbol_state(symbol, state="POSITION_OPEN", pending_order_id=None)
+            return None
+
+        status = order.get("status", "")
+        if status == "filled":
+            fill_price = order.get("filled_avg_price")
+            fill_qty = order.get("filled_qty") or state_row.get("position_qty", 0)
+            trigger = state_row.get("analysis_summary") or "cierre de posición"
+
+            buy_trade = self._storage.get_last_buy_trade(symbol)
+            buy_price = buy_trade.get("price") if buy_trade else None
+
+            pnl = (fill_price - buy_price) * fill_qty if (fill_price and buy_price) else None
+            fees = 0.0
+
             self._storage.save_trade(
                 symbol=symbol,
                 side="sell",
-                qty=qty,
-                price=price,
-                order_id=result.get("order_id"),
-                status=result.get("status", "submitted"),
-                trigger=reason,
-                reason=reason,
+                qty=fill_qty,
+                price=fill_price,
+                order_id=order_id,
+                status="filled",
+                trigger=trigger,
+                reason=trigger,
+                pnl=pnl,
+                fees=fees,
             )
             self._storage.upsert_symbol_state(
                 symbol,
@@ -483,22 +598,39 @@ class PriceMonitor:
                 position_qty=None,
                 position_open_at=None,
                 chart_path=None,
+                pending_order_id=None,
+                analysis_summary=None,
             )
-            if self._alerter:
+            pnl_str = f" | P&L: ${pnl:+.2f}" if pnl is not None else ""
+            price_str = f"${fill_price:.2f}" if fill_price else "precio de mercado"
+            self._logger.info(
+                f"{symbol}: posición cerrada — {fill_qty:.0f} acc. @ {price_str}{pnl_str} → WATCHING",
+                source="monitor",
+            )
+            if self._alerter and fill_price and buy_price and pnl is not None:
                 try:
-                    self._alerter.send_trade_alert(
+                    self._alerter.send_close_alert(
                         symbol=symbol,
-                        side="sell",
-                        qty=qty,
-                        price=price,
-                        order_id=result.get("order_id"),
-                        reason=reason,
+                        qty=fill_qty,
+                        buy_price=buy_price,
+                        sell_price=fill_price,
+                        pnl=pnl,
+                        fees=fees,
+                        trigger=trigger,
                     )
                 except Exception:
                     pass
-            return f"{symbol} SELL×{qty} @ ${price:.2f}"
-        except Exception as e:
-            self._logger.error(f"{symbol}: error al cerrar posición: {e}", source="monitor", exc_info=True)
+            return f"{symbol} SELL FILLED @ {price_str}{pnl_str}"
+
+        elif status in ("cancelled", "expired", "rejected"):
+            # Orden cancelada — volver a POSITION_OPEN para reintentar en próximo ciclo
+            self._logger.info(
+                f"{symbol}: orden de venta {status} → POSITION_OPEN (reintentará)",
+                source="monitor",
+            )
+            self._storage.upsert_symbol_state(symbol, state="POSITION_OPEN", pending_order_id=None)
+        else:
+            self._logger.debug(f"{symbol}: orden de venta pendiente (status: {status})", source="monitor")
         return None
 
     # ── Helpers de sub-agentes ────────────────────────────────────────────────

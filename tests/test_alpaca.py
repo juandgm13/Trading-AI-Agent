@@ -607,3 +607,54 @@ async def test_get_clock_market_closed():
 
     assert result["is_open"] is False
     assert result["next_open"] == "2026-03-18T13:30:00Z"
+
+
+@pytest.mark.asyncio
+async def test_get_order_returns_filled_data():
+    """get_order devuelve datos de una orden rellena."""
+    from src.alpaca import AlpacaClient
+
+    order_data = {
+        "id": "ord-123",
+        "status": "filled",
+        "filled_avg_price": "176.50",
+        "filled_qty": "2",
+        "side": "buy",
+        "symbol": "AAPL",
+    }
+    client = AlpacaClient("k", "s")
+    with _mock_http("get", 200, order_data):
+        result = await client.get_order("ord-123")
+
+    assert result["id"] == "ord-123"
+    assert result["status"] == "filled"
+    assert result["filled_avg_price"] == pytest.approx(176.50)
+    assert result["filled_qty"] == pytest.approx(2.0)
+
+
+@pytest.mark.asyncio
+async def test_get_order_returns_none_on_404():
+    """get_order devuelve None cuando la orden no existe."""
+    from src.alpaca import AlpacaClient
+
+    mock_resp = MagicMock()
+    mock_resp.status = 404
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_req_ctx
+
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    client = AlpacaClient("k", "s")
+    import unittest.mock as mock_mod
+    with mock_mod.patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+        result = await client.get_order("non-existent")
+
+    assert result is None

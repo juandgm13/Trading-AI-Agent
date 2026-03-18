@@ -13,11 +13,16 @@ stateDiagram-v2
     WATCHING --> OPPORTUNITY_FOUND : BUY signal + favorable market context
     WATCHING --> WATCHING : HOLD / REJECT or interval not due
 
-    OPPORTUNITY_FOUND --> POSITION_OPEN : Entry OK + company risk LOW or MEDIUM
+    OPPORTUNITY_FOUND --> OPENING : Entry OK — BUY order placed
     OPPORTUNITY_FOUND --> WATCHING : REJECT
 
-    POSITION_OPEN --> WATCHING : price >= target_price — SELL
-    POSITION_OPEN --> WATCHING : price <= stop_loss — SELL
+    OPENING --> POSITION_OPEN : order filled
+    OPENING --> WATCHING : order cancelled / expired
+
+    POSITION_OPEN --> CLOSING : price >= target_price or <= stop_loss — SELL order placed
+
+    CLOSING --> WATCHING : order filled — P&L calculated, email sent
+    CLOSING --> POSITION_OPEN : order cancelled — will retry
 ```
 
 ### Analysis triggers
@@ -26,7 +31,9 @@ stateDiagram-v2
 |---|---|---|
 | `WATCHING` | Every `analysis_interval_hours` (default 4h) or force event | **TechnicalWatchingAgent** (90-day bars) + market context from DB → **TradingOpportunityAgent** |
 | `OPPORTUNITY_FOUND` | Every poll cycle (default 60s) | **TechnicalEntryAgent** (5-day 15-min bars) + CompanyAnalysisAgent → **TradingEntryAgent** |
+| `OPENING` | Every poll cycle | `AlpacaClient.get_order()` to check buy order fill |
 | `POSITION_OPEN` | Every poll cycle | Price check only (no LLM call) |
+| `CLOSING` | Every poll cycle | `AlpacaClient.get_order()` to check sell order fill → P&L calculation |
 | Global | Every `analysis_interval_hours` | MarketContextAgent (general market news → DB) |
 
 ---

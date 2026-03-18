@@ -48,11 +48,13 @@ trades (
     symbol      TEXT NOT NULL,
     side        TEXT NOT NULL,   -- buy | sell
     qty         REAL NOT NULL,
-    price       REAL,
+    price       REAL,            -- fill price (actual filled_avg_price for confirmed orders)
     order_id    TEXT,
     status      TEXT,
     trigger     TEXT,
     reason      TEXT,
+    pnl         REAL,            -- net P&L for sell trades (sell_price - buy_price) * qty
+    fees        REAL,            -- fees paid (0.0 for Alpaca paper trading)
     created_at  TEXT NOT NULL
 )
 ```
@@ -78,15 +80,16 @@ State machine state per symbol. Primary key is `symbol`.
 ```sql
 symbol_states (
     symbol              TEXT PRIMARY KEY,
-    state               TEXT DEFAULT 'WATCHING',  -- WATCHING | OPPORTUNITY_FOUND | POSITION_OPEN
+    state               TEXT DEFAULT 'WATCHING',  -- WATCHING | OPPORTUNITY_FOUND | OPENING | POSITION_OPEN | CLOSING
     last_analysis_at    TEXT,
-    analysis_summary    TEXT,
+    analysis_summary    TEXT,   -- during CLOSING, temporarily stores the close reason
     entry_signal_at     TEXT,
     target_price        REAL,
     stop_loss           REAL,
     position_qty        REAL,
     position_open_at    TEXT,
     chart_path          TEXT,   -- absolute path to last evidence PNG (may be NULL)
+    pending_order_id    TEXT,   -- Alpaca order ID while in OPENING or CLOSING state
     updated_at          TEXT NOT NULL
 )
 ```
@@ -122,7 +125,7 @@ market_context (
 |---|---|
 | `upsert_watchlist(symbol, company, threshold_pct, exchange, marginable, shortable)` | Create or update watchlist entry with Alpaca metadata |
 | `get_watchlist()` | Get all active watchlist entries including metadata |
-| `upsert_symbol_state(symbol, **kwargs)` | Create or update state for a symbol (accepts `chart_path`) |
+| `upsert_symbol_state(symbol, **kwargs)` | Create or update state for a symbol (accepts `chart_path`, `pending_order_id`) |
 | `get_symbol_state(symbol)` | Get current state row for a symbol |
 | `get_all_symbol_states()` | Get all symbol states |
 | `save_agent_report(symbol, agent_name, report)` | Persist a sub-agent JSON report |
@@ -130,8 +133,9 @@ market_context (
 | `save_market_context(report, news_count)` | Persist a new global market context report |
 | `get_latest_market_context()` | Get the most recent market context row |
 | `get_market_context_history(limit)` | Get history of market context reports |
-| `save_trade(...)` | Record an executed order |
+| `save_trade(..., pnl, fees)` | Record an executed order (pnl/fees optional, for sell trades) |
 | `get_trades(limit)` | Retrieve trade history |
+| `get_last_buy_trade(symbol)` | Get the most recent buy trade for a symbol (used for P&L calculation) |
 | `save_price_snapshot(symbol, close, volume, bar_time)` | Record a price snapshot |
 | `get_last_price(symbol)` | Get the most recent close price for a symbol |
 
@@ -144,4 +148,7 @@ ALTER TABLE watchlist ADD COLUMN exchange TEXT DEFAULT '';
 ALTER TABLE watchlist ADD COLUMN marginable INTEGER DEFAULT 0;
 ALTER TABLE watchlist ADD COLUMN shortable INTEGER DEFAULT 0;
 ALTER TABLE symbol_states ADD COLUMN chart_path TEXT;
+ALTER TABLE symbol_states ADD COLUMN pending_order_id TEXT;
+ALTER TABLE trades ADD COLUMN pnl REAL;
+ALTER TABLE trades ADD COLUMN fees REAL;
 ```

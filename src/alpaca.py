@@ -188,6 +188,30 @@ class AlpacaClient:
             "submitted_at": data.get("submitted_at"),
         }
 
+    async def get_order(self, order_id: str) -> dict | None:
+        """
+        Devuelve el estado de una orden específica.
+
+        Returns:
+            dict con {id, status, filled_avg_price, filled_qty, side, symbol} o None si no existe.
+        """
+        url = f"{self._trading_url}/v2/orders/{order_id}"
+        async with aiohttp.ClientSession(headers=self._headers) as session:
+            async with session.get(url) as resp:
+                if resp.status == 404:
+                    return None
+                resp.raise_for_status()
+                data = await resp.json()
+                self._log_response("GET", url, resp.status, data)
+        return {
+            "id": data.get("id"),
+            "status": data.get("status"),
+            "filled_avg_price": float(data["filled_avg_price"]) if data.get("filled_avg_price") else None,
+            "filled_qty": float(data.get("filled_qty") or 0),
+            "side": data.get("side"),
+            "symbol": data.get("symbol"),
+        }
+
     async def cancel_all_orders(self) -> None:
         """Cancela todas las órdenes pendientes."""
         url = f"{self._trading_url}/v2/orders"

@@ -76,6 +76,52 @@ def test_send_trade_alert_returns_true_on_success():
     mock_instance.sendmail.assert_called_once()
 
 
+def test_send_close_alert_returns_true_on_success():
+    """send_close_alert envía el email de cierre con P&L correctamente."""
+    from src.alerting import TradeAlerter
+
+    a = TradeAlerter("user@gmail.com", "pass", "dest@gmail.com")
+
+    with patch("smtplib.SMTP_SSL") as mock_smtp:
+        mock_instance = MagicMock()
+        mock_smtp.return_value.__enter__.return_value = mock_instance
+        result = a.send_close_alert(
+            symbol="AAPL", qty=2, buy_price=176.5, sell_price=190.0,
+            pnl=27.0, fees=0.0, trigger="Target $190.00 alcanzado",
+        )
+
+    assert result is True
+    mock_instance.sendmail.assert_called_once()
+
+
+def test_build_close_message_positive_pnl():
+    """Mensaje de cierre con P&L positivo usa emoji ✅ y color verde."""
+    from src.alerting import TradeAlerter
+
+    a = TradeAlerter("test@gmail.com", "pass")
+    msg = a._build_close_message(
+        symbol="AAPL", qty=2, buy_price=176.5, sell_price=190.0,
+        pnl=27.0, fees=0.0, trigger="Target alcanzado",
+    )
+
+    assert "✅" in msg["Subject"]
+    assert "AAPL" in msg["Subject"]
+    assert "+27.00" in msg["Subject"]
+
+
+def test_build_close_message_negative_pnl():
+    """Mensaje de cierre con P&L negativo usa emoji ❌."""
+    from src.alerting import TradeAlerter
+
+    a = TradeAlerter("test@gmail.com", "pass")
+    msg = a._build_close_message(
+        symbol="TSLA", qty=3, buy_price=200.0, sell_price=180.0,
+        pnl=-60.0, fees=0.0, trigger="Stop-loss activado",
+    )
+
+    assert "❌" in msg["Subject"]
+
+
 # ── Test con credenciales reales (envía email de verdad) ─────────────────────
 
 @requires_gmail

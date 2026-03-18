@@ -257,6 +257,65 @@ def test_trade_without_order_id(tmp_db):
     assert trades[0]["price"] is None
 
 
+def test_save_trade_with_pnl_and_fees(tmp_db):
+    """save_trade acepta pnl y fees y los persiste correctamente."""
+    tmp_db.save_trade(
+        symbol="AAPL", side="sell", qty=2, price=190.0,
+        order_id="ord-sell", status="filled",
+        trigger="Target alcanzado", reason="Target alcanzado",
+        pnl=27.0, fees=0.0,
+    )
+
+    trades = tmp_db.get_trades()
+    t = trades[0]
+    assert t["pnl"] == pytest.approx(27.0)
+    assert t["fees"] == pytest.approx(0.0)
+
+
+def test_get_last_buy_trade_returns_most_recent(tmp_db):
+    """get_last_buy_trade devuelve el último trade de compra para el símbolo."""
+    tmp_db.save_trade("AAPL", "buy", 5, 175.0, "ord-001", "filled", "entry_signal", "")
+    tmp_db.save_trade("AAPL", "buy", 3, 180.0, "ord-002", "filled", "entry_signal", "")
+
+    result = tmp_db.get_last_buy_trade("AAPL")
+
+    assert result is not None
+    assert result["side"] == "buy"
+    assert result["price"] == pytest.approx(180.0)
+
+
+def test_get_last_buy_trade_returns_none_when_no_buys(tmp_db):
+    """get_last_buy_trade devuelve None si no hay trades de compra."""
+    tmp_db.save_trade("AAPL", "sell", 5, 185.0, "ord-sell", "filled", "manual", "")
+
+    result = tmp_db.get_last_buy_trade("AAPL")
+    assert result is None
+
+
+def test_get_last_buy_trade_none_for_unknown_symbol(tmp_db):
+    """get_last_buy_trade devuelve None para símbolo sin trades."""
+    result = tmp_db.get_last_buy_trade("UNKNOWN")
+    assert result is None
+
+
+def test_upsert_symbol_state_stores_pending_order_id(tmp_db):
+    """upsert_symbol_state acepta y persiste pending_order_id."""
+    tmp_db.upsert_symbol_state("AAPL", state="OPENING", pending_order_id="ord-123")
+
+    state = tmp_db.get_symbol_state("AAPL")
+    assert state["pending_order_id"] == "ord-123"
+
+
+def test_upsert_symbol_state_clears_pending_order_id(tmp_db):
+    """Se puede limpiar pending_order_id asignando None."""
+    tmp_db.upsert_symbol_state("AAPL", state="OPENING", pending_order_id="ord-123")
+    tmp_db.upsert_symbol_state("AAPL", state="POSITION_OPEN", pending_order_id=None)
+
+    state = tmp_db.get_symbol_state("AAPL")
+    assert state["state"] == "POSITION_OPEN"
+    assert state["pending_order_id"] is None
+
+
 # ── Symbol states ──────────────────────────────────────────────────────────────
 
 def test_symbol_state_default_is_watching(tmp_db):

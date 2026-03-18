@@ -24,6 +24,7 @@ def _make_monitor(tmp_db, on_log=None):
         {"timestamp": "t", "open": 175.0, "high": 176.0, "low": 174.0, "close": 175.0, "volume": 1000}
     ])
     mock_alpaca.place_order = AsyncMock(return_value={"order_id": "ord-test", "status": "submitted"})
+    mock_alpaca.get_order = AsyncMock(return_value=None)
     mock_alpaca.get_clock = AsyncMock(return_value={"is_open": True, "next_open": None, "next_close": None, "timestamp": None})
 
     mock_tech = MagicMock()
@@ -177,9 +178,11 @@ async def test_opportunity_found_opens_position_on_decision(tmp_db):
 
     mock_alpaca.place_order.assert_awaited_once()
     new_state = tmp_db.get_symbol_state("AAPL")
-    assert new_state["state"] == "POSITION_OPEN"
+    # Tras place_order el estado es OPENING (esperando confirmación de fill)
+    assert new_state["state"] == "OPENING"
     # qty se calcula como max(1, int(max_position_value / price)) = max(1, int(500/175)) = 2
     assert new_state["position_qty"] == 2.0
+    assert new_state["pending_order_id"] == "ord-test"
 
 
 @pytest.mark.asyncio
@@ -226,8 +229,9 @@ async def test_position_open_sells_at_target(tmp_db):
     assert call_args[0][2] == "sell"  # side
 
     new_state = tmp_db.get_symbol_state("AAPL")
-    assert new_state["state"] == "WATCHING"
-    assert new_state["target_price"] is None
+    # Tras place_order el estado es CLOSING (esperando confirmación de fill de venta)
+    assert new_state["state"] == "CLOSING"
+    assert new_state["pending_order_id"] == "ord-test"
 
 
 @pytest.mark.asyncio
@@ -245,7 +249,8 @@ async def test_position_open_sells_at_stop_loss(tmp_db):
 
     mock_alpaca.place_order.assert_awaited_once()
     new_state = tmp_db.get_symbol_state("AAPL")
-    assert new_state["state"] == "WATCHING"
+    assert new_state["state"] == "CLOSING"
+    assert new_state["pending_order_id"] == "ord-test"
 
 
 @pytest.mark.asyncio
@@ -465,7 +470,8 @@ async def test_check_all_reports_triggered_alerts(tmp_db):
     watchlist = tmp_db.get_watchlist()
     await monitor._check_all(watchlist)
 
-    assert tmp_db.get_symbol_state("AAPL")["state"] == "WATCHING"
+    # Tras _manage_position el estado es CLOSING (esperando confirmación de fill de venta)
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "CLOSING"
 
 
 # ── _analysis_due — edge cases ────────────────────────────────────────────────
@@ -584,7 +590,9 @@ async def test_look_for_entry_with_alerter_on_open_position(tmp_db):
         mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
         await monitor._look_for_entry("AAPL", 175.0, state_row)
 
-    mock_alerter.send_trade_alert.assert_called_once()
+    # La alerta de compra se envía desde _check_opening al confirmar el fill, no desde _look_for_entry
+    assert not mock_alerter.send_trade_alert.called
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "OPENING"
 
 
 @pytest.mark.asyncio
@@ -637,7 +645,9 @@ async def test_manage_position_with_alerter_on_sell(tmp_db):
 
     await monitor._manage_position("AAPL", 181.0, state_row)  # >= target
 
-    mock_alerter.send_trade_alert.assert_called_once()
+    # La alerta de cierre se envía desde _check_closing al confirmar el fill, no desde _manage_position
+    assert not mock_alerter.send_trade_alert.called
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "CLOSING"
 
 
 @pytest.mark.asyncio
@@ -1019,7 +1029,9 @@ async def test_look_for_entry_alerter_exception_is_swallowed(tmp_db):
         mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
         await monitor._process_symbol("AAPL", snap, state_row)  # no debe lanzar
 
-    mock_alerter.send_trade_alert.assert_called_once()
+    # La alerta de compra se envía desde _check_opening, no desde _look_for_entry/_process_symbol
+    assert not mock_alerter.send_trade_alert.called
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "OPENING"
 
 
 @pytest.mark.asyncio
@@ -1039,8 +1051,10 @@ async def test_manage_position_alerter_exception_is_swallowed(tmp_db):
 
     result = await monitor._process_symbol("AAPL", snap, state_row)  # no debe lanzar
 
+    # La alerta de cierre se envía desde _check_closing, no desde _manage_position
     assert result is not None
-    mock_alerter.send_trade_alert.assert_called_once()
+    assert not mock_alerter.send_trade_alert.called
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "CLOSING"
 
 
 # ── _maybe_update_market_context: naive datetime y exception path ─────────────
@@ -1188,7 +1202,7 @@ async def test_entry_uses_agent_qty_when_within_limit(tmp_db):
         await monitor._process_symbol("AAPL", {"close": 175.0, "volume": 1000, "timestamp": "t"}, state_row)
 
     new_state = tmp_db.get_symbol_state("AAPL")
-    assert new_state["state"] == "POSITION_OPEN"
+    assert new_state["state"] == "OPENING"
     assert new_state["position_qty"] == pytest.approx(1.0)
 
 
@@ -1213,7 +1227,7 @@ async def test_entry_caps_agent_qty_at_max(tmp_db):
         await monitor._process_symbol("AAPL", {"close": 175.0, "volume": 1000, "timestamp": "t"}, state_row)
 
     new_state = tmp_db.get_symbol_state("AAPL")
-    assert new_state["state"] == "POSITION_OPEN"
+    assert new_state["state"] == "OPENING"
     assert new_state["position_qty"] == pytest.approx(2.0)  # cappado a max_qty
 
 
@@ -1237,7 +1251,7 @@ async def test_entry_uses_max_qty_when_agent_returns_null(tmp_db):
         await monitor._process_symbol("AAPL", {"close": 175.0, "volume": 1000, "timestamp": "t"}, state_row)
 
     new_state = tmp_db.get_symbol_state("AAPL")
-    assert new_state["state"] == "POSITION_OPEN"
+    assert new_state["state"] == "OPENING"
     # max(1, int(500/175)) = 2
     assert new_state["position_qty"] == pytest.approx(2.0)
 
@@ -1504,3 +1518,225 @@ async def test_check_all_close_imminent_saves_price_snapshot(tmp_db):
     snapshots = tmp_db.get_price_history("AAPL", limit=1)
     assert snapshots, "Snapshot no guardado cuando análisis omitido por cierre inminente"
     assert snapshots[0]["close"] == pytest.approx(175.0)
+
+
+# ── Estados OPENING y CLOSING ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_check_opening_filled_transitions_to_position_open(tmp_db):
+    """Cuando la orden de compra se llena, el estado pasa a POSITION_OPEN."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(return_value={
+        "id": "ord-test",
+        "status": "filled",
+        "filled_avg_price": 176.5,
+        "filled_qty": 2.0,
+        "side": "buy",
+        "symbol": "AAPL",
+    })
+
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="OPENING",
+        target_price=185.0, stop_loss=170.0, position_qty=2.0,
+        pending_order_id="ord-test",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    result = await monitor._check_opening("AAPL", state_row)
+
+    assert result is not None
+    assert "FILLED" in result
+    new_state = tmp_db.get_symbol_state("AAPL")
+    assert new_state["state"] == "POSITION_OPEN"
+    assert new_state["pending_order_id"] is None
+    # El trade de compra debe haberse guardado
+    buy_trade = tmp_db.get_last_buy_trade("AAPL")
+    assert buy_trade is not None
+    assert buy_trade["side"] == "buy"
+    assert buy_trade["price"] == pytest.approx(176.5)
+
+
+@pytest.mark.asyncio
+async def test_check_opening_cancelled_returns_to_watching(tmp_db):
+    """Cuando la orden de compra se cancela, el estado vuelve a WATCHING."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(return_value={
+        "id": "ord-test",
+        "status": "cancelled",
+        "filled_avg_price": None,
+        "filled_qty": 0.0,
+        "side": "buy",
+        "symbol": "AAPL",
+    })
+
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="OPENING", position_qty=2.0, pending_order_id="ord-test",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    result = await monitor._check_opening("AAPL", state_row)
+
+    assert result is None
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "WATCHING"
+
+
+@pytest.mark.asyncio
+async def test_check_opening_pending_stays_opening(tmp_db):
+    """Si la orden de compra sigue pendiente, el estado permanece en OPENING."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(return_value={
+        "id": "ord-test",
+        "status": "new",
+        "filled_avg_price": None,
+        "filled_qty": 0.0,
+        "side": "buy",
+        "symbol": "AAPL",
+    })
+
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="OPENING", position_qty=2.0, pending_order_id="ord-test",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    result = await monitor._check_opening("AAPL", state_row)
+
+    assert result is None
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "OPENING"
+
+
+@pytest.mark.asyncio
+async def test_check_opening_calls_alerter_on_fill(tmp_db):
+    """Cuando la orden de compra se llena, se envía alerta por email."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(return_value={
+        "id": "ord-test", "status": "filled",
+        "filled_avg_price": 176.5, "filled_qty": 2.0, "side": "buy", "symbol": "AAPL",
+    })
+    mock_alerter = MagicMock()
+    mock_alerter.send_trade_alert = MagicMock(return_value=True)
+    monitor._alerter = mock_alerter
+
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="OPENING", position_qty=2.0, pending_order_id="ord-test",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    await monitor._check_opening("AAPL", state_row)
+
+    mock_alerter.send_trade_alert.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_check_closing_filled_transitions_to_watching_with_pnl(tmp_db):
+    """Cuando la orden de venta se llena, el estado pasa a WATCHING y se calcula P&L."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(return_value={
+        "id": "ord-sell", "status": "filled",
+        "filled_avg_price": 190.0, "filled_qty": 2.0, "side": "sell", "symbol": "AAPL",
+    })
+
+    # Guardar un trade de compra previo para calcular P&L
+    tmp_db.save_trade("AAPL", "buy", 2.0, 176.5, "ord-test", "filled", "entry_signal", "")
+
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="CLOSING",
+        target_price=190.0, stop_loss=170.0, position_qty=2.0,
+        pending_order_id="ord-sell",
+        analysis_summary="Target $190.00 alcanzado",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    result = await monitor._check_closing("AAPL", state_row)
+
+    assert result is not None
+    assert "FILLED" in result
+    new_state = tmp_db.get_symbol_state("AAPL")
+    assert new_state["state"] == "WATCHING"
+    assert new_state["pending_order_id"] is None
+    # Verificar P&L: (190 - 176.5) * 2 = 27.0
+    trades = tmp_db.get_trades()
+    sell_trade = next((t for t in trades if t["side"] == "sell"), None)
+    assert sell_trade is not None
+    assert sell_trade["pnl"] == pytest.approx(27.0)
+    assert sell_trade["fees"] == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_check_closing_cancelled_returns_to_position_open(tmp_db):
+    """Cuando la orden de venta se cancela, el estado vuelve a POSITION_OPEN para reintentar."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(return_value={
+        "id": "ord-sell", "status": "cancelled",
+        "filled_avg_price": None, "filled_qty": 0.0, "side": "sell", "symbol": "AAPL",
+    })
+
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="CLOSING",
+        target_price=190.0, stop_loss=170.0, position_qty=2.0,
+        pending_order_id="ord-sell",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    result = await monitor._check_closing("AAPL", state_row)
+
+    assert result is None
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "POSITION_OPEN"
+
+
+@pytest.mark.asyncio
+async def test_check_closing_calls_close_alert_on_fill(tmp_db):
+    """Cuando la orden de venta se llena, se envía alerta de cierre con P&L."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(return_value={
+        "id": "ord-sell", "status": "filled",
+        "filled_avg_price": 190.0, "filled_qty": 2.0, "side": "sell", "symbol": "AAPL",
+    })
+    mock_alerter = MagicMock()
+    mock_alerter.send_close_alert = MagicMock(return_value=True)
+    monitor._alerter = mock_alerter
+
+    tmp_db.save_trade("AAPL", "buy", 2.0, 176.5, "ord-test", "filled", "entry_signal", "")
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="CLOSING", position_qty=2.0,
+        pending_order_id="ord-sell",
+        analysis_summary="Target alcanzado",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    await monitor._check_closing("AAPL", state_row)
+
+    mock_alerter.send_close_alert.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_process_symbol_dispatches_opening_state(tmp_db):
+    """_process_symbol llama a _check_opening cuando el estado es OPENING."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(return_value=None)
+
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="OPENING", pending_order_id="ord-test", position_qty=2.0,
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+    snap = {"close": 175.0, "volume": 1000, "timestamp": "t"}
+
+    await monitor._process_symbol("AAPL", snap, state_row)
+
+    mock_alpaca.get_order.assert_awaited_once_with("ord-test")
+
+
+@pytest.mark.asyncio
+async def test_process_symbol_dispatches_closing_state(tmp_db):
+    """_process_symbol llama a _check_closing cuando el estado es CLOSING."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(return_value=None)
+
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="CLOSING", pending_order_id="ord-sell", position_qty=2.0,
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+    snap = {"close": 175.0, "volume": 1000, "timestamp": "t"}
+
+    await monitor._process_symbol("AAPL", snap, state_row)
+
+    mock_alpaca.get_order.assert_awaited_once_with("ord-sell")
