@@ -102,9 +102,31 @@ def _coerce_list(value) -> list:
 
 # ── Validadores por agente ────────────────────────────────────────────────────
 
+def validate_technical_watching_report(text: str) -> dict:
+    """
+    Extrae y valida la respuesta del TechnicalWatchingAgent (medio plazo).
+
+    Campos con default seguro si faltan o son inválidos:
+      trend → NEUTRAL, signal → HOLD, key_supports → [],
+      key_resistances → [], confidence → 50, summary → "".
+
+    Raises:
+        ParseError: si no se puede extraer ningún JSON del texto.
+    """
+    data = extract_json(text)
+    return {
+        "trend":           _coerce_enum(data.get("trend"),  {"BULLISH", "BEARISH", "NEUTRAL", "SIDEWAYS"}, "NEUTRAL"),
+        "signal":          _coerce_enum(data.get("signal"), {"BUY", "SELL", "HOLD", "WAIT"}, "HOLD"),
+        "key_supports":    _coerce_list(data.get("key_supports")),
+        "key_resistances": _coerce_list(data.get("key_resistances")),
+        "confidence":      _coerce_int(data.get("confidence"), default=50),
+        "summary":         str(data.get("summary", "")),
+    }
+
+
 def validate_technical_report(text: str) -> dict:
     """
-    Extrae y valida la respuesta del TechnicalAnalysisAgent.
+    Extrae y valida la respuesta del TechnicalEntryAgent (corto plazo).
 
     Campos con default seguro si faltan o son inválidos:
       trend → NEUTRAL, signal → HOLD, target_price → None,
@@ -180,11 +202,11 @@ def validate_trading_decision(text: str) -> dict:
         ParseError: si no se puede extraer JSON, o si 'decision' es inválido.
     """
     data = extract_json(text)
-    decision = _coerce_enum(data.get("decision", ""), {"OPEN_POSITION", "HOLD", "REJECT"}, "")
+    decision = _coerce_enum(data.get("decision", ""), {"OPEN_POSITION", "OPPORTUNITY_FOUND", "HOLD", "REJECT"}, "")
     if not decision:
         raise ParseError(
             f"Campo 'decision' ausente o inválido: {data.get('decision')!r}. "
-            f"Valores válidos: OPEN_POSITION, HOLD, REJECT."
+            f"Valores válidos: OPEN_POSITION, OPPORTUNITY_FOUND, HOLD, REJECT."
         )
 
     raw_qty = data.get("qty")

@@ -29,6 +29,7 @@ from src.logger import get_logger, AgentLogger
 from src.storage import StorageLayer
 from src.response_parser import (
     ParseError,
+    validate_technical_watching_report,
     validate_technical_report,
     validate_market_context,
     validate_company_analysis,
@@ -344,7 +345,7 @@ class PriceMonitor:
             analysis_summary=summary,
         )
 
-        if decision and decision.get("decision") == "OPEN_POSITION":
+        if decision and decision.get("decision") == "OPPORTUNITY_FOUND":
             # F5: generar gráfico de evidencia al detectar oportunidad
             chart_path = self._generate_chart(symbol, bars, "1Day", "opportunity")
             self._logger.info(f"{symbol}: oportunidad detectada → OPPORTUNITY_FOUND", source="monitor")
@@ -644,37 +645,45 @@ class PriceMonitor:
     # ── Helpers de sub-agentes ────────────────────────────────────────────────
 
     async def _run_technical_medium(self, symbol: str, price: float) -> tuple[dict | None, list[dict]]:
-        """Ejecuta TechnicalAgent (watching) en modo medio plazo (90 días diarios)."""
+        """Ejecuta TechnicalWatchingAgent en modo medio plazo (90 días diarios)."""
         bars = []
         try:
             bars = await self._alpaca.get_bars(symbol, timeframe="1Day", limit=90)
             prompt = build_medium_term_prompt(symbol, price, bars)
             response = await self._technical_watching_agent.run(prompt)
-            report = validate_technical_report(response)
+            report = validate_technical_watching_report(response)
             self._storage.save_agent_report(symbol, "technical_medium", json.dumps(report))
             return report, bars
         except ParseError as e:
-            self._logger.error(f"{symbol}: TechnicalAgent (medium) respuesta inválida: {e}", source="monitor")
+            self._logger.error(f"{symbol}: TechnicalWatchingAgent respuesta inválida: {e}", source="monitor")
             return None, bars
         except Exception as e:
-            self._logger.error(f"{symbol}: error en TechnicalAgent (medium): {e}", source="monitor", exc_info=True)
+            self._logger.error(f"{symbol}: error en TechnicalWatchingAgent: {e}", source="monitor", exc_info=True)
             return None, bars
 
     async def _run_technical_short(self, symbol: str, price: float) -> tuple[dict | None, list[dict]]:
-        """Ejecuta TechnicalAgent (entry) en modo corto plazo (5 días de barras de 15min)."""
+        """Ejecuta TechnicalEntryAgent en modo corto plazo (5 días de barras de 15min)."""
         bars = []
         try:
             bars = await self._alpaca.get_bars(symbol, timeframe="15Min", limit=96)  # ~5 días
-            prompt = build_short_term_prompt(symbol, price, bars)
+            # Cargar contexto de medio plazo (soportes/resistencias) si existe
+            medium_report = None
+            row = self._storage.get_last_agent_report(symbol, "technical_medium")
+            if row:
+                try:
+                    medium_report = json.loads(row["report"])
+                except Exception:
+                    pass
+            prompt = build_short_term_prompt(symbol, price, bars, medium_term_context=medium_report)
             response = await self._technical_entry_agent.run(prompt)
             report = validate_technical_report(response)
             self._storage.save_agent_report(symbol, "technical_short", json.dumps(report))
             return report, bars
         except ParseError as e:
-            self._logger.error(f"{symbol}: TechnicalAgent (short) respuesta inválida: {e}", source="monitor")
+            self._logger.error(f"{symbol}: TechnicalEntryAgent respuesta inválida: {e}", source="monitor")
             return None, bars
         except Exception as e:
-            self._logger.error(f"{symbol}: error en TechnicalAgent (short): {e}", source="monitor", exc_info=True)
+            self._logger.error(f"{symbol}: error en TechnicalEntryAgent: {e}", source="monitor", exc_info=True)
             return None, bars
 
     # ── Market context global ──────────────────────────────────────────────────

@@ -31,6 +31,8 @@ def _make_monitor(tmp_db, on_log=None):
     mock_tech.run = AsyncMock(return_value=json.dumps({
         "trend": "BULLISH",
         "signal": "BUY",
+        "key_supports": [170.0],
+        "key_resistances": [185.0],
         "target_price": 185.0,
         "stop_loss": 170.0,
         "confidence": 75,
@@ -510,10 +512,10 @@ async def test_full_analysis_returns_none_when_technical_fails(tmp_db):
 
 @pytest.mark.asyncio
 async def test_full_analysis_detects_opportunity(tmp_db):
-    """Si TradingAgent dice OPEN_POSITION, el estado cambia a OPPORTUNITY_FOUND."""
+    """Si TradingAgent dice OPPORTUNITY_FOUND, el estado cambia a OPPORTUNITY_FOUND."""
     monitor, _, _, _, mock_trader = _make_monitor(tmp_db)
     mock_trader.run.return_value = json.dumps({
-        "decision": "OPEN_POSITION", "symbol": "AAPL", "qty": 5, "reasoning": "Strong signal",
+        "decision": "OPPORTUNITY_FOUND", "symbol": "AAPL", "reasoning": "Strong signal",
     })
 
     with pytest.MonkeyPatch.context() as mp:

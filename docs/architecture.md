@@ -89,23 +89,21 @@ Two separate agent instances with different system prompts and model temperature
 
 ```mermaid
 flowchart TB
-    subgraph IN["📥 Input · text"]
-        I1["OHLCV bars — Alpaca API"]
-        --- I2["Current price"]
+    subgraph WATCH["TechnicalWatchingAgent (WATCHING · 90 daily bars)"]
+        direction TB
+        WI["OHLCV daily bars + current price"]
+        WA["model: technical · qwen2.5:7b"]
+        WO["trend · signal · key_supports[] · key_resistances[] · confidence · summary"]
+        WI --> WA --> WO
     end
 
-    AG["TechnicalWatchingAgent or TechnicalEntryAgent<br/>model: technical or technical_entry · qwen2.5:7b"]
-
-    subgraph OUT["📤 Output · JSON"]
-        O1["trend: BULLISH · BEARISH · SIDEWAYS"]
-        --- O2["signal: BUY · SELL · HOLD"]
-        --- O3["target_price"]
-        --- O4["stop_loss"]
-        --- O5["confidence (0–100)"]
-        --- O6["summary"]
+    subgraph ENTRY["TechnicalEntryAgent (OPPORTUNITY_FOUND · 96 × 15-min bars)"]
+        direction TB
+        EI["OHLCV 15-min bars + current price + medium-term context (optional)"]
+        EA["model: technical_entry · qwen2.5:7b"]
+        EO["trend · signal · target_price · stop_loss · confidence · summary"]
+        EI --> EA --> EO
     end
-
-    IN --> AG --> OUT
 ```
 
 ---
@@ -173,23 +171,27 @@ Two separate orchestrator agents, each with a distinct system prompt and tempera
 
 ```mermaid
 flowchart TB
-    subgraph IN["📥 Input · JSON + text"]
-        I1["TechnicalAgent report"]
-        --- I2["MarketContext or CompanyAnalysis report"]
-        --- I3["Current price · max_position_value ($)"]
+    subgraph OPP["TradingOpportunityAgent (WATCHING → OPPORTUNITY_FOUND)"]
+        direction TB
+        OI["TechnicalWatchingAgent report + MarketContext + current price"]
+        OA["model: trader_opportunity · qwen2.5:7b"]
+        OO["decision: OPPORTUNITY_FOUND · HOLD · REJECT\nsymbol · reasoning"]
+        OI --> OA --> OO
     end
 
-    AG["TradingOpportunityAgent or TradingEntryAgent<br/>model: trader_opportunity or trader_entry · qwen2.5:7b"]
-
-    subgraph OUT["📤 Output · JSON"]
-        O1["decision: OPEN_POSITION · HOLD · REJECT"]
-        --- O2["symbol"]
-        --- O3["qty: integer (TradingEntryAgent) or null (opportunity phase)"]
-        --- O4["reasoning"]
+    subgraph ENT["TradingEntryAgent (OPPORTUNITY_FOUND → OPENING)"]
+        direction TB
+        EI["TechnicalEntryAgent report + CompanyAnalysis + current price + max_position_value"]
+        EA["model: trader_entry · qwen2.5:7b"]
+        EO["decision: OPEN_POSITION · HOLD · REJECT\nsymbol · qty (int or null) · reasoning"]
+        EI --> EA --> EO
     end
-
-    IN --> AG --> OUT
 ```
+
+**Decision rules (TradingOpportunityAgent):**
+- `OPPORTUNITY_FOUND` — trend is BULLISH, signal is BUY, confidence ≥ 60, market RISK_ON or NEUTRAL.
+- `HOLD` — signals promising but not confirmed; confidence moderate (40-60); preferred over REJECT.
+- `REJECT` — trend BEARISH, confidence < 40, or market strongly RISK_OFF.
 
 **Decision rules (TradingEntryAgent):**
 - `OPEN_POSITION` — technical signal is BUY, market is RISK_ON or NEUTRAL, company entry_risk is LOW or MEDIUM, confidence ≥ 60.
@@ -215,11 +217,11 @@ The chart path is logged as `file:///absolute/path.png` and displayed in the **E
 
 | Module | Input | Output |
 |---|---|---|
-| **TechnicalWatchingAgent** | 90 daily OHLCV bars JSON | `{trend, signal, target_price, stop_loss, confidence, summary}` |
-| **TechnicalEntryAgent** | 96 × 15-min OHLCV bars JSON | `{trend, signal, target_price, stop_loss, confidence, summary}` |
+| **TechnicalWatchingAgent** | 90 daily OHLCV bars JSON | `{trend, signal, key_supports: [float], key_resistances: [float], confidence, summary}` |
+| **TechnicalEntryAgent** | 96 × 15-min OHLCV bars JSON + optional medium-term context | `{trend, signal, target_price, stop_loss, confidence, summary}` |
 | **MarketContextAgent** | General news JSON | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
 | **CompanyAnalysisAgent** | Company news JSON | `{sentiment, key_events, entry_risk, confidence, summary}` |
-| **TradingOpportunityAgent** | Technical + market reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
+| **TradingOpportunityAgent** | Technical + market reports | `{decision: OPPORTUNITY_FOUND\|HOLD\|REJECT, symbol, reasoning}` |
 | **TradingEntryAgent** | Technical + company reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: <int or null>, reasoning}` |
 | **AlpacaClient.get_asset()** | Symbol string | `{symbol, name, exchange, marginable, shortable}` or `None` |
 | **AlpacaClient.get_clock()** | — | `{is_open, next_open, next_close, timestamp}` |

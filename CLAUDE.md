@@ -49,7 +49,7 @@ WATCHING ───────────────────────�
     │  (every analysis_interval_hours, default 4h)      │
     │  TechnicalWatchingAgent (medium-term daily bars)  │
     │  + global market context (read from DB)           │
-    │  TradingOpportunityAgent → HOLD (watch) / REJECT  │
+    │  TradingOpportunityAgent → OPPORTUNITY_FOUND / HOLD / REJECT │
     ▼                                                   │
 OPPORTUNITY_FOUND                                       │
     │  (every poll cycle)                               │
@@ -70,11 +70,11 @@ processing the current symbol and then exits — it does not abandon mid-cycle.
 
 | Agent | File | Model role | Input | Output |
 |---|---|---|---|---|
-| `TechnicalWatchingAgent` | `agents/technical_agent.py` | `technical` | OHLCV daily bars (90d, pre-fetched) | `{trend, signal, target_price, stop_loss, confidence, summary}` |
-| `TechnicalEntryAgent` | `agents/technical_agent.py` | `technical_entry` | OHLCV 15min bars (5d, pre-fetched) | `{trend, signal, target_price, stop_loss, confidence, summary}` |
+| `TechnicalWatchingAgent` | `agents/technical_agent.py` | `technical` | OHLCV daily bars (90d, pre-fetched) | `{trend, signal, key_supports: [], key_resistances: [], confidence, summary}` |
+| `TechnicalEntryAgent` | `agents/technical_agent.py` | `technical_entry` | OHLCV 15min bars (5d, pre-fetched) + optional medium-term context | `{trend, signal, target_price, stop_loss, confidence, summary}` |
 | `MarketContextAgent` | `agents/economics_agent.py` | `economics` | General market news (GNews) | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
 | `CompanyAnalysisAgent` | `agents/economics_agent.py` | `economics` | Company-specific news (GNews) | `{sentiment, key_events, entry_risk, confidence, summary}` |
-| `TradingOpportunityAgent` | `agents/trading_agent.py` | `trader_opportunity` | Technical + market context reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
+| `TradingOpportunityAgent` | `agents/trading_agent.py` | `trader_opportunity` | Technical + market context reports | `{decision: OPPORTUNITY_FOUND\|HOLD\|REJECT, symbol, reasoning}` |
 | `TradingEntryAgent` | `agents/trading_agent.py` | `trader_entry` | Technical + company reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: <int or null>, reasoning}` |
 
 The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects it into each agent's prompt. Agents are purely text analyzers — no tool loops.
@@ -93,11 +93,11 @@ The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects i
 |---|---|---|
 | **News Ingestion** | API credentials + query params | `Article { source, title, description, content, url, published_at }` |
 | **Deduplication** | `Article` | `DeduplicationResult { is_new: bool, article: Article }` |
-| **TechnicalWatchingAgent** | OHLCV daily bars JSON | `{trend, signal, target_price, stop_loss, confidence, summary}` |
-| **TechnicalEntryAgent** | OHLCV 15min bars JSON | `{trend, signal, target_price, stop_loss, confidence, summary}` |
+| **TechnicalWatchingAgent** | OHLCV daily bars JSON | `{trend, signal, key_supports: [], key_resistances: [], confidence, summary}` |
+| **TechnicalEntryAgent** | OHLCV 15min bars JSON + optional medium-term context | `{trend, signal, target_price, stop_loss, confidence, summary}` |
 | **MarketContextAgent** | General market news JSON | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
 | **CompanyAnalysisAgent** | Company news JSON | `{sentiment, key_events, entry_risk, confidence, summary}` |
-| **TradingOpportunityAgent** | Sub-agent reports in prompt | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: null, reasoning}` |
+| **TradingOpportunityAgent** | Sub-agent reports in prompt | `{decision: OPPORTUNITY_FOUND\|HOLD\|REJECT, symbol, reasoning}` |
 | **TradingEntryAgent** | Sub-agent reports in prompt | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: <int or null>, reasoning}` |
 | **AlpacaClient.get_asset()** | Symbol string | `{symbol, name, exchange, marginable, shortable}` or `None` |
 | **AlpacaClient.get_clock()** | — | `{is_open, next_open, next_close, timestamp}` |

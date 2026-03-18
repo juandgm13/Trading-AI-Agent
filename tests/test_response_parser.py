@@ -4,16 +4,18 @@ Tests unitarios de src/response_parser.py.
 No requieren Ollama ni credenciales — todos los inputs son strings hardcodeados.
 Cubren:
   - extract_json: JSON directo, bloque markdown, JSON embebido en prosa, fallo total
-  - validate_technical_report: campos válidos, defaults, ParseError
+  - validate_technical_watching_report: nuevo schema con key_supports/key_resistances
+  - validate_technical_report: campos válidos, defaults, ParseError (entry agent)
   - validate_market_context: campos válidos, defaults, ParseError
   - validate_company_analysis: campos válidos, defaults, ParseError
-  - validate_trading_decision: decision requerida, defaults, ParseError
+  - validate_trading_decision: decision requerida, defaults, ParseError (incluye OPPORTUNITY_FOUND)
 """
 import json
 import pytest
 from src.response_parser import (
     ParseError,
     extract_json,
+    validate_technical_watching_report,
     validate_technical_report,
     validate_market_context,
     validate_company_analysis,
@@ -63,6 +65,59 @@ def test_extract_json_plain_prose_raises():
 def test_extract_json_invalid_json_raises():
     with pytest.raises(ParseError):
         extract_json("{trend: BULLISH, signal: BUY}")  # sin comillas
+
+
+# ── validate_technical_watching_report ────────────────────────────────────────
+
+def test_validate_technical_watching_valid():
+    text = json.dumps({
+        "trend": "BULLISH", "signal": "BUY",
+        "key_supports": [170.0, 165.0], "key_resistances": [190.0],
+        "confidence": 75, "summary": "Strong uptrend with clear levels.",
+    })
+    result = validate_technical_watching_report(text)
+    assert result["trend"] == "BULLISH"
+    assert result["signal"] == "BUY"
+    assert result["key_supports"] == [170.0, 165.0]
+    assert result["key_resistances"] == [190.0]
+    assert result["confidence"] == 75
+    assert result["summary"] == "Strong uptrend with clear levels."
+
+
+def test_validate_technical_watching_defaults_on_missing_fields():
+    result = validate_technical_watching_report('{"summary": "ok"}')
+    assert result["trend"] == "NEUTRAL"
+    assert result["signal"] == "HOLD"
+    assert result["key_supports"] == []
+    assert result["key_resistances"] == []
+    assert result["confidence"] == 50
+
+
+def test_validate_technical_watching_empty_lists():
+    text = json.dumps({"trend": "SIDEWAYS", "signal": "WAIT", "key_supports": [], "key_resistances": [], "confidence": 40})
+    result = validate_technical_watching_report(text)
+    assert result["key_supports"] == []
+    assert result["key_resistances"] == []
+
+
+def test_validate_technical_watching_invalid_list_defaults_to_empty():
+    text = json.dumps({"trend": "BULLISH", "signal": "BUY", "key_supports": "not_a_list", "confidence": 60})
+    result = validate_technical_watching_report(text)
+    assert result["key_supports"] == []
+    assert result["key_resistances"] == []
+
+
+def test_validate_technical_watching_no_target_stop_fields():
+    """validate_technical_watching_report no debe tener target_price ni stop_loss."""
+    text = json.dumps({"trend": "BULLISH", "signal": "BUY", "confidence": 70})
+    result = validate_technical_watching_report(text)
+    assert "target_price" not in result
+    assert "stop_loss" not in result
+
+
+def test_validate_technical_watching_raises_on_no_json():
+    with pytest.raises(ParseError):
+        validate_technical_watching_report("The stock looks bullish but no JSON here.")
 
 
 # ── validate_technical_report ─────────────────────────────────────────────────
@@ -236,6 +291,13 @@ def test_validate_trading_decision_defaults_optional_fields():
     assert result["symbol"] == ""
     assert result["qty"] is None
     assert result["reasoning"] == ""
+
+
+def test_validate_trading_decision_opportunity_found():
+    text = json.dumps({"decision": "OPPORTUNITY_FOUND", "symbol": "AAPL", "reasoning": "Strong trend."})
+    result = validate_trading_decision(text)
+    assert result["decision"] == "OPPORTUNITY_FOUND"
+    assert result["symbol"] == "AAPL"
 
 
 def test_validate_trading_decision_case_insensitive():

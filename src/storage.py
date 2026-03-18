@@ -471,3 +471,18 @@ class StorageLayer:
                 (symbol.upper(), limit),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_last_agent_report(self, symbol: str, agent_name: str) -> dict | None:
+        """Devuelve el informe más reciente de un sub-agente específico para un símbolo."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT * FROM agent_reports
+                WHERE symbol = ? AND agent_name = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (symbol.upper(), agent_name),
+            ).fetchone()
+        return dict(row) if row else None

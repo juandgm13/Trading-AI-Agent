@@ -3,15 +3,9 @@ TradingAgent — orquestador que evalúa informes de sub-agentes y decide operac
 
 Dos agentes con prompts separados según el estado de la máquina:
 - trading_opportunity_agent: WATCHING → ¿merece vigilancia más cercana?
+  Output: { "decision": "OPPORTUNITY_FOUND" | "HOLD" | "REJECT", "symbol", "reasoning" }
 - trading_entry_agent:       OPPORTUNITY_FOUND → ¿entrar AHORA?
-
-Output esperado:
-{
-  "decision": "OPEN_POSITION" | "HOLD" | "REJECT",
-  "symbol": "<ticker>",
-  "qty": <int or null>,
-  "reasoning": "<explanation>"
-}
+  Output: { "decision": "OPEN_POSITION" | "HOLD" | "REJECT", "symbol", "qty", "reasoning" }
 """
 from agent_framework.core.agent_builder import AgentBuilder
 from agent_framework.events import EventBus
@@ -19,7 +13,7 @@ from agent_framework.models.model_registry import ModelRegistry
 
 
 TRADING_OPPORTUNITY_PROMPT = """\
-You are a disciplined algorithmic trading scout operating in paper (simulated) mode.
+You are a disciplined algorithmic trading scout operating.
 
 You receive a medium-term technical analysis report and global market context.
 Your goal is to decide whether this symbol deserves closer monitoring for a potential trade entry.
@@ -28,26 +22,24 @@ Return ONLY a valid JSON object — no markdown, no explanation outside JSON.
 
 Required JSON structure:
 {
-  "decision": "OPEN_POSITION" | "HOLD" | "REJECT",
+  "decision": "OPPORTUNITY_FOUND" | "HOLD" | "REJECT",
   "symbol": "<ticker>",
-  "qty": null,
   "reasoning": "<one paragraph explaining the decision>"
 }
 
 Decision rules:
-- OPEN_POSITION: Only if the technical signal is BUY with high confidence (>= 70) AND market is RISK_ON.
-  This is rare — reserve for exceptionally clear opportunities.
-- HOLD: The trend looks promising but entry timing is not confirmed yet. Watch more closely.
-  Use this when trend is BULLISH, confidence is moderate (50-70), or market is NEUTRAL.
-  HOLD is the preferred outcome when signals are mixed or developing.
+- OPPORTUNITY_FOUND: The technical signal is BUY or trend is clearly BULLISH with confidence >= 60
+  AND market is RISK_ON or NEUTRAL. This means "watch more closely — an entry may be near."
+- HOLD: The trend looks promising but is not confirmed yet. Signals are mixed or developing.
+  Use this when confidence is moderate (40-60) or market is NEUTRAL with unclear direction.
+  HOLD is the preferred outcome when signals are ambiguous — patience is a virtue.
 - REJECT: Trend is BEARISH, confidence is very low (< 40), or market is strongly RISK_OFF.
 
-Important: qty must always be null in this phase — position sizing happens at entry.
-Bias toward HOLD over REJECT when signals are ambiguous — patience is a virtue.\
+Bias toward HOLD over REJECT when signals are ambiguous.\
 """
 
 TRADING_ENTRY_PROMPT = """\
-You are a disciplined algorithmic trading decision maker operating in paper (simulated) mode.
+You are a disciplined algorithmic trading decision maker operating.
 
 You receive a short-term technical analysis and company news analysis.
 An opportunity was previously flagged. Your goal is to decide whether to execute a trade RIGHT NOW.
@@ -150,8 +142,9 @@ def build_opportunity_prompt(
         f"Technical Analysis (medium-term daily bars):\n{json.dumps(tech_report, indent=2)}\n\n"
         f"Global Market Context:\n{market_section}\n\n"
         f"Is this symbol worth moving to closer monitoring? "
-        f"HOLD means 'yes, watch more closely'. REJECT means 'not interesting'. "
-        f"OPEN_POSITION only if the signal is exceptionally strong RIGHT NOW."
+        f"OPPORTUNITY_FOUND means 'yes, start watching more closely for an entry'. "
+        f"HOLD means 'promising but not yet — keep watching'. "
+        f"REJECT means 'not interesting right now'."
     )
 
 

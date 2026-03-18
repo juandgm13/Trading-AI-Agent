@@ -30,18 +30,19 @@ Required JSON structure:
 {
   "trend": "BULLISH" | "BEARISH" | "NEUTRAL",
   "signal": "BUY" | "SELL" | "HOLD" | "WAIT",
-  "target_price": <float or null>,
-  "stop_loss": <float or null>,
+  "key_supports": [<float>, ...],
+  "key_resistances": [<float>, ...],
   "confidence": <integer 0-100>,
-  "summary": "<one paragraph explaining the medium-term analysis>"
+  "summary": "<one paragraph explaining the medium-term analysis, trend direction, and key levels>"
 }
 
 Rules:
 - Focus on macro trend direction, key support/resistance levels, and volume patterns over weeks.
-- Set target_price and stop_loss only when signal is BUY or SELL and confidence >= 65.
+- key_supports: list of 1-3 significant price levels where buyers have historically stepped in (below current price).
+- key_resistances: list of 1-3 significant price levels where sellers have historically emerged (above current price).
+- Both lists may be empty [] if no clear levels are identifiable.
 - Use HOLD if the trend is developing but entry timing is unclear — this is valid and preferred over forcing a signal.
-- Use WAIT if data is insufficient or the setup is ambiguous.
-- target_price and stop_loss must be realistic (within 15-25% of current price for medium-term).\
+- Use WAIT if data is insufficient or the setup is ambiguous.\
 """
 
 TECHNICAL_ENTRY_PROMPT = """\
@@ -137,12 +138,33 @@ def build_medium_term_prompt(symbol: str, current_price: float, bars: list[dict]
     )
 
 
-def build_short_term_prompt(symbol: str, current_price: float, bars: list[dict]) -> str:
-    """Construye el prompt para análisis de corto plazo (15min bars)."""
+def build_short_term_prompt(
+    symbol: str,
+    current_price: float,
+    bars: list[dict],
+    medium_term_context: dict | None = None,
+) -> str:
+    """Construye el prompt para análisis de corto plazo (15min bars).
+
+    medium_term_context: informe previo del TechnicalWatchingAgent con key_supports/key_resistances.
+    """
     import json
+    context_section = ""
+    if medium_term_context:
+        supports = medium_term_context.get("key_supports", [])
+        resistances = medium_term_context.get("key_resistances", [])
+        macro_trend = medium_term_context.get("trend", "")
+        if supports or resistances or macro_trend:
+            context_section = (
+                f"\nMedium-term context (daily bars analysis):\n"
+                f"  Macro trend: {macro_trend}\n"
+                f"  Key supports: {supports}\n"
+                f"  Key resistances: {resistances}\n"
+            )
     return (
         f"Analyze {symbol} for short-term entry timing.\n"
         f"Current price: ${current_price:.2f}\n"
+        f"{context_section}"
         f"Short-term data (15-minute bars, most recent first):\n"
         f"{json.dumps(bars, indent=2)}\n\n"
         f"An opportunity was flagged for this symbol. Determine if NOW is the optimal entry point. "

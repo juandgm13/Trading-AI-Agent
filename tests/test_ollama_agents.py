@@ -234,7 +234,7 @@ async def test_trading_agent_returns_valid_decision(agent_deps):
     result = validate_trading_decision(response)
     print(f"[TradingAgent bullish] validated:\n{json.dumps(result, indent=2)}")
 
-    assert result["decision"] in {"OPEN_POSITION", "HOLD", "REJECT"}
+    assert result["decision"] in {"OPPORTUNITY_FOUND", "HOLD", "REJECT"}
     assert isinstance(result["reasoning"], str)
 
 

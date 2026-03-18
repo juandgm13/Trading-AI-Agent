@@ -1,16 +1,11 @@
 """
-EconomicsAgent — analiza noticias del símbolo y contexto de mercado general.
+EconomicsAgent — analiza noticias de mercado global y noticias específicas de empresa.
+
+Dos agentes con prompts separados:
+- MarketContextAgent: holistic macro view → { market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary }
+- CompanyAnalysisAgent: company-specific risk → { sentiment, key_events, entry_risk, confidence, summary }
 
 El agente recibe noticias pre-fetched por el monitor e inyectadas en el prompt.
-
-Output esperado:
-{
-  "sentiment": "POSITIVE" | "NEGATIVE" | "NEUTRAL",
-  "market_context": "RISK_ON" | "RISK_OFF" | "NEUTRAL",
-  "key_events": ["<event1>", "<event2>", ...],
-  "confidence": <int 0-100>,
-  "summary": "<one paragraph>"
-}
 """
 from agent_framework.core.agent_builder import AgentBuilder
 from agent_framework.events import EventBus
@@ -88,7 +83,7 @@ Required JSON structure:
 Rules:
 - market_sentiment: overall equity market direction (BULLISH = broadly rising, BEARISH = broadly falling).
 - risk_appetite: investor behavior (RISK_ON = buying equities, RISK_OFF = fleeing to safe assets).
-- dominant_themes: 2-5 macro themes driving sentiment (e.g. "Fed rate pause", "AI earnings growth").
+- dominant_themes: 2-5 macro themes driving sentiment.
 - macro_risks: 1-4 key risks that could cause broad market moves.
 - Return NEUTRAL across fields if news is insufficient or contradictory.\
 """
@@ -111,7 +106,7 @@ Required JSON structure:
 
 Rules:
 - sentiment: how the news affects the near-term price outlook.
-- key_events: 1-4 most important recent company events (earnings, products, legal, management).
+- key_events: 1-4 most important recent company events.
 - entry_risk: LOW = news supports entering, MEDIUM = mixed signals, HIGH = news warns against entry.
 - Return NEUTRAL / MEDIUM / low confidence if company news is absent or contradictory.\
 """
