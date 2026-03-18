@@ -508,3 +508,16 @@ def test_reset_all_idempotent_on_empty_db(tmp_db):
     tmp_db.reset_all()
     tmp_db.reset_all()  # segunda vez sobre BD ya vacía
     assert tmp_db.get_watchlist() == []
+
+
+def test_storage_migrations_idempotent(tmp_path):
+    """Crear StorageLayer dos veces sobre la misma BD no falla (migraciones idempotentes)."""
+    from src.storage import StorageLayer
+    db_path = str(tmp_path / "test.db")
+    # Primera creación aplica las migraciones
+    StorageLayer(db_path)
+    # Segunda creación intenta ALTER TABLE en columnas ya existentes → except silenciado
+    s2 = StorageLayer(db_path)
+    # La BD sigue siendo funcional
+    s2.upsert_watchlist("AAPL", "Apple", 2.0)
+    assert len(s2.get_watchlist()) == 1

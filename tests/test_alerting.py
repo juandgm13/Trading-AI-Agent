@@ -94,6 +94,22 @@ def test_send_close_alert_returns_true_on_success():
     mock_instance.sendmail.assert_called_once()
 
 
+def test_send_close_alert_returns_false_on_smtp_error():
+    """send_close_alert devuelve False si el envío SMTP falla."""
+    from src.alerting import TradeAlerter
+
+    a = TradeAlerter("bad@gmail.com", "wrongpass")
+
+    with patch("smtplib.SMTP_SSL") as mock_smtp:
+        mock_smtp.return_value.__enter__.return_value.login.side_effect = Exception("Auth failed")
+        result = a.send_close_alert(
+            symbol="TSLA", qty=1, buy_price=200.0, sell_price=180.0,
+            pnl=-20.0, fees=0.0, trigger="Stop loss alcanzado",
+        )
+
+    assert result is False
+
+
 def test_build_close_message_positive_pnl():
     """Mensaje de cierre con P&L positivo usa emoji ✅ y color verde."""
     from src.alerting import TradeAlerter

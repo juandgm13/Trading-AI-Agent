@@ -265,6 +265,37 @@ def test_build_short_term_prompt_with_empty_bars():
     assert "500.00" in prompt
 
 
+def test_build_short_term_prompt_with_medium_context_injects_levels():
+    """Cuando se pasa medium_term_context, el prompt incluye soportes y resistencias."""
+    from agents.technical_agent import build_short_term_prompt
+
+    bars = [{"timestamp": "t", "close": 175.0}]
+    context = {
+        "trend": "BULLISH",
+        "key_supports": [165.0, 160.0],
+        "key_resistances": [185.0],
+        "signal": "BUY",
+        "confidence": 75,
+    }
+    prompt = build_short_term_prompt("AAPL", 175.0, bars, medium_term_context=context)
+
+    assert "BULLISH" in prompt
+    assert "165.0" in prompt
+    assert "185.0" in prompt
+    assert "Medium-term context" in prompt
+
+
+def test_build_short_term_prompt_with_empty_medium_context_no_injection():
+    """medium_term_context con listas vacías y trend vacío no inyecta sección de contexto."""
+    from agents.technical_agent import build_short_term_prompt
+
+    bars = [{"timestamp": "t", "close": 175.0}]
+    context = {"trend": "", "key_supports": [], "key_resistances": []}
+    prompt = build_short_term_prompt("AAPL", 175.0, bars, medium_term_context=context)
+
+    assert "Medium-term context" not in prompt
+
+
 # ── Prompt builders: economics_agent ─────────────────────────────────────────
 
 def test_build_market_context_prompt_with_news():

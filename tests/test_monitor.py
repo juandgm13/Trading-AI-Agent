@@ -1742,3 +1742,146 @@ async def test_process_symbol_dispatches_closing_state(tmp_db):
     await monitor._process_symbol("AAPL", snap, state_row)
 
     mock_alpaca.get_order.assert_awaited_once_with("ord-sell")
+
+
+# ── Cobertura: ramas no cubiertas ─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_check_all_market_closed_no_next_open(tmp_db):
+    """Mercado cerrado sin next_open → next_open_local = 'desconocida', wait_secs = 300."""
+    import agents.monitor as monitor_mod
+
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": False,
+        "next_open": None,
+        "next_close": None,
+        "timestamp": None,
+    })
+    mock_alpaca.cancel_all_orders = AsyncMock()
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+
+    log_messages = []
+    monitor._logger = MagicMock()
+    monitor._logger.info = MagicMock(side_effect=lambda msg, **kw: log_messages.append(msg))
+    monitor._logger.debug = MagicMock()
+    monitor._logger.warning = MagicMock()
+
+    original = _patch_sleep(monitor_mod)
+    try:
+        await monitor._check_all(tmp_db.get_watchlist())
+    finally:
+        monitor_mod._interruptible_sleep = original
+
+    apertura_msgs = [m for m in log_messages if "apertura" in m]
+    assert apertura_msgs
+    assert "desconocida" in apertura_msgs[0]
+
+
+@pytest.mark.asyncio
+async def test_check_all_market_open_status_callback(tmp_db):
+    """Cuando el mercado está abierto y hay callback, se invoca con is_open=True."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": True,
+        "next_open": None,
+        "next_close": None,
+        "timestamp": None,
+    })
+    mock_alpaca.get_snapshots = AsyncMock(return_value={})
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+
+    callback_calls = []
+    monitor._market_status_callback = lambda is_open, nxt: callback_calls.append((is_open, nxt))
+
+    await monitor._check_all(tmp_db.get_watchlist())
+
+    assert any(call == (True, None) for call in callback_calls)
+
+
+@pytest.mark.asyncio
+async def test_check_opening_no_pending_order_id(tmp_db):
+    """OPENING sin pending_order_id → vuelve a WATCHING sin llamar a Alpaca."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    tmp_db.upsert_symbol_state("AAPL", state="OPENING", pending_order_id=None)
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    result = await monitor._check_opening("AAPL", state_row)
+
+    assert result is None
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "WATCHING"
+    mock_alpaca.get_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_check_opening_get_order_exception(tmp_db):
+    """Excepción en get_order durante OPENING → devuelve None, no cambia estado."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(side_effect=RuntimeError("network error"))
+    tmp_db.upsert_symbol_state("AAPL", state="OPENING", pending_order_id="ord-err")
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    result = await monitor._check_opening("AAPL", state_row)
+
+    assert result is None
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "OPENING"
+
+
+@pytest.mark.asyncio
+async def test_check_closing_no_pending_order_id(tmp_db):
+    """CLOSING sin pending_order_id → vuelve a POSITION_OPEN sin llamar a Alpaca."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    tmp_db.upsert_symbol_state("AAPL", state="CLOSING", pending_order_id=None)
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    result = await monitor._check_closing("AAPL", state_row)
+
+    assert result is None
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "POSITION_OPEN"
+    mock_alpaca.get_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_check_closing_get_order_exception(tmp_db):
+    """Excepción en get_order durante CLOSING → devuelve None, no cambia estado."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(side_effect=RuntimeError("timeout"))
+    tmp_db.upsert_symbol_state("AAPL", state="CLOSING", pending_order_id="ord-close-err")
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    result = await monitor._check_closing("AAPL", state_row)
+
+    assert result is None
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "CLOSING"
+
+
+@pytest.mark.asyncio
+async def test_check_closing_sell_order_still_pending(tmp_db):
+    """Orden de venta aún pendiente (submitted) → devuelve None, estado permanece CLOSING."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(return_value={
+        "id": "ord-pending", "status": "submitted",
+        "filled_avg_price": None, "filled_qty": 0,
+        "side": "sell", "symbol": "AAPL",
+    })
+    tmp_db.upsert_symbol_state("AAPL", state="CLOSING", pending_order_id="ord-pending")
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    result = await monitor._check_closing("AAPL", state_row)
+
+    assert result is None
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "CLOSING"
+
+
+@pytest.mark.asyncio
+async def test_run_technical_short_medium_report_invalid_json(tmp_db):
+    """Si el JSON del informe de medio plazo es inválido, se ignora y el análisis continúa."""
+    monitor, mock_alpaca, mock_tech, _, _ = _make_monitor(tmp_db)
+    # Guardar un informe inválido en la BD
+    tmp_db.save_agent_report("AAPL", "technical_medium", "not-valid-json")
+
+    result, bars = await monitor._run_technical_short("AAPL", 175.0)
+
+    # El agente sigue funcionando aunque no haya contexto de medio plazo
+    assert result is not None
+    assert result.get("trend") == "BULLISH"
