@@ -1,3 +1,5 @@
+import os
+import asyncio
 import streamlit as st
 from src.storage import StorageLayer
 from ui.components import trading_mode_banner
@@ -16,9 +18,40 @@ new_company = col2.text_input("Empresa (opcional)", placeholder="Apple Inc.")
 
 if col3.button("Añadir", type="primary"):
     if new_symbol:
-        storage.upsert_watchlist(new_symbol, new_company)
-        st.success(f"{new_symbol} añadido a la watchlist")
-        st.rerun()
+        api_key = os.environ.get("ALPACA_API_KEY")
+        secret_key = os.environ.get("ALPACA_SECRET_KEY")
+        trading_url = os.environ.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+
+        if not api_key or not secret_key:
+            st.warning("Alpaca credentials not configured — adding without validation.")
+            storage.upsert_watchlist(new_symbol, new_company)
+            st.success(f"{new_symbol} added to watchlist (unvalidated).")
+            st.rerun()
+        else:
+            from src.alpaca import AlpacaClient
+
+            async def _validate():
+                client = AlpacaClient(api_key, secret_key, trading_url)
+                return await client.get_asset(new_symbol)
+
+            try:
+                asset = asyncio.run(_validate())
+            except Exception as e:
+                st.error(f"Error connecting to Alpaca: {e}")
+                st.stop()
+
+            if asset is None:
+                st.error(f"Symbol '{new_symbol}' not found in Alpaca or not tradable.")
+            else:
+                storage.upsert_watchlist(
+                    new_symbol,
+                    asset.get("name") or new_company,
+                    exchange=asset.get("exchange", ""),
+                    marginable=asset.get("marginable", False),
+                    shortable=asset.get("shortable", False),
+                )
+                st.success(f"{new_symbol} validated and added ({asset.get('exchange', '')})")
+                st.rerun()
     else:
         st.warning("Introduce un ticker válido")
 

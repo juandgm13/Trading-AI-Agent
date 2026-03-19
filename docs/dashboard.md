@@ -34,7 +34,7 @@ View and manage the list of monitored symbols. Includes Alpaca asset metadata co
 - **Marginable** — ✓ / ✗
 - **Shortable** — ✓ / ✗
 
-Add new symbols (ticker + optional company name) or deactivate existing ones.
+Add new symbols (ticker + optional company name) or deactivate existing ones. When credentials are present, the "Add" button validates the symbol against `GET /v2/assets/{symbol}` and populates exchange/marginable/shortable automatically. Invalid or non-tradable symbols are rejected with an error.
 
 ### 6 · Estados (`ui/pages/6_Estados.py`)
 - State machine table for all symbols (state, last analysis, target, stop-loss, position details).
