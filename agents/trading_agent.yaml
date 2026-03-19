@@ -64,3 +64,4 @@ trading:
   analysis_interval_hours: 4   # cada cuántas horas hacer análisis completo (WATCHING)
   max_position_value: 500       # valor máximo en USD por posición
   poll_interval_seconds: 60
+  allow_short_selling: false    # habilitar ventas en corto (solo si el símbolo es shortable)

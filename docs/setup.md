@@ -52,6 +52,9 @@ ALERT_RECIPIENT=your@gmail.com
 
 # Trading — maximum dollar value per position (default: $500)
 # MAX_POSITION_VALUE=500
+
+# Short selling — enable OPEN_SHORT decisions for shortable symbols (default: disabled)
+# ALLOW_SHORT_SELLING=false
 ```
 
 ## Running
@@ -77,7 +80,10 @@ trading:
   analysis_interval_hours: 4    # how often to run full analysis (WATCHING state)
   max_position_value: 500       # max dollar value per position (replaces max_qty_per_order)
   poll_interval_seconds: 60     # polling interval in seconds
+  allow_short_selling: false    # enable OPEN_SHORT decisions for shortable symbols
 ```
+
+> **Short selling**: when enabled (`ALLOW_SHORT_SELLING=true` env var or `allow_short_selling: true` in yaml), the `TradingEntryAgent` may return `OPEN_SHORT` for symbols that have `shortable=1` in the watchlist. A SELL order opens the short; a BUY order closes it. Target/stop logic is reversed (target below entry, stop above). P&L = `(entry_price - exit_price) × qty`. Disabled by default — Alpaca paper trading supports short selling.
 
 > **Position sizing**: `TradingEntryAgent` recommends a qty (integer ≥ 1). The monitor caps it to `max(1, int(max_position_value / current_price))`. If the agent returns `null`, the cap is used as fallback.
 

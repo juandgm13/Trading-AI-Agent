@@ -183,7 +183,7 @@ flowchart TB
         direction TB
         EI["TechnicalEntryAgent report + CompanyAnalysis + current price + max_position_value"]
         EA["model: trader_entry · qwen2.5:7b"]
-        EO["decision: OPEN_POSITION · HOLD · REJECT\nsymbol · qty (int or null) · reasoning"]
+        EO["decision: OPEN_POSITION · OPEN_SHORT · HOLD · REJECT\nsymbol · qty (int or null) · reasoning"]
         EI --> EA --> EO
     end
 ```
@@ -194,7 +194,8 @@ flowchart TB
 - `REJECT` — trend BEARISH, confidence < 40, or market strongly RISK_OFF.
 
 **Decision rules (TradingEntryAgent):**
-- `OPEN_POSITION` — technical signal is BUY, market is RISK_ON or NEUTRAL, company entry_risk is LOW or MEDIUM, confidence ≥ 60.
+- `OPEN_POSITION` — technical signal is BUY, market is RISK_ON or NEUTRAL, company entry_risk is LOW or MEDIUM, confidence ≥ 70.
+- `OPEN_SHORT` — only available when `allow_short_selling=true` and the watchlist symbol has `shortable=1`. Signal is BEARISH, confidence ≥ 70, entry_risk is LOW or MEDIUM. Uses a SELL order to open; a BUY order to close. P&L = `(entry_price - exit_price) × qty`.
 - `HOLD` — signals conflict, confidence is low, or market is RISK_OFF but not severely.
 - `REJECT` — signals clearly unfavorable, entry_risk is HIGH, or market is strongly BEARISH.
 
@@ -222,7 +223,7 @@ The chart path is logged as `file:///absolute/path.png` and displayed in the **E
 | **MarketContextAgent** | General news JSON | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
 | **CompanyAnalysisAgent** | Company news JSON | `{sentiment, key_events, entry_risk, confidence, summary}` |
 | **TradingOpportunityAgent** | Technical + market reports | `{decision: OPPORTUNITY_FOUND\|HOLD\|REJECT, symbol, reasoning}` |
-| **TradingEntryAgent** | Technical + company reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: <int or null>, reasoning}` |
+| **TradingEntryAgent** | Technical + company reports | `{decision: OPEN_POSITION\|OPEN_SHORT\|HOLD\|REJECT, symbol, qty: <int or null>, reasoning}` |
 | **AlpacaClient.get_asset()** | Symbol string | `{symbol, name, exchange, marginable, shortable}` or `None` |
 | **AlpacaClient.get_clock()** | — | `{is_open, next_open, next_close, timestamp}` |
 | **AlpacaClient** | Credentials + params | Prices, orders, assets, clock (async REST) |
@@ -243,4 +244,5 @@ The chart path is logged as `file:///absolute/path.png` and displayed in the **E
 - **Force analysis**: when `force_event` is set (via the "Analyze now" button), `_force_analysis=True` causes `_check_all()` to skip the market-hours check entirely. All WATCHING symbols are analysed regardless of market status. The flag is reset by `run()` at cycle end.
 - **Trade fees**: the `fees` column in `trades` is populated from the `commission` field returned by `GET /v2/orders/{id}`. Alpaca returns `"0"` for paper trading and the actual regulatory fee for live trading. No local fee calculation is performed.
 - **Watchlist enrichment**: when `WATCHLIST_SYMBOLS` is set, each symbol is enriched via `get_asset()` (name, exchange, marginable, shortable). Falls back to minimal entry on API failure.
+- **Short selling**: disabled by default. Enable with `ALLOW_SHORT_SELLING=true` (env var) or `allow_short_selling: true` in `trading_agent.yaml`. Only applies to symbols with `shortable=1` in the watchlist. The `TradingEntryAgent` prompt includes the `OPEN_SHORT` option only when both conditions are met. Position side (`long`/`short`) is stored in `symbol_states.position_side` and used for reversed target/stop logic and P&L calculation.
 - Prompt separation by state: `WATCHING` uses macro-focused prompts; `OPPORTUNITY_FOUND` uses timing-focused prompts with stricter conditions.

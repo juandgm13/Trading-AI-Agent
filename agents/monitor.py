@@ -78,6 +78,7 @@ class PriceMonitor:
         analysis_interval_hours: float = 4.0,
         alerter=None,
         force_event: asyncio.Event | None = None,
+        allow_short_selling: bool = False,
     ):
         self._alpaca = alpaca
         self._storage = storage
@@ -96,6 +97,7 @@ class PriceMonitor:
         self._market_status_callback = None
         self._running = True
         self._force_analysis = False
+        self._allow_short_selling = allow_short_selling
 
     # ── Loop principal ────────────────────────────────────────────────────────
 
@@ -222,6 +224,9 @@ class PriceMonitor:
         alerts_triggered = []
         self._logger.info(f"Ciclo inicio — {len(symbols)} símbolos a monitorizar", source="monitor")
 
+        # Lookup de shortable por símbolo para inyectar en state_row
+        wl_lookup = {item["symbol"]: item for item in watchlist}
+
         for symbol in symbols:
             # F3: verificar stop_event al inicio de cada símbolo
             if stop_event and stop_event.is_set():
@@ -237,6 +242,8 @@ class PriceMonitor:
                 continue
 
             state_row = self._storage.get_symbol_state(symbol)
+            # Enriquecer state_row con shortable del watchlist (no está en symbol_states)
+            state_row["shortable"] = wl_lookup.get(symbol, {}).get("shortable", 0)
 
             # Si cierre inminente, solo gestionar posiciones abiertas u órdenes en vuelo
             if close_imminent and state_row.get("state", "WATCHING") not in ("POSITION_OPEN", "OPENING", "CLOSING"):
@@ -386,13 +393,21 @@ class PriceMonitor:
         if company_report is None:
             self._logger.warning(f"{symbol}: company analysis falló — continuando sin él", source="monitor")
 
-        prompt = build_entry_prompt(symbol, price, tech_report, company_report, self._max_position_value)
+        can_short = self._allow_short_selling and bool(state_row.get("shortable"))
+        prompt = build_entry_prompt(symbol, price, tech_report, company_report, self._max_position_value, allow_short=can_short)
         decision = await self._run_trading_decision(symbol, "entry_eval", prompt, self._trading_entry_agent)
 
         if not decision:
             return None
 
-        if decision.get("decision") == "OPEN_POSITION":
+        if decision.get("decision") in ("OPEN_POSITION", "OPEN_SHORT"):
+            is_short = decision.get("decision") == "OPEN_SHORT"
+            if is_short and not can_short:
+                self._logger.info(f"{symbol}: OPEN_SHORT ignorado — short selling deshabilitado o símbolo no shortable", source="monitor")
+                return None
+            side = "sell" if is_short else "buy"
+            position_side = "short" if is_short else "long"
+
             # Calcular qty máxima por valor máximo en dólares
             max_qty = max(1, int(self._max_position_value / price))
             agent_qty = decision.get("qty")
@@ -408,31 +423,33 @@ class PriceMonitor:
             target = tech_report.get("target_price")
             stop = tech_report.get("stop_loss")
 
+            direction = "SHORT" if is_short else "LONG"
             self._logger.info(
-                f"{symbol}: abriendo posición — qty={qty} (${price:.2f}×{qty}=${price*qty:.0f}) "
+                f"{symbol}: abriendo posición {direction} — qty={qty} (${price:.2f}×{qty}=${price*qty:.0f}) "
                 f"target=${target} stop=${stop}",
                 source="monitor",
             )
 
-            # F5: generar gráfico de evidencia al abrir posición
+            # Generar gráfico de evidencia al abrir posición
             chart_path = self._generate_chart(symbol, bars, "15Min", "entry")
 
             try:
-                result = await self._alpaca.place_order(symbol, qty, "buy")
+                result = await self._alpaca.place_order(symbol, qty, side)
                 self._storage.upsert_symbol_state(
                     symbol,
                     state="OPENING",
                     target_price=target,
                     stop_loss=stop,
                     position_qty=float(qty),
+                    position_side=position_side,
                     pending_order_id=result.get("order_id"),
                     chart_path=chart_path,
                 )
                 self._logger.info(
-                    f"{symbol}: orden de compra enviada (order_id={result.get('order_id')}) → OPENING",
+                    f"{symbol}: orden {side.upper()}×{qty} enviada (order_id={result.get('order_id')}) → OPENING",
                     source="monitor",
                 )
-                return f"{symbol} BUY×{qty} enviada (OPENING)"
+                return f"{symbol} {side.upper()}×{qty} enviada (OPENING)"
             except Exception as e:
                 self._logger.error(f"{symbol}: error al abrir posición: {e}", source="monitor", exc_info=True)
 
@@ -449,6 +466,7 @@ class PriceMonitor:
         target = state_row.get("target_price")
         stop = state_row.get("stop_loss")
         qty = state_row.get("position_qty") or 0
+        position_side = state_row.get("position_side", "long")
 
         if not qty:
             # Posición sin cantidad registrada → resetear
@@ -457,32 +475,41 @@ class PriceMonitor:
             return None
 
         reason = None
-        if target and price >= target:
-            reason = f"Target ${target:.2f} alcanzado (precio actual: ${price:.2f})"
-        elif stop and price <= stop:
-            reason = f"Stop-loss ${stop:.2f} activado (precio actual: ${price:.2f})"
+        if position_side == "short":
+            # Para cortos: precio baja → ganancia (target < entry), precio sube → pérdida (stop > entry)
+            if target and price <= target:
+                reason = f"Short target ${target:.2f} alcanzado (precio actual: ${price:.2f})"
+            elif stop and price >= stop:
+                reason = f"Short stop-loss ${stop:.2f} activado (precio actual: ${price:.2f})"
+            close_side = "buy"
+        else:
+            if target and price >= target:
+                reason = f"Target ${target:.2f} alcanzado (precio actual: ${price:.2f})"
+            elif stop and price <= stop:
+                reason = f"Stop-loss ${stop:.2f} activado (precio actual: ${price:.2f})"
+            close_side = "sell"
 
         if not reason:
             self._logger.debug(
-                f"{symbol}: posición abierta — precio ${price:.2f} | target ${target} | stop ${stop}",
+                f"{symbol}: posición {position_side} abierta — precio ${price:.2f} | target ${target} | stop ${stop}",
                 source="monitor",
             )
             return None
 
-        self._logger.info(f"{symbol}: cerrando posición — {reason}", source="monitor")
+        self._logger.info(f"{symbol}: cerrando posición {position_side} — {reason}", source="monitor")
         try:
-            result = await self._alpaca.place_order(symbol, qty, "sell")
+            result = await self._alpaca.place_order(symbol, qty, close_side)
             self._storage.upsert_symbol_state(
                 symbol,
                 state="CLOSING",
                 pending_order_id=result.get("order_id"),
-                analysis_summary=reason,  # guardamos el motivo de cierre para usarlo al confirmar fill
+                analysis_summary=reason,
             )
             self._logger.info(
-                f"{symbol}: orden de venta enviada (order_id={result.get('order_id')}) → CLOSING",
+                f"{symbol}: orden {close_side.upper()}×{qty} enviada (order_id={result.get('order_id')}) → CLOSING",
                 source="monitor",
             )
-            return f"{symbol} SELL×{qty} enviada (CLOSING)"
+            return f"{symbol} {close_side.upper()}×{qty} enviada (CLOSING)"
         except Exception as e:
             self._logger.error(f"{symbol}: error al cerrar posición: {e}", source="monitor", exc_info=True)
         return None
@@ -587,16 +614,27 @@ class PriceMonitor:
             fill_price = order.get("filled_avg_price")
             fill_qty = order.get("filled_qty") or state_row.get("position_qty", 0)
             trigger = state_row.get("analysis_summary") or "cierre de posición"
+            position_side = state_row.get("position_side", "long")
 
-            buy_trade = self._storage.get_last_buy_trade(symbol)
-            buy_price = buy_trade.get("price") if buy_trade else None
-
-            pnl = (fill_price - buy_price) * fill_qty if (fill_price and buy_price) else None
             fees = order.get("commission", 0.0)
+
+            if position_side == "short":
+                # Cierre de short: la entrada fue un SELL, la salida es un BUY
+                entry_trade = self._storage.get_last_sell_trade(symbol)
+                entry_price = entry_trade.get("price") if entry_trade else None
+                pnl = (entry_price - fill_price) * fill_qty if (fill_price and entry_price) else None
+                close_side = "buy"
+                buy_price = entry_price  # para la alerta
+            else:
+                entry_trade = self._storage.get_last_buy_trade(symbol)
+                entry_price = entry_trade.get("price") if entry_trade else None
+                pnl = (fill_price - entry_price) * fill_qty if (fill_price and entry_price) else None
+                close_side = "sell"
+                buy_price = entry_price
 
             self._storage.save_trade(
                 symbol=symbol,
-                side="sell",
+                side=close_side,
                 qty=fill_qty,
                 price=fill_price,
                 order_id=order_id,
@@ -616,11 +654,12 @@ class PriceMonitor:
                 chart_path=None,
                 pending_order_id=None,
                 analysis_summary=None,
+                position_side="long",
             )
             pnl_str = f" | P&L: ${pnl:+.2f}" if pnl is not None else ""
             price_str = f"${fill_price:.2f}" if fill_price else "precio de mercado"
             self._logger.info(
-                f"{symbol}: posición cerrada — {fill_qty:.0f} acc. @ {price_str}{pnl_str} → WATCHING",
+                f"{symbol}: posición {position_side} cerrada — {fill_qty:.0f} acc. @ {price_str}{pnl_str} → WATCHING",
                 source="monitor",
             )
             if self._alerter and fill_price and buy_price and pnl is not None:
@@ -636,7 +675,7 @@ class PriceMonitor:
                     )
                 except Exception:
                     pass
-            return f"{symbol} SELL FILLED @ {price_str}{pnl_str}"
+            return f"{symbol} {close_side.upper()} FILLED @ {price_str}{pnl_str}"
 
         elif status in ("cancelled", "expired", "rejected"):
             # Orden cancelada — volver a POSITION_OPEN para reintentar en próximo ciclo
@@ -950,6 +989,12 @@ async def run_monitor(
     effective_max_position = max_position_value if max_position_value != 500.0 else max_pos_val
     logger.info(f"Valor máximo por posición: ${effective_max_position:.0f} USD", source="monitor")
 
+    # Short selling — ENV override tiene prioridad sobre yaml
+    env_short = os.environ.get("ALLOW_SHORT_SELLING", "").lower()
+    allow_short = env_short in ("1", "true", "yes") or trading_opts.get("allow_short_selling", False)
+    if allow_short:
+        logger.info("Short selling habilitado (ALLOW_SHORT_SELLING)", source="monitor")
+
     # Modelos
     model_registry = ModelRegistry()
 
@@ -1010,6 +1055,7 @@ async def run_monitor(
         analysis_interval_hours=analysis_interval,
         alerter=alerter,
         force_event=force_event,
+        allow_short_selling=allow_short,
     )
     monitor._market_status_callback = market_status_callback
     await monitor.run(poll_interval_seconds=poll_interval, stop_event=stop_event)

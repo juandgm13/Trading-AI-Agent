@@ -90,6 +90,7 @@ symbol_states (
     position_open_at    TEXT,
     chart_path          TEXT,   -- absolute path to last evidence PNG (may be NULL)
     pending_order_id    TEXT,   -- Alpaca order ID while in OPENING or CLOSING state
+    position_side       TEXT DEFAULT 'long',  -- 'long' | 'short'
     updated_at          TEXT NOT NULL
 )
 ```
@@ -135,7 +136,8 @@ market_context (
 | `get_market_context_history(limit)` | Get history of market context reports |
 | `save_trade(..., pnl, fees)` | Record an executed order (pnl/fees optional, for sell trades) |
 | `get_trades(limit)` | Retrieve trade history |
-| `get_last_buy_trade(symbol)` | Get the most recent buy trade for a symbol (used for P&L calculation) |
+| `get_last_buy_trade(symbol)` | Get the most recent buy trade for a symbol (used for long P&L calculation) |
+| `get_last_sell_trade(symbol)` | Get the most recent sell trade for a symbol (used for short P&L calculation) |
 | `save_price_snapshot(symbol, close, volume, bar_time)` | Record a price snapshot |
 | `get_last_price(symbol)` | Get the most recent close price for a symbol |
 
@@ -151,4 +153,5 @@ ALTER TABLE symbol_states ADD COLUMN chart_path TEXT;
 ALTER TABLE symbol_states ADD COLUMN pending_order_id TEXT;
 ALTER TABLE trades ADD COLUMN pnl REAL;
 ALTER TABLE trades ADD COLUMN fees REAL;   -- populated from Alpaca's commission field (0 in paper mode)
+ALTER TABLE symbol_states ADD COLUMN position_side TEXT DEFAULT 'long';
 ```

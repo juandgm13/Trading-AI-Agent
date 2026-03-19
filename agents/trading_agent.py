@@ -154,14 +154,26 @@ def build_entry_prompt(
     tech_report: dict,
     company_report: dict | None,
     max_position_value: float,
+    allow_short: bool = False,
 ) -> str:
-    """Prompt para decidir entrada (OPPORTUNITY_FOUND → POSITION_OPEN)."""
+    """Prompt para decidir entrada (OPPORTUNITY_FOUND → POSITION_OPEN / OPEN_SHORT)."""
     import json
     company_section = (
         json.dumps(company_report, indent=2)
         if company_report
         else "Not available — proceed based on technical analysis alone."
     )
+    if allow_short:
+        decisions = '"OPEN_POSITION" | "OPEN_SHORT" | "HOLD" | "REJECT"'
+        short_section = (
+            "\n- OPEN_SHORT: Short-sell signal — only if short-term signal is BEARISH with high confidence (>= 70), "
+            "entry_risk is LOW or MEDIUM, and market conditions support a downward move. "
+            "qty must be an integer >= 1. target_price should be below current price; stop_loss above it."
+        )
+    else:
+        decisions = '"OPEN_POSITION" | "HOLD" | "REJECT"'
+        short_section = ""
+
     return (
         f"Decide whether to execute a trade for {symbol} RIGHT NOW.\n"
         f"Current price: ${current_price:.2f}\n"
@@ -169,6 +181,7 @@ def build_entry_prompt(
         f"(max {int(max_position_value / current_price)} shares at current price — recommend your desired qty)\n\n"
         f"Short-term Technical Analysis (15-minute bars):\n{json.dumps(tech_report, indent=2)}\n\n"
         f"Company News Analysis:\n{company_section}\n\n"
+        f"Valid decisions: {decisions}{short_section}\n\n"
         f"This opportunity was flagged in a previous cycle. Is this the right moment to enter? "
-        f"OPEN_POSITION to execute the trade, HOLD to wait for better timing, REJECT to abandon."
+        f"OPEN_POSITION to buy long, HOLD to wait for better timing, REJECT to abandon."
     )

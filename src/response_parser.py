@@ -202,11 +202,11 @@ def validate_trading_decision(text: str) -> dict:
         ParseError: si no se puede extraer JSON, o si 'decision' es inválido.
     """
     data = extract_json(text)
-    decision = _coerce_enum(data.get("decision", ""), {"OPEN_POSITION", "OPPORTUNITY_FOUND", "HOLD", "REJECT"}, "")
+    decision = _coerce_enum(data.get("decision", ""), {"OPEN_POSITION", "OPEN_SHORT", "OPPORTUNITY_FOUND", "HOLD", "REJECT"}, "")
     if not decision:
         raise ParseError(
             f"Campo 'decision' ausente o inválido: {data.get('decision')!r}. "
-            f"Valores válidos: OPEN_POSITION, OPPORTUNITY_FOUND, HOLD, REJECT."
+            f"Valores válidos: OPEN_POSITION, OPEN_SHORT, OPPORTUNITY_FOUND, HOLD, REJECT."
         )
 
     raw_qty = data.get("qty")

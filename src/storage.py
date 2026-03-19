@@ -116,6 +116,7 @@ class StorageLayer:
                 "ALTER TABLE symbol_states ADD COLUMN pending_order_id TEXT",
                 "ALTER TABLE trades ADD COLUMN pnl REAL",
                 "ALTER TABLE trades ADD COLUMN fees REAL",
+                "ALTER TABLE symbol_states ADD COLUMN position_side TEXT DEFAULT 'long'",
             ]
             for _sql in _migrations:
                 try:
@@ -278,6 +279,17 @@ class StorageLayer:
             ).fetchone()
         return dict(row) if row else None
 
+    def get_last_sell_trade(self, symbol: str) -> dict | None:
+        """Devuelve el último trade de venta para el símbolo, o None si no existe.
+        Usado para calcular P&L en posiciones cortas (la entrada es un SELL)."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM trades WHERE symbol = ? AND side = 'sell' ORDER BY created_at DESC LIMIT 1",
+                (symbol.upper(),),
+            ).fetchone()
+        return dict(row) if row else None
+
     def get_trades(self, limit: int = 50) -> list[dict]:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
@@ -350,6 +362,7 @@ class StorageLayer:
             "position_open_at": None,
             "chart_path": None,
             "pending_order_id": None,
+            "position_side": "long",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -370,8 +383,9 @@ class StorageLayer:
                     INSERT INTO symbol_states
                         (symbol, state, last_analysis_at, analysis_summary,
                          entry_signal_at, target_price, stop_loss,
-                         position_qty, position_open_at, chart_path, pending_order_id, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         position_qty, position_open_at, chart_path, pending_order_id,
+                         position_side, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         symbol,
@@ -385,6 +399,7 @@ class StorageLayer:
                         kwargs.get("position_open_at"),
                         kwargs.get("chart_path"),
                         kwargs.get("pending_order_id"),
+                        kwargs.get("position_side", "long"),
                         now,
                     ),
                 )
@@ -394,6 +409,7 @@ class StorageLayer:
                     "state", "last_analysis_at", "analysis_summary",
                     "entry_signal_at", "target_price", "stop_loss",
                     "position_qty", "position_open_at", "chart_path", "pending_order_id",
+                    "position_side",
                 }
                 updates = {k: v for k, v in kwargs.items() if k in allowed}
                 updates["updated_at"] = now

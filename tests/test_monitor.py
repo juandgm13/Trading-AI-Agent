@@ -1887,6 +1887,147 @@ async def test_run_technical_short_medium_report_invalid_json(tmp_db):
     assert result.get("trend") == "BULLISH"
 
 
+# ── Short selling ─────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_short_selling_disabled_by_default(tmp_db):
+    """Con allow_short_selling=False (default), OPEN_SHORT se ignora."""
+    monitor, mock_alpaca, mock_tech, _, mock_trader = _make_monitor(tmp_db)
+    assert monitor._allow_short_selling is False
+
+    mock_trader.run = AsyncMock(return_value=json.dumps({
+        "decision": "OPEN_SHORT", "symbol": "AAPL", "qty": 2, "reasoning": "bearish",
+    }))
+
+    tmp_db.upsert_watchlist("AAPL", shortable=True)
+    tmp_db.upsert_symbol_state("AAPL", state="OPPORTUNITY_FOUND")
+    state_row = tmp_db.get_symbol_state("AAPL")
+    state_row["shortable"] = 1  # simulamos el enriquecimiento de _check_all
+
+    snap = {"close": 175.0, "volume": 1000, "timestamp": "t"}
+    mock_alpaca.get_bars = AsyncMock(return_value=[
+        {"timestamp": "t", "open": 175.0, "high": 176.0, "low": 174.0, "close": 175.0, "volume": 1000}
+    ])
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        result = await monitor._look_for_entry("AAPL", 175.0, state_row)
+
+    # Sin allow_short, OPEN_SHORT no debe abrir posición
+    mock_alpaca.place_order.assert_not_awaited()
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_short_selling_open_short_places_sell_order(tmp_db):
+    """Con allow_short_selling=True y shortable=1, OPEN_SHORT coloca una orden sell."""
+    from agents.monitor import PriceMonitor
+
+    monitor, mock_alpaca, mock_tech, mock_market_ctx, _ = _make_monitor(tmp_db)
+    # Reconstruir monitor con allow_short_selling=True
+    mock_trader_short = MagicMock()
+    mock_trader_short.run = AsyncMock(return_value=json.dumps({
+        "decision": "OPEN_SHORT", "symbol": "AAPL", "qty": 2, "reasoning": "bearish signal",
+    }))
+    monitor._allow_short_selling = True
+    monitor._trading_entry_agent = mock_trader_short
+
+    tmp_db.upsert_watchlist("AAPL", shortable=True)
+    tmp_db.upsert_symbol_state("AAPL", state="OPPORTUNITY_FOUND")
+    state_row = tmp_db.get_symbol_state("AAPL")
+    state_row["shortable"] = 1
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        result = await monitor._look_for_entry("AAPL", 175.0, state_row)
+
+    # Debe haber colocado una orden de SELL para abrir el short
+    mock_alpaca.place_order.assert_awaited_once()
+    call_args = mock_alpaca.place_order.call_args
+    assert call_args[0][2] == "sell"  # side = "sell"
+
+    # El estado debe quedar como OPENING con position_side="short"
+    new_state = tmp_db.get_symbol_state("AAPL")
+    assert new_state["state"] == "OPENING"
+    assert new_state["position_side"] == "short"
+
+
+@pytest.mark.asyncio
+async def test_short_selling_manage_position_reversed_logic(tmp_db):
+    """Para posiciones cortas, el target se alcanza cuando el precio BAJA."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="POSITION_OPEN",
+        target_price=160.0, stop_loss=185.0, position_qty=2.0, position_side="short",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    # Precio baja a 158 → target alcanzado (160) → debe cerrar comprando
+    result = await monitor._manage_position("AAPL", 158.0, state_row)
+
+    mock_alpaca.place_order.assert_awaited_once()
+    call_args = mock_alpaca.place_order.call_args
+    assert call_args[0][2] == "buy"  # cierre de short es BUY
+    assert result is not None
+    assert "BUY" in result
+
+
+@pytest.mark.asyncio
+async def test_short_selling_pnl_inverted(tmp_db):
+    """El P&L de un short se calcula como (entry_price - fill_price) * qty."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(return_value={
+        "id": "ord-close", "status": "filled",
+        "filled_avg_price": 160.0, "filled_qty": 2.0,
+        "side": "buy", "symbol": "AAPL",
+        "commission": 0.0,
+    })
+
+    # Trade de entrada (SELL) a $175
+    tmp_db.save_trade("AAPL", "sell", 2.0, 175.0, "ord-open", "filled", "entry", "")
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="CLOSING",
+        target_price=160.0, stop_loss=185.0, position_qty=2.0,
+        position_side="short", pending_order_id="ord-close",
+        analysis_summary="Short target reached",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    await monitor._check_closing("AAPL", state_row)
+
+    trades = tmp_db.get_trades()
+    close_trade = next((t for t in trades if t["side"] == "buy"), None)
+    assert close_trade is not None
+    # P&L = (175 - 160) * 2 = 30
+    assert close_trade["pnl"] == pytest.approx(30.0)
+
+
+@pytest.mark.asyncio
+async def test_non_shortable_symbol_no_open_short(tmp_db):
+    """Con allow_short=True pero shortable=0, el prompt no incluye OPEN_SHORT."""
+    monitor, mock_alpaca, _, _, mock_trader = _make_monitor(tmp_db)
+    monitor._allow_short_selling = True
+
+    # shortable=0 → can_short=False → prompt sin OPEN_SHORT
+    mock_trader.run = AsyncMock(return_value=json.dumps({
+        "decision": "HOLD", "symbol": "AAPL", "qty": None, "reasoning": "waiting",
+    }))
+
+    tmp_db.upsert_symbol_state("AAPL", state="OPPORTUNITY_FOUND")
+    state_row = tmp_db.get_symbol_state("AAPL")
+    state_row["shortable"] = 0  # no shortable
+
+    with pytest.MonkeyPatch.context() as mp:
+        from agents.tools.news_tool import SearchNewsTool
+        mp.setattr(SearchNewsTool, "execute", AsyncMock(return_value=json.dumps({"articles": []})))
+        result = await monitor._look_for_entry("AAPL", 175.0, state_row)
+
+    mock_alpaca.place_order.assert_not_awaited()
+
+
 # ── Fees: commission desde get_order ─────────────────────────────────────────
 
 @pytest.mark.asyncio

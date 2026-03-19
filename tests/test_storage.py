@@ -521,3 +521,43 @@ def test_storage_migrations_idempotent(tmp_path):
     # La BD sigue siendo funcional
     s2.upsert_watchlist("AAPL", "Apple", 2.0)
     assert len(s2.get_watchlist()) == 1
+
+
+# ── Short selling: position_side y get_last_sell_trade ────────────────────────
+
+def test_upsert_symbol_state_position_side_long(tmp_db):
+    """Insertar un estado con position_side='long' se persiste correctamente."""
+    tmp_db.upsert_symbol_state("AAPL", state="POSITION_OPEN", position_side="long")
+    row = tmp_db.get_symbol_state("AAPL")
+    assert row["position_side"] == "long"
+
+
+def test_upsert_symbol_state_position_side_short(tmp_db):
+    """Insertar un estado con position_side='short' se persiste correctamente."""
+    tmp_db.upsert_symbol_state("AAPL", state="POSITION_OPEN", position_side="short")
+    row = tmp_db.get_symbol_state("AAPL")
+    assert row["position_side"] == "short"
+
+
+def test_get_symbol_state_default_position_side(tmp_db):
+    """El estado por defecto para un símbolo nuevo incluye position_side='long'."""
+    row = tmp_db.get_symbol_state("NEWSTK")
+    assert row["position_side"] == "long"
+
+
+def test_get_last_sell_trade_returns_most_recent(tmp_db):
+    """get_last_sell_trade devuelve el último trade de venta."""
+    tmp_db.save_trade("AAPL", "sell", 5.0, 190.0, "ord-1", "filled", "entry", "")
+    tmp_db.save_trade("AAPL", "sell", 3.0, 195.0, "ord-2", "filled", "entry", "")
+
+    result = tmp_db.get_last_sell_trade("AAPL")
+    assert result is not None
+    assert result["price"] == pytest.approx(195.0)
+    assert result["qty"] == pytest.approx(3.0)
+
+
+def test_get_last_sell_trade_returns_none_when_no_sells(tmp_db):
+    """get_last_sell_trade devuelve None si no hay trades de venta."""
+    tmp_db.save_trade("AAPL", "buy", 5.0, 175.0, "ord-1", "filled", "entry", "")
+    result = tmp_db.get_last_sell_trade("AAPL")
+    assert result is None
