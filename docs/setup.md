@@ -132,6 +132,18 @@ When a positive state transition occurs, a candlestick PNG is generated automati
 
 Charts are also displayed in the **Estados** dashboard page when the file still exists on disk.
 
+## Tkinter log panel
+
+The log panel in the Tkinter UI prefixes every non-empty message with a `[HH:MM:SS]` timestamp:
+
+```
+[14:32:01] [monitor] Starting...
+[14:32:05] [monitor] Cycle start — 3 symbols to monitor
+[14:33:10] [monitor] AAPL: opportunity detected → OPPORTUNITY_FOUND
+```
+
+Bare newlines (used as separators by the logging framework) are passed through without a timestamp to avoid double-stamping.
+
 ## Logging
 
 Logs are written to `logs/` (auto-created):

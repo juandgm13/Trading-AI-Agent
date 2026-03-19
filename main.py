@@ -3,6 +3,7 @@ import sys
 import threading
 import subprocess
 import tkinter as tk
+from datetime import datetime
 from tkinter import scrolledtext, messagebox
 from pathlib import Path
 from dotenv import load_dotenv
@@ -27,7 +28,11 @@ class _TextRedirector:
 
     def write(self, text: str):
         self.widget.configure(state="normal")
-        self.widget.insert(tk.END, text)
+        if text and text.strip():
+            ts = datetime.now().strftime("%H:%M:%S")
+            self.widget.insert(tk.END, f"[{ts}] {text}")
+        else:
+            self.widget.insert(tk.END, text)
         self.widget.see(tk.END)
         self.widget.configure(state="disabled")
 
