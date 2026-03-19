@@ -592,7 +592,7 @@ class PriceMonitor:
             buy_price = buy_trade.get("price") if buy_trade else None
 
             pnl = (fill_price - buy_price) * fill_qty if (fill_price and buy_price) else None
-            fees = 0.0
+            fees = order.get("commission", 0.0)
 
             self._storage.save_trade(
                 symbol=symbol,

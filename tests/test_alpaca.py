@@ -658,3 +658,49 @@ async def test_get_order_returns_none_on_404():
         result = await client.get_order("non-existent")
 
     assert result is None
+
+
+# ── Fees: commission en get_order ──────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_order_extracts_commission_when_present():
+    """get_order extrae el campo commission como float cuando está presente."""
+    from src.alpaca import AlpacaClient
+
+    order_data = {
+        "id": "ord-1",
+        "status": "filled",
+        "filled_avg_price": "150.00",
+        "filled_qty": "10",
+        "side": "sell",
+        "symbol": "AAPL",
+        "commission": "1.23",
+    }
+
+    client = AlpacaClient("k", "s")
+    with _mock_http("get", 200, order_data):
+        result = await client.get_order("ord-1")
+
+    assert result["commission"] == pytest.approx(1.23)
+
+
+@pytest.mark.asyncio
+async def test_get_order_commission_defaults_to_zero():
+    """get_order devuelve commission=0.0 cuando el campo no está en la respuesta."""
+    from src.alpaca import AlpacaClient
+
+    order_data = {
+        "id": "ord-2",
+        "status": "filled",
+        "filled_avg_price": "150.00",
+        "filled_qty": "10",
+        "side": "sell",
+        "symbol": "AAPL",
+        # sin campo commission
+    }
+
+    client = AlpacaClient("k", "s")
+    with _mock_http("get", 200, order_data):
+        result = await client.get_order("ord-2")
+
+    assert result["commission"] == 0.0

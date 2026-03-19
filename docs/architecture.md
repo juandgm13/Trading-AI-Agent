@@ -241,5 +241,6 @@ The chart path is logged as `file:///absolute/path.png` and displayed in the **E
 - Stop signal is checked at the beginning of each symbol iteration (not only at the `while` loop boundary), so the monitor halts within one symbol's analysis time.
 - **Market hours standby**: `_check_all()` calls `get_clock()` at the start of every cycle. If the market is closed, it sleeps until `next_open` (interruptible). If `get_clock()` fails, the cycle continues normally.
 - **Force analysis**: when `force_event` is set (via the "Analyze now" button), `_force_analysis=True` causes `_check_all()` to skip the market-hours check entirely. All WATCHING symbols are analysed regardless of market status. The flag is reset by `run()` at cycle end.
+- **Trade fees**: the `fees` column in `trades` is populated from the `commission` field returned by `GET /v2/orders/{id}`. Alpaca returns `"0"` for paper trading and the actual regulatory fee for live trading. No local fee calculation is performed.
 - **Watchlist enrichment**: when `WATCHLIST_SYMBOLS` is set, each symbol is enriched via `get_asset()` (name, exchange, marginable, shortable). Falls back to minimal entry on API failure.
 - Prompt separation by state: `WATCHING` uses macro-focused prompts; `OPPORTUNITY_FOUND` uses timing-focused prompts with stricter conditions.

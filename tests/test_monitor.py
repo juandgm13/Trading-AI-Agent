@@ -1887,6 +1887,36 @@ async def test_run_technical_short_medium_report_invalid_json(tmp_db):
     assert result.get("trend") == "BULLISH"
 
 
+# ── Fees: commission desde get_order ─────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_fees_from_order_commission_passed_to_save_trade(tmp_db):
+    """El campo commission de get_order se guarda como fees en el trade de cierre."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_order = AsyncMock(return_value={
+        "id": "ord-sell", "status": "filled",
+        "filled_avg_price": 190.0, "filled_qty": 2.0,
+        "side": "sell", "symbol": "AAPL",
+        "commission": 0.5,  # fee devuelto por Alpaca
+    })
+
+    tmp_db.save_trade("AAPL", "buy", 2.0, 176.5, "ord-buy", "filled", "entry", "")
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="CLOSING",
+        target_price=190.0, stop_loss=170.0, position_qty=2.0,
+        pending_order_id="ord-sell",
+        analysis_summary="Target reached",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    await monitor._check_closing("AAPL", state_row)
+
+    trades = tmp_db.get_trades()
+    sell_trade = next((t for t in trades if t["side"] == "sell"), None)
+    assert sell_trade is not None
+    assert sell_trade["fees"] == pytest.approx(0.5)
+
+
 # ── Force analysis bypasea mercado cerrado ────────────────────────────────────
 
 @pytest.mark.asyncio

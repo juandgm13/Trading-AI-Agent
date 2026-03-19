@@ -210,6 +210,7 @@ class AlpacaClient:
             "filled_qty": float(data.get("filled_qty") or 0),
             "side": data.get("side"),
             "symbol": data.get("symbol"),
+            "commission": float(data["commission"]) if data.get("commission") else 0.0,
         }
 
     async def cancel_all_orders(self) -> None:

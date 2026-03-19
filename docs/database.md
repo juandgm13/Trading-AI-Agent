@@ -150,5 +150,5 @@ ALTER TABLE watchlist ADD COLUMN shortable INTEGER DEFAULT 0;
 ALTER TABLE symbol_states ADD COLUMN chart_path TEXT;
 ALTER TABLE symbol_states ADD COLUMN pending_order_id TEXT;
 ALTER TABLE trades ADD COLUMN pnl REAL;
-ALTER TABLE trades ADD COLUMN fees REAL;
+ALTER TABLE trades ADD COLUMN fees REAL;   -- populated from Alpaca's commission field (0 in paper mode)
 ```
