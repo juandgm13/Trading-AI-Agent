@@ -13,13 +13,13 @@ st.title("💰 Portfolio (Alpaca)")
 
 
 def _load_portfolio():
-    """Carga cuenta y posiciones de Alpaca de forma síncrona."""
+    """Load account and positions from Alpaca synchronously."""
     api_key = os.environ.get("ALPACA_API_KEY")
     secret_key = os.environ.get("ALPACA_SECRET_KEY")
     trading_url = os.environ.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
 
     if not api_key or not secret_key:
-        return None, None, "Credenciales ALPACA_API_KEY / ALPACA_SECRET_KEY no configuradas en .env"
+        return None, None, "ALPACA_API_KEY / ALPACA_SECRET_KEY credentials not configured in .env"
 
     from src.alpaca import AlpacaClient
 
@@ -37,33 +37,33 @@ def _load_portfolio():
         return None, None, str(e)
 
 
-if st.button("🔄 Actualizar", type="primary"):
+if st.button("🔄 Refresh", type="primary"):
     st.rerun()
 
 account, positions, error = _load_portfolio()
 
 if error:
-    st.error(f"Error conectando con Alpaca: {error}")
+    st.error(f"Error connecting to Alpaca: {error}")
     st.stop()
 
-# Métricas de cuenta
+# Account metrics
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Equity", f"${account['equity']:,.2f}")
-col2.metric("Cash disponible", f"${account['cash']:,.2f}")
-col3.metric("Portfolio total", f"${account['portfolio_value']:,.2f}")
-col4.metric("Buying power", f"${account['buying_power']:,.2f}")
+col2.metric("Available Cash", f"${account['cash']:,.2f}")
+col3.metric("Total Portfolio", f"${account['portfolio_value']:,.2f}")
+col4.metric("Buying Power", f"${account['buying_power']:,.2f}")
 
 st.divider()
 
-# Posiciones abiertas
-st.subheader("Posiciones abiertas")
+# Open positions
+st.subheader("Open Positions")
 if not positions:
-    st.info("No hay posiciones abiertas en este momento.")
+    st.info("No open positions at this time.")
 else:
     df = pd.DataFrame(positions)
     df["unrealized_plpc"] = df["unrealized_plpc"].map(lambda x: f"{x:.2f}%")
 
-    # Añadir target_price y stop_loss desde symbol_states
+    # Add target_price and stop_loss from symbol_states
     from src.storage import StorageLayer as _SL
     _storage = _SL(db_path="trading_agent.db")
     states = {s["symbol"]: s for s in _storage.get_all_symbol_states()}
@@ -72,12 +72,12 @@ else:
 
     st.dataframe(
         df.rename(columns={
-            "symbol": "Símbolo",
-            "qty": "Cantidad",
-            "avg_entry_price": "Precio entrada",
-            "current_price": "Precio actual",
-            "market_value": "Valor mercado",
-            "unrealized_pl": "P&L no realizado",
+            "symbol": "Symbol",
+            "qty": "Qty",
+            "avg_entry_price": "Entry Price",
+            "current_price": "Current Price",
+            "market_value": "Market Value",
+            "unrealized_pl": "Unrealized P&L",
             "unrealized_plpc": "P&L %",
             "target_price": "Target",
             "stop_loss": "Stop-loss",

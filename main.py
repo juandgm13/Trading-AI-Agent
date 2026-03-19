@@ -57,13 +57,13 @@ def _toggle_monitor(
             _monitor_stop_event.set()
         btn_monitor.configure(text="Monitor ON", bg="SystemButtonFace")
         btn_analyze.configure(state="disabled")
-        redirector.write("[monitor] Señal de parada enviada...\n")
+        redirector.write("[monitor] Stop signal sent...\n")
     else:
         # Arrancar monitor en un thread nuevo con su propio event loop
         # asyncio.Event debe crearse dentro del thread donde se ejecuta el loop
         btn_monitor.configure(text="Monitor OFF", bg="#ff6b6b")
         btn_analyze.configure(state="normal")
-        redirector.write("[monitor] Iniciando...\n")
+        redirector.write("[monitor] Starting...\n")
 
         def _on_market_status(is_open: bool, next_open: str | None):
             """Callback invocado desde el thread del monitor — actualiza el label en el thread de Tkinter."""
@@ -77,11 +77,11 @@ def _toggle_monitor(
                             next_open_utc = datetime.fromisoformat(next_open.replace("Z", "+00:00"))
                             next_open_local = next_open_utc.astimezone().strftime("%H:%M %Z")
                         except Exception:
-                            next_open_local = "desconocida"
+                            next_open_local = "unknown"
                     else:
-                        next_open_local = "desconocida"
+                        next_open_local = "unknown"
                     market_label.configure(
-                        text=f"⚠  Mercado cerrado — próxima apertura: {next_open_local}",
+                        text=f"⚠  Market closed — next open: {next_open_local}",
                         bg="#fff3cd",
                     )
             root.after(0, _update)
@@ -122,9 +122,9 @@ def _force_analysis(log: scrolledtext.ScrolledText):
 
     if _monitor_force_event and _monitor_thread and _monitor_thread.is_alive():
         _monitor_force_event.set()
-        redirector.write("[monitor] Análisis forzado solicitado — procesará en el próximo ciclo\n")
+        redirector.write("[monitor] Forced analysis requested — will run next cycle\n")
     else:
-        redirector.write("[monitor] El monitor no está activo\n")
+        redirector.write("[monitor] Monitor is not active\n")
 
 
 def _open_dashboard():
@@ -141,8 +141,8 @@ def _open_dashboard():
 def _reset_db_and_logs(log: scrolledtext.ScrolledText):
     """Borra todos los datos de la BD y trunca los archivos de log."""
     if not messagebox.askyesno(
-        "Confirmar reset",
-        "¿Borrar TODA la base de datos y los archivos de log?\n\nEsta acción no se puede deshacer.",
+        "Confirm reset",
+        "Delete ALL database data and log files?\n\nThis action cannot be undone.",
         icon="warning",
     ):
         return
@@ -165,9 +165,9 @@ def _reset_db_and_logs(log: scrolledtext.ScrolledText):
             pass
 
     redirector = _TextRedirector(log)
-    redirector.write("[reset] Base de datos borrada.\n")
+    redirector.write("[reset] Database cleared.\n")
     if cleared:
-        redirector.write(f"[reset] Logs truncados: {', '.join(cleared)}\n")
+        redirector.write(f"[reset] Logs cleared: {', '.join(cleared)}\n")
 
 
 def _clear_log(log: scrolledtext.ScrolledText):
@@ -208,7 +208,7 @@ def main():
 
     btn_analyze = tk.Button(
         toolbar,
-        text="Analizar ahora",
+        text="Analyze now",
         width=16,
         height=2,
         state="disabled",
@@ -223,7 +223,7 @@ def main():
 
     tk.Button(
         toolbar,
-        text="Abrir dashboard",
+        text="Open dashboard",
         width=18,
         height=2,
         command=_open_dashboard,
@@ -231,7 +231,7 @@ def main():
 
     tk.Button(
         toolbar,
-        text="Limpiar log",
+        text="Clear log",
         width=12,
         height=2,
         command=lambda: _clear_log(log),

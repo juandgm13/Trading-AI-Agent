@@ -21,9 +21,9 @@ st.title("📈 Trading AI Agent — Summary")
 
 storage = StorageLayer(db_path="trading_agent.db")
 
-# ── Contexto global de mercado ────────────────────────────────────────────────
+# ── Global market context ─────────────────────────────────────────────────────
 
-st.subheader("Contexto global de mercado")
+st.subheader("Global Market Context")
 
 ctx_row = storage.get_latest_market_context()
 if ctx_row:
@@ -41,10 +41,10 @@ if ctx_row:
     risk_icon = {"RISK_ON": "🟢", "RISK_OFF": "🔴", "NEUTRAL": "🟡"}.get(risk, "⚪")
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Sentimiento", f"{sentiment_icon} {sentiment}")
-    col2.metric("Apetito de riesgo", f"{risk_icon} {risk}")
-    col3.metric("Confianza", f"{confidence}%")
-    col4.metric("Actualizado", updated_at[:16] if updated_at else "?")
+    col1.metric("Sentiment", f"{sentiment_icon} {sentiment}")
+    col2.metric("Risk Appetite", f"{risk_icon} {risk}")
+    col3.metric("Confidence", f"{confidence}%")
+    col4.metric("Updated", updated_at[:16] if updated_at else "?")
 
     themes = ctx.get("dominant_themes", [])
     risks = ctx.get("macro_risks", [])
@@ -53,24 +53,24 @@ if ctx_row:
     if themes or risks:
         c1, c2 = st.columns(2)
         if themes:
-            c1.markdown("**Temas dominantes**")
+            c1.markdown("**Dominant Themes**")
             for t in themes:
                 c1.markdown(f"- {t}")
         if risks:
-            c2.markdown("**Riesgos macro**")
+            c2.markdown("**Macro Risks**")
             for r in risks:
                 c2.markdown(f"- {r}")
 
     if summary:
         st.caption(summary)
 else:
-    st.info("Aún no hay informe de contexto global. El monitor lo generará en el próximo ciclo.")
+    st.info("No global context report yet. The monitor will generate it in the next cycle.")
 
 st.divider()
 
-# ── Estado de la cartera de símbolos ─────────────────────────────────────────
+# ── Symbol status ─────────────────────────────────────────────────────────────
 
-st.subheader("Estado de símbolos")
+st.subheader("Symbol Status")
 
 states = storage.get_all_symbol_states()
 
@@ -83,46 +83,46 @@ col1.metric("🔵 WATCHING", len(watching))
 col2.metric("🟡 OPPORTUNITY_FOUND", len(opportunity))
 col3.metric("🟢 POSITION_OPEN", len(position))
 
-# Posiciones abiertas
+# Open positions
 if position:
-    st.markdown("**Posiciones abiertas**")
+    st.markdown("**Open Positions**")
     pos_data = [
         {
-            "Símbolo": s["symbol"],
-            "Cantidad": s.get("position_qty"),
+            "Symbol": s["symbol"],
+            "Qty": s.get("position_qty"),
             "Target ($)": s.get("target_price"),
             "Stop-loss ($)": s.get("stop_loss"),
-            "Abierta": (s.get("position_open_at") or "")[:16],
+            "Opened": (s.get("position_open_at") or "")[:16],
         }
         for s in position
     ]
     st.dataframe(pos_data, use_container_width=True, hide_index=True)
 
-# Oportunidades en seguimiento
+# Opportunities in tracking
 if opportunity:
-    st.markdown("**Oportunidades en seguimiento**")
+    st.markdown("**Opportunities in Tracking**")
     st.write(", ".join(s["symbol"] for s in opportunity))
 
 st.divider()
 
-# ── Trades recientes ──────────────────────────────────────────────────────────
+# ── Recent trades ─────────────────────────────────────────────────────────────
 
-st.subheader("Trades recientes")
+st.subheader("Recent Trades")
 
 trades = storage.get_trades(limit=10)
 if not trades:
-    st.info("No hay trades registrados todavía.")
+    st.info("No trades recorded yet.")
 else:
     import pandas as pd
     df = pd.DataFrame(trades)[
         ["created_at", "symbol", "side", "qty", "price", "status", "trigger"]
     ].rename(columns={
-        "created_at": "Fecha",
-        "symbol": "Símbolo",
-        "side": "Dirección",
-        "qty": "Cantidad",
-        "price": "Precio aprox.",
-        "status": "Estado",
-        "trigger": "Disparador",
+        "created_at": "Date",
+        "symbol": "Symbol",
+        "side": "Direction",
+        "qty": "Qty",
+        "price": "Approx. Price",
+        "status": "Status",
+        "trigger": "Trigger",
     })
     st.dataframe(df, use_container_width=True, hide_index=True)

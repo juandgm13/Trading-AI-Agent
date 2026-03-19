@@ -65,9 +65,10 @@ python main.py
 | Button | Action |
 |---|---|
 | **Monitor ON/OFF** | Start/stop the continuous price monitoring loop |
-| **Analizar ahora** | Force immediate full analysis of all WATCHING symbols (only while monitor is running) |
+| **Analyze now** | Force immediate full analysis of all WATCHING symbols (bypasses market-hours check) |
 | **Open dashboard** | Launch Streamlit dashboard in browser |
 | **Clear log** | Clear the log area |
+| **Reset DB + Logs** | Delete all database data and truncate log files |
 
 ## Monitor configuration (`agents/trading_agent.yaml`)
 
