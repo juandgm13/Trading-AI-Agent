@@ -2153,3 +2153,658 @@ async def test_normal_closed_market_still_returns_early(tmp_db):
     # Sin force_analysis, el mercado cerrado retorna temprano — no se llama get_snapshots
     mock_alpaca.get_snapshots.assert_not_awaited()
     mock_tech.run.assert_not_awaited()
+
+
+# ── market_status_callback(False, ...) al cerrar mercado ─────────────────────
+
+@pytest.mark.asyncio
+async def test_market_closed_triggers_status_callback_with_false(tmp_db):
+    """_market_status_callback(False, next_open) se llama cuando el mercado está cerrado."""
+    from datetime import datetime, timezone, timedelta
+
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    next_open = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": False,
+        "next_open": next_open,
+        "next_close": None,
+        "timestamp": None,
+    })
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+
+    callback_calls = []
+    monitor._market_status_callback = lambda is_open, nxt: callback_calls.append((is_open, nxt))
+
+    import agents.monitor as monitor_mod
+    original_sleep = monitor_mod._interruptible_sleep
+
+    async def _instant_sleep(secs, stop_event):
+        pass
+
+    monitor_mod._interruptible_sleep = _instant_sleep
+    try:
+        await monitor._check_all(tmp_db.get_watchlist())
+    finally:
+        monitor_mod._interruptible_sleep = original_sleep
+
+    assert len(callback_calls) == 1
+    assert callback_calls[0][0] is False  # is_open=False
+
+
+# ── close_imminent: next_close con formato inválido no rompe el ciclo ─────────
+
+@pytest.mark.asyncio
+async def test_close_imminent_invalid_next_close_does_not_crash(tmp_db):
+    """Si next_close no es ISO-parseable, el ciclo continúa sin close_imminent."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": True,
+        "next_open": None,
+        "next_close": "NOT_A_DATE",  # inválido — dispara except
+        "timestamp": None,
+    })
+    mock_alpaca.get_snapshots = AsyncMock(return_value={})
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+
+    # No debe lanzar excepción
+    await monitor._check_all(tmp_db.get_watchlist())
+
+    # El ciclo continúa normalmente (get_snapshots fue llamado)
+    mock_alpaca.get_snapshots.assert_awaited_once()
+
+
+# ── _running = False interrumpe el loop de símbolos ──────────────────────────
+
+@pytest.mark.asyncio
+async def test_running_false_breaks_symbol_loop(tmp_db):
+    """Si _running se pone en False durante el loop, se deja de procesar símbolos."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": True, "next_open": None, "next_close": None, "timestamp": None,
+    })
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    tmp_db.upsert_watchlist("MSFT", "", 2.0)
+
+    # get_snapshots devuelve precios para ambos
+    mock_alpaca.get_snapshots = AsyncMock(return_value={
+        "AAPL": {"close": 175.0, "volume": 1000, "timestamp": "t"},
+        "MSFT": {"close": 300.0, "volume": 2000, "timestamp": "t"},
+    })
+
+    # Al procesar el primer símbolo, poner _running=False
+    original_process = monitor._process_symbol
+
+    call_count = 0
+
+    async def _stop_after_first(symbol, snap, state_row):
+        nonlocal call_count
+        call_count += 1
+        monitor._running = False
+        return await original_process(symbol, snap, state_row)
+
+    monitor._process_symbol = _stop_after_first
+
+    await monitor._check_all(tmp_db.get_watchlist())
+
+    # Solo se procesó un símbolo antes de la parada
+    assert call_count == 1
+
+
+# ── Short stop-loss: precio >= stop en posición corta ────────────────────────
+
+@pytest.mark.asyncio
+async def test_short_selling_stop_loss_triggers_close(tmp_db):
+    """Para un short, si el precio sube por encima del stop, se cierra la posición."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="POSITION_OPEN",
+        target_price=150.0, stop_loss=185.0, position_qty=2.0, position_side="short",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    # Precio sube a 190 → activa stop-loss (190 >= 185)
+    result = await monitor._manage_position("AAPL", 190.0, state_row)
+
+    mock_alpaca.place_order.assert_awaited_once()
+    call_args = mock_alpaca.place_order.call_args
+    assert call_args[0][2] == "buy"  # cierre de short es BUY
+    assert result is not None
+
+
+# ── Alerter lanza excepción durante OPENING: se ignora silenciosamente ────────
+
+@pytest.mark.asyncio
+async def test_alerter_exception_during_opening_fill_is_swallowed(tmp_db):
+    """Si el alerter falla al notificar un fill de compra, el ciclo no se rompe."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+
+    mock_alerter = MagicMock()
+    mock_alerter.send_trade_alert = MagicMock(side_effect=RuntimeError("smtp error"))
+    monitor._alerter = mock_alerter
+
+    mock_alpaca.get_order = AsyncMock(return_value={
+        "id": "ord-buy", "status": "filled",
+        "filled_avg_price": 175.0, "filled_qty": 2.0,
+        "side": "buy", "symbol": "AAPL",
+        "commission": 0.0,
+    })
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="OPENING",
+        position_qty=2.0, pending_order_id="ord-buy",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    # No debe lanzar excepción
+    result = await monitor._check_opening("AAPL", state_row)
+
+    assert result is not None
+    assert "FILLED" in result
+    new_state = tmp_db.get_symbol_state("AAPL")
+    assert new_state["state"] == "POSITION_OPEN"
+
+
+# ── Alerter lanza excepción durante CLOSING: se ignora silenciosamente ────────
+
+@pytest.mark.asyncio
+async def test_alerter_exception_during_closing_fill_is_swallowed(tmp_db):
+    """Si el alerter falla al notificar el cierre, el trade se guarda igual."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+
+    mock_alerter = MagicMock()
+    mock_alerter.send_close_alert = MagicMock(side_effect=RuntimeError("smtp error"))
+    monitor._alerter = mock_alerter
+
+    mock_alpaca.get_order = AsyncMock(return_value={
+        "id": "ord-sell", "status": "filled",
+        "filled_avg_price": 190.0, "filled_qty": 2.0,
+        "side": "sell", "symbol": "AAPL",
+        "commission": 0.0,
+    })
+    tmp_db.save_trade("AAPL", "buy", 2.0, 175.0, "ord-buy", "filled", "entry", "")
+    tmp_db.upsert_symbol_state(
+        "AAPL", state="CLOSING",
+        target_price=190.0, stop_loss=165.0, position_qty=2.0,
+        pending_order_id="ord-sell",
+        analysis_summary="Target reached",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    result = await monitor._check_closing("AAPL", state_row)
+
+    assert result is not None
+    assert "FILLED" in result
+    trades = tmp_db.get_trades()
+    sell = next((t for t in trades if t["side"] == "sell"), None)
+    assert sell is not None
+
+
+# ── _interruptible_sleep: llamada directa ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_interruptible_sleep_without_stop_event():
+    """_interruptible_sleep con stop_event=None duerme el tiempo indicado (0s en test)."""
+    from agents.monitor import _interruptible_sleep
+    await _interruptible_sleep(0, None)  # no debe lanzar excepción
+
+
+@pytest.mark.asyncio
+async def test_interruptible_sleep_with_already_set_stop_event():
+    """_interruptible_sleep retorna inmediatamente si stop_event ya está seteado."""
+    from agents.monitor import _interruptible_sleep
+    stop = asyncio.Event()
+    stop.set()
+    await _interruptible_sleep(60, stop)  # retorna inmediatamente
+
+
+# ── run_monitor: Alpaca no disponible retorna temprano ────────────────────────
+
+@pytest.mark.asyncio
+async def test_run_monitor_returns_early_when_alpaca_unavailable(monkeypatch):
+    """run_monitor retorna si AlpacaClient.is_available() falla."""
+    monkeypatch.setenv("ALPACA_API_KEY", "test-api-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("GNEWS_API_KEY", "test-gnews-key")
+    monkeypatch.setenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+
+    import agents.monitor as monitor_mod
+
+    class _FakeAlpaca:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def is_available(self):
+            return False, "connection refused"
+
+    monkeypatch.setattr(monitor_mod, "AlpacaClient", _FakeAlpaca)
+
+    from agents.monitor import run_monitor
+    await run_monitor()  # no debe lanzar excepción
+
+
+# ── run_monitor: setup completo con mocks ─────────────────────────────────────
+
+def _make_run_monitor_mocks(monkeypatch, watchlist=None, watchlist_symbols_env=None, allow_short=None):
+    """Helper: parchea run_monitor para tests de setup completo."""
+    import agents.monitor as monitor_mod
+
+    class _FakeAlpaca:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def is_available(self):
+            return True, None
+
+        async def get_account(self):
+            return {"equity": 10000.0, "cash": 5000.0}
+
+        def is_crypto(self, sym):
+            return False
+
+        async def get_asset(self, sym):
+            return {"symbol": sym, "name": f"{sym} Inc", "exchange": "NASDAQ", "marginable": True, "shortable": True}
+
+        async def get_assets(self):
+            return [{"symbol": "AAPL", "name": "Apple", "exchange": "NASDAQ", "marginable": True, "shortable": False}]
+
+    mock_storage = MagicMock()
+    mock_storage.get_watchlist.return_value = watchlist if watchlist is not None else [
+        {"symbol": "AAPL", "company": "Apple", "shortable": 0, "exchange": "NASDAQ", "marginable": 1}
+    ]
+
+    # Modelo real con campos accesibles
+    mock_model_cfg = MagicMock()
+    mock_model_cfg.model = "qwen2.5:7b"
+    mock_config = MagicMock()
+    mock_config.trading = {
+        "analysis_interval_hours": 4,
+        "max_position_value": 500,
+        "poll_interval_seconds": 60,
+        "allow_short_selling": False,
+    }
+    mock_config.models = {
+        "technical": mock_model_cfg,
+        "technical_entry": mock_model_cfg,
+        "economics": mock_model_cfg,
+        "trader_opportunity": mock_model_cfg,
+        "trader_entry": mock_model_cfg,
+    }
+
+    async def _fake_agent_builder(*a, **kw):
+        return MagicMock()
+
+    monkeypatch.setenv("ALPACA_API_KEY", "test-api-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("GNEWS_API_KEY", "test-gnews-key")
+    monkeypatch.setenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+    monkeypatch.delenv("GMAIL_USER", raising=False)
+    monkeypatch.delenv("GMAIL_APP_PASSWORD", raising=False)
+    if watchlist_symbols_env is not None:
+        monkeypatch.setenv("WATCHLIST_SYMBOLS", watchlist_symbols_env)
+    else:
+        monkeypatch.delenv("WATCHLIST_SYMBOLS", raising=False)
+    if allow_short is not None:
+        monkeypatch.setenv("ALLOW_SHORT_SELLING", allow_short)
+    else:
+        monkeypatch.delenv("ALLOW_SHORT_SELLING", raising=False)
+
+    monkeypatch.setattr(monitor_mod, "AlpacaClient", _FakeAlpaca)
+    monkeypatch.setattr(monitor_mod, "StorageLayer", MagicMock(return_value=mock_storage))
+    monkeypatch.setattr(monitor_mod, "load_from_yaml", lambda p: mock_config)
+    monkeypatch.setattr(monitor_mod, "OllamaProvider", MagicMock())
+    for fn in [
+        "build_technical_watching_agent", "build_technical_entry_agent",
+        "build_market_context_agent", "build_company_analysis_agent",
+        "build_trading_opportunity_agent", "build_trading_entry_agent",
+    ]:
+        monkeypatch.setattr(monitor_mod, fn, _fake_agent_builder)
+
+    return mock_storage
+
+
+@pytest.mark.asyncio
+async def test_run_monitor_full_setup_runs_and_exits(monkeypatch):
+    """run_monitor completa el setup completo y el monitor sale por stop_event."""
+    _make_run_monitor_mocks(monkeypatch)
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    from agents.monitor import run_monitor
+    await run_monitor(stop_event=stop_event)  # no debe lanzar excepción
+
+
+@pytest.mark.asyncio
+async def test_run_monitor_no_gmail_logs_warning(monkeypatch):
+    """run_monitor registra advertencia cuando GMAIL no está configurado."""
+    _make_run_monitor_mocks(monkeypatch)  # delenv GMAIL_USER y GMAIL_APP_PASSWORD
+
+    log_messages = []
+
+    def on_log(msg):
+        log_messages.append(msg)
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    from agents.monitor import run_monitor
+    await run_monitor(stop_event=stop_event, on_log=on_log)
+
+    assert any("GMAIL" in m or "alertas" in m.lower() for m in log_messages)
+
+
+@pytest.mark.asyncio
+async def test_run_monitor_watchlist_from_env_symbols(monkeypatch):
+    """run_monitor inicializa watchlist desde WATCHLIST_SYMBOLS cuando la BD está vacía."""
+    _make_run_monitor_mocks(monkeypatch, watchlist=[], watchlist_symbols_env="AAPL,MSFT")
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    import agents.monitor as monitor_mod
+    mock_storage = monitor_mod.StorageLayer.return_value
+
+    from agents.monitor import run_monitor
+    await run_monitor(stop_event=stop_event)
+
+    # upsert_watchlist debe haber sido llamado para cada símbolo
+    assert mock_storage.upsert_watchlist.called
+
+
+@pytest.mark.asyncio
+async def test_run_monitor_full_setup_with_short_selling_enabled(monkeypatch):
+    """run_monitor registra que short selling está habilitado cuando ALLOW_SHORT_SELLING=true."""
+    monkeypatch.setenv("ALPACA_API_KEY", "test-api-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("GNEWS_API_KEY", "test-gnews-key")
+    monkeypatch.setenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+    monkeypatch.setenv("ALLOW_SHORT_SELLING", "true")
+    monkeypatch.delenv("WATCHLIST_SYMBOLS", raising=False)
+
+    import agents.monitor as monitor_mod
+
+    class _FakeAlpaca:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def is_available(self):
+            return True, None
+
+        async def get_account(self):
+            return {"equity": 10000.0, "cash": 5000.0}
+
+    mock_storage = MagicMock()
+    mock_storage.get_watchlist.return_value = [
+        {"symbol": "AAPL", "company": "Apple", "shortable": 1}
+    ]
+    mock_config = MagicMock()
+    mock_config.trading = {
+        "analysis_interval_hours": 4,
+        "max_position_value": 500,
+        "poll_interval_seconds": 60,
+        "allow_short_selling": False,
+    }
+    mock_config.models = {}
+
+    async def _fake_agent_builder(*a, **kw):
+        return MagicMock()
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    monkeypatch.setattr(monitor_mod, "AlpacaClient", _FakeAlpaca)
+    monkeypatch.setattr(monitor_mod, "StorageLayer", MagicMock(return_value=mock_storage))
+    monkeypatch.setattr(monitor_mod, "load_from_yaml", lambda p: mock_config)
+    for fn in [
+        "build_technical_watching_agent", "build_technical_entry_agent",
+        "build_market_context_agent", "build_company_analysis_agent",
+        "build_trading_opportunity_agent", "build_trading_entry_agent",
+    ]:
+        monkeypatch.setattr(monitor_mod, fn, _fake_agent_builder)
+
+    from agents.monitor import run_monitor
+    await run_monitor(stop_event=stop_event)
+
+
+# ── run_monitor_sync: wrapper síncrono ───────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_run_monitor_watchlist_from_env_crypto_excluded(monkeypatch):
+    """run_monitor excluye símbolos crypto cuando WATCHLIST_SYMBOLS los incluye."""
+    import agents.monitor as monitor_mod
+
+    class _FakeAlpacaWithCrypto:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def is_available(self):
+            return True, None
+
+        async def get_account(self):
+            return {"equity": 10000.0, "cash": 5000.0}
+
+        def is_crypto(self, sym):
+            return sym == "BTC"
+
+        async def get_asset(self, sym):
+            return {"symbol": sym, "name": f"{sym} Inc", "exchange": "NASDAQ", "marginable": True, "shortable": False}
+
+    mock_storage = MagicMock()
+    mock_storage.get_watchlist.return_value = []  # vacío → activa init desde env
+
+    mock_config = MagicMock()
+    mock_config.trading = {"analysis_interval_hours": 4, "max_position_value": 500, "poll_interval_seconds": 60, "allow_short_selling": False}
+    mock_config.models = {}
+
+    async def _fake_agent_builder(*a, **kw):
+        return MagicMock()
+
+    monkeypatch.setenv("ALPACA_API_KEY", "test-api-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("GNEWS_API_KEY", "test-gnews")
+    monkeypatch.setenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+    monkeypatch.setenv("WATCHLIST_SYMBOLS", "AAPL,BTC")  # BTC debe excluirse
+    monkeypatch.delenv("GMAIL_USER", raising=False)
+    monkeypatch.delenv("GMAIL_APP_PASSWORD", raising=False)
+    monkeypatch.delenv("ALLOW_SHORT_SELLING", raising=False)
+
+    monkeypatch.setattr(monitor_mod, "AlpacaClient", _FakeAlpacaWithCrypto)
+    monkeypatch.setattr(monitor_mod, "StorageLayer", MagicMock(return_value=mock_storage))
+    monkeypatch.setattr(monitor_mod, "load_from_yaml", lambda p: mock_config)
+    monkeypatch.setattr(monitor_mod, "OllamaProvider", MagicMock())
+    for fn in [
+        "build_technical_watching_agent", "build_technical_entry_agent",
+        "build_market_context_agent", "build_company_analysis_agent",
+        "build_trading_opportunity_agent", "build_trading_entry_agent",
+    ]:
+        monkeypatch.setattr(monitor_mod, fn, _fake_agent_builder)
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    from agents.monitor import run_monitor
+    await run_monitor(stop_event=stop_event)
+
+    # upsert_watchlist llamado solo para AAPL (BTC excluido)
+    calls = [c[0][0] for c in mock_storage.upsert_watchlist.call_args_list]
+    assert "AAPL" in calls
+    assert "BTC" not in calls
+
+
+@pytest.mark.asyncio
+async def test_run_monitor_watchlist_get_asset_exception_uses_fallback(monkeypatch):
+    """run_monitor usa fallback mínimo cuando get_asset() lanza excepción."""
+    import agents.monitor as monitor_mod
+
+    class _FakeAlpacaRaising:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def is_available(self):
+            return True, None
+
+        async def get_account(self):
+            return {"equity": 10000.0, "cash": 5000.0}
+
+        def is_crypto(self, sym):
+            return False
+
+        async def get_asset(self, sym):
+            raise ConnectionError("timeout")
+
+    mock_storage = MagicMock()
+    mock_storage.get_watchlist.return_value = []
+
+    mock_config = MagicMock()
+    mock_config.trading = {"analysis_interval_hours": 4, "max_position_value": 500, "poll_interval_seconds": 60, "allow_short_selling": False}
+    mock_config.models = {}
+
+    async def _fake_agent_builder(*a, **kw):
+        return MagicMock()
+
+    monkeypatch.setenv("ALPACA_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "s")
+    monkeypatch.setenv("GNEWS_API_KEY", "g")
+    monkeypatch.setenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+    monkeypatch.setenv("WATCHLIST_SYMBOLS", "AAPL")
+    monkeypatch.delenv("GMAIL_USER", raising=False)
+    monkeypatch.delenv("GMAIL_APP_PASSWORD", raising=False)
+    monkeypatch.delenv("ALLOW_SHORT_SELLING", raising=False)
+
+    monkeypatch.setattr(monitor_mod, "AlpacaClient", _FakeAlpacaRaising)
+    monkeypatch.setattr(monitor_mod, "StorageLayer", MagicMock(return_value=mock_storage))
+    monkeypatch.setattr(monitor_mod, "load_from_yaml", lambda p: mock_config)
+    monkeypatch.setattr(monitor_mod, "OllamaProvider", MagicMock())
+    for fn in [
+        "build_technical_watching_agent", "build_technical_entry_agent",
+        "build_market_context_agent", "build_company_analysis_agent",
+        "build_trading_opportunity_agent", "build_trading_entry_agent",
+    ]:
+        monkeypatch.setattr(monitor_mod, fn, _fake_agent_builder)
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    from agents.monitor import run_monitor
+    await run_monitor(stop_event=stop_event)
+
+    # Fallback: upsert_watchlist con solo el símbolo (sin metadata)
+    mock_storage.upsert_watchlist.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_run_monitor_watchlist_init_from_alpaca_when_env_empty(monkeypatch):
+    """run_monitor llama _init_watchlist_from_alpaca cuando WATCHLIST_SYMBOLS no está seteado."""
+    import agents.monitor as monitor_mod
+
+    class _FakeAlpaca:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def is_available(self):
+            return True, None
+
+        async def get_account(self):
+            return {"equity": 10000.0, "cash": 5000.0}
+
+        async def get_assets(self):
+            return [{"symbol": "AAPL", "name": "Apple", "exchange": "NASDAQ", "marginable": True, "shortable": False}]
+
+    mock_storage = MagicMock()
+    mock_storage.get_watchlist.return_value = []  # vacío → activa init
+
+    mock_config = MagicMock()
+    mock_config.trading = {"analysis_interval_hours": 4, "max_position_value": 500, "poll_interval_seconds": 60, "allow_short_selling": False}
+    mock_config.models = {}
+
+    async def _fake_agent_builder(*a, **kw):
+        return MagicMock()
+
+    monkeypatch.setenv("ALPACA_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "s")
+    monkeypatch.setenv("GNEWS_API_KEY", "g")
+    monkeypatch.setenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+    monkeypatch.delenv("WATCHLIST_SYMBOLS", raising=False)  # sin símbolos → init desde Alpaca
+    monkeypatch.delenv("GMAIL_USER", raising=False)
+    monkeypatch.delenv("GMAIL_APP_PASSWORD", raising=False)
+    monkeypatch.delenv("ALLOW_SHORT_SELLING", raising=False)
+
+    monkeypatch.setattr(monitor_mod, "AlpacaClient", _FakeAlpaca)
+    monkeypatch.setattr(monitor_mod, "StorageLayer", MagicMock(return_value=mock_storage))
+    monkeypatch.setattr(monitor_mod, "load_from_yaml", lambda p: mock_config)
+    monkeypatch.setattr(monitor_mod, "OllamaProvider", MagicMock())
+    for fn in [
+        "build_technical_watching_agent", "build_technical_entry_agent",
+        "build_market_context_agent", "build_company_analysis_agent",
+        "build_trading_opportunity_agent", "build_trading_entry_agent",
+    ]:
+        monkeypatch.setattr(monitor_mod, fn, _fake_agent_builder)
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    from agents.monitor import run_monitor
+    await run_monitor(stop_event=stop_event)
+
+    # _init_watchlist_from_alpaca → get_assets fue llamado
+    mock_storage.upsert_watchlist.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_run_monitor_on_event_handler_covers_all_branches(monkeypatch):
+    """El handler on_event del EventBus cubre MODEL_CALLED, MODEL_FINISHED, TOOL_CALLED."""
+    import agents.monitor as monitor_mod
+    from agent_framework.events import EventType
+
+    captured_callback = None
+
+    class _FakeBus:
+        def subscribe(self, pattern, callback):
+            nonlocal captured_callback
+            captured_callback = callback
+
+    _make_run_monitor_mocks(monkeypatch)
+    monkeypatch.setattr(monitor_mod, "EventBus", lambda: _FakeBus())
+
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    from agents.monitor import run_monitor
+    await run_monitor(stop_event=stop_event)
+
+    assert captured_callback is not None, "on_event no fue suscrito al bus"
+
+    # Disparar las tres ramas del handler
+    class _FakeEvent:
+        def __init__(self, etype, data):
+            self.type = etype
+            self.data = data
+
+    await captured_callback(_FakeEvent(EventType.MODEL_CALLED, {"role": "technical"}))
+    await captured_callback(_FakeEvent(EventType.MODEL_FINISHED, {
+        "role": "technical", "prompt": "p", "response": "r", "system_prompt": "s",
+    }))
+    await captured_callback(_FakeEvent(EventType.TOOL_CALLED, {"tool": "get_price"}))
+    # Tipo no reconocido no debe lanzar
+    await captured_callback(_FakeEvent("UNKNOWN_EVENT", {}))
+
+
+def test_run_monitor_sync_calls_asyncio_run(monkeypatch):
+    """run_monitor_sync llama asyncio.run() con run_monitor correctamente."""
+    import agents.monitor as monitor_mod
+
+    called_with = {}
+
+    async def _fake_run_monitor(**kwargs):
+        called_with.update(kwargs)
+
+    monkeypatch.setattr(monitor_mod, "run_monitor", _fake_run_monitor)
+
+    stop = asyncio.Event()
+    force = asyncio.Event()
+
+    from agents.monitor import run_monitor_sync
+    run_monitor_sync(stop_event=stop, force_event=force)
+
+    assert called_with.get("stop_event") is stop
+    assert called_with.get("force_event") is force
