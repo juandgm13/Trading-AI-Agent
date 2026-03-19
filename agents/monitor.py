@@ -139,47 +139,54 @@ class PriceMonitor:
 
     async def _check_all(self, watchlist: list[dict], stop_event: asyncio.Event | None = None):
         """Consulta precios en batch y procesa los cambios detectados."""
-        # Verificar horario de mercado
-        clock = None
-        try:
-            clock = await self._alpaca.get_clock()
-            if not clock["is_open"]:
-                next_open_str = clock.get("next_open", "")
-                if next_open_str:
-                    next_open_utc = datetime.fromisoformat(next_open_str.replace("Z", "+00:00"))
-                    wait_secs = max(60, (next_open_utc - datetime.now(timezone.utc)).total_seconds())
-                    next_open_local = next_open_utc.astimezone().strftime("%H:%M %Z")
-                else:
-                    wait_secs = 300
-                    next_open_local = "desconocida"
-
-                if self._market_status_callback:
-                    self._market_status_callback(False, next_open_str)
-
-                self._logger.info(
-                    f"Mercado cerrado — apertura a las {next_open_local}",
-                    source="monitor",
-                )
-                self._logger.debug(
-                    f"Mercado cerrado — esperando {wait_secs:.0f}s ({wait_secs / 60:.1f} min)",
-                    source="monitor",
-                )
-
-                # Cancelar órdenes pendientes (tipo 'day' caducan igual, pero limpieza explícita)
-                try:
-                    await self._alpaca.cancel_all_orders()
-                    self._logger.info("Órdenes pendientes canceladas (mercado cerrado)", source="monitor")
-                except Exception as e:
-                    self._logger.warning(f"No se pudieron cancelar órdenes pendientes: {e}", source="monitor")
-
-                await _interruptible_sleep(wait_secs, stop_event)
-                return
-        except Exception as e:
-            self._logger.warning(f"No se pudo verificar horario de mercado: {e}", source="monitor")
+        # Verificar horario de mercado (se omite si hay análisis forzado)
+        if self._force_analysis:
+            self._logger.info(
+                "Análisis forzado — se omite la verificación de horario de mercado",
+                source="monitor",
+            )
+            clock = None
         else:
-            # Mercado abierto — notificar a la UI
-            if clock and clock.get("is_open") and self._market_status_callback:
-                self._market_status_callback(True, None)
+            clock = None
+            try:
+                clock = await self._alpaca.get_clock()
+                if not clock["is_open"]:
+                    next_open_str = clock.get("next_open", "")
+                    if next_open_str:
+                        next_open_utc = datetime.fromisoformat(next_open_str.replace("Z", "+00:00"))
+                        wait_secs = max(60, (next_open_utc - datetime.now(timezone.utc)).total_seconds())
+                        next_open_local = next_open_utc.astimezone().strftime("%H:%M %Z")
+                    else:
+                        wait_secs = 300
+                        next_open_local = "desconocida"
+
+                    if self._market_status_callback:
+                        self._market_status_callback(False, next_open_str)
+
+                    self._logger.info(
+                        f"Mercado cerrado — apertura a las {next_open_local}",
+                        source="monitor",
+                    )
+                    self._logger.debug(
+                        f"Mercado cerrado — esperando {wait_secs:.0f}s ({wait_secs / 60:.1f} min)",
+                        source="monitor",
+                    )
+
+                    # Cancelar órdenes pendientes (tipo 'day' caducan igual, pero limpieza explícita)
+                    try:
+                        await self._alpaca.cancel_all_orders()
+                        self._logger.info("Órdenes pendientes canceladas (mercado cerrado)", source="monitor")
+                    except Exception as e:
+                        self._logger.warning(f"No se pudieron cancelar órdenes pendientes: {e}", source="monitor")
+
+                    await _interruptible_sleep(wait_secs, stop_event)
+                    return
+            except Exception as e:
+                self._logger.warning(f"No se pudo verificar horario de mercado: {e}", source="monitor")
+            else:
+                # Mercado abierto — notificar a la UI
+                if clock and clock.get("is_open") and self._market_status_callback:
+                    self._market_status_callback(True, None)
 
         # ¿Cierre inminente? (< 5 min para next_close)
         close_imminent = False

@@ -1885,3 +1885,100 @@ async def test_run_technical_short_medium_report_invalid_json(tmp_db):
     # El agente sigue funcionando aunque no haya contexto de medio plazo
     assert result is not None
     assert result.get("trend") == "BULLISH"
+
+
+# ── Force analysis bypasea mercado cerrado ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_force_analysis_bypasses_closed_market(tmp_db):
+    """Con force_analysis=True, _check_all procesa símbolos aunque el mercado esté cerrado."""
+    from datetime import datetime, timezone
+
+    monitor, mock_alpaca, mock_tech, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": False,
+        "next_open": "2099-01-01T13:30:00+00:00",
+        "next_close": None,
+        "timestamp": None,
+    })
+    mock_alpaca.get_snapshots = AsyncMock(return_value={
+        "AAPL": {"close": 175.0, "volume": 1000, "timestamp": "t"},
+    })
+
+    recent = datetime.now(timezone.utc).isoformat()
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    tmp_db.upsert_symbol_state("AAPL", state="WATCHING", last_analysis_at=recent)
+
+    monitor._force_analysis = True
+
+    watchlist = tmp_db.get_watchlist()
+    await monitor._check_all(watchlist)
+
+    # Con force_analysis=True, get_snapshots SÍ debe llamarse (mercado ignorado)
+    mock_alpaca.get_snapshots.assert_awaited()
+    # get_clock no se debe haber llamado (se saltó el check)
+    mock_alpaca.get_clock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_force_analysis_flag_reset_in_run(tmp_db):
+    """Después del ciclo con force_analysis=True, el flag se resetea en run()."""
+    from datetime import datetime, timezone
+
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": True, "next_open": None, "next_close": None, "timestamp": None,
+    })
+    mock_alpaca.get_snapshots = AsyncMock(return_value={})
+
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    monitor._force_analysis = True
+
+    watchlist = tmp_db.get_watchlist()
+    await monitor._check_all(watchlist)
+
+    # El flag se resetea en run() después de _check_all; aquí simulamos ese comportamiento
+    # verificando que _check_all no lo resetea internamente (sigue siendo True hasta run())
+    # La lógica real de reset está en run(), que lo pone a False después de llamar _check_all.
+    # Este test verifica que _check_all no lo resetea prematuramente.
+    # (Si lo reseteara, el flag ya sería False al llegar aquí — eso sería incorrecto también,
+    #  ya que run() lo resetea explícitamente después de _check_all.)
+    # El comportamiento esperado: _force_analysis sigue True dentro de _check_all y run() lo resetea.
+    assert monitor._force_analysis is True  # run() no se llamó, sigue True
+
+
+@pytest.mark.asyncio
+async def test_normal_closed_market_still_returns_early(tmp_db):
+    """Sin force_analysis, el mercado cerrado sigue causando retorno temprano."""
+    from datetime import datetime, timezone
+
+    monitor, mock_alpaca, mock_tech, _, _ = _make_monitor(tmp_db)
+    mock_alpaca.get_clock = AsyncMock(return_value={
+        "is_open": False,
+        "next_open": "2099-01-01T13:30:00+00:00",
+        "next_close": None,
+        "timestamp": None,
+    })
+    mock_alpaca.get_snapshots = AsyncMock(return_value={
+        "AAPL": {"close": 175.0, "volume": 1000, "timestamp": "t"},
+    })
+
+    tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    monitor._force_analysis = False  # explícitamente sin force
+
+    import agents.monitor as monitor_mod
+    original_sleep = monitor_mod._interruptible_sleep
+
+    async def _instant_sleep(secs, stop_event):
+        pass
+
+    monitor_mod._interruptible_sleep = _instant_sleep
+    try:
+        watchlist = tmp_db.get_watchlist()
+        await monitor._check_all(watchlist)
+    finally:
+        monitor_mod._interruptible_sleep = original_sleep
+
+    # Sin force_analysis, el mercado cerrado retorna temprano — no se llama get_snapshots
+    mock_alpaca.get_snapshots.assert_not_awaited()
+    mock_tech.run.assert_not_awaited()
