@@ -33,10 +33,22 @@ def _has_ollama() -> bool:
     except Exception:
         return False
 
+def _has_network() -> bool:
+    """Comprueba si hay acceso a internet (acepta cualquier respuesta HTTP, incluido 4xx)."""
+    import urllib.error
+    try:
+        urllib.request.urlopen("https://www.google.com", timeout=5)
+        return True
+    except urllib.error.HTTPError:
+        return True   # respuesta HTTP = hay red
+    except Exception:
+        return False
+
 
 # ── Markers ───────────────────────────────────────────────────────────────────
 
-requires_alpaca = pytest.mark.skipif(not _has_alpaca(), reason="ALPACA_API_KEY / ALPACA_SECRET_KEY no configuradas")
+requires_alpaca  = pytest.mark.skipif(not _has_alpaca(),  reason="ALPACA_API_KEY / ALPACA_SECRET_KEY no configuradas")
+requires_network = pytest.mark.skipif(not _has_network(), reason="Sin acceso a internet")
 requires_gnews  = pytest.mark.skipif(not _has_gnews(),  reason="GNEWS_API_KEY no configurada")
 requires_gmail  = pytest.mark.skipif(not _has_gmail(),  reason="GMAIL_USER / GMAIL_APP_PASSWORD no configuradas")
 requires_ollama = pytest.mark.skipif(not _has_ollama(), reason="Ollama no está corriendo")
