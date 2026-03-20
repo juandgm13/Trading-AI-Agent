@@ -170,6 +170,60 @@ def _reset_db_and_logs(log: scrolledtext.ScrolledText):
         redirector.write(f"[reset] Logs cleared: {', '.join(cleared)}\n")
 
 
+def _run_news_ingestion(log: scrolledtext.ScrolledText):
+    """Ejecuta fetch + clasificación de noticias de mercado en un thread propio."""
+    redirector = _TextRedirector(log)
+
+    def _thread_fn():
+        import os
+        import asyncio
+        from agent_framework.config.config_loader import load_from_yaml
+        from agent_framework.events import EventBus
+        from agent_framework.models.model_registry import ModelRegistry
+        from agent_framework.providers import OllamaProvider
+        from src.storage import StorageLayer
+        from src.news_sources import AlpacaNewsSource, RSSNewsSource, YahooSymbolSource, NewsAggregator
+        from src.news_service import NewsIngestionService
+        from agents.economics_agent import build_news_classifier_agent
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def _run():
+            redirector.write("[news] Starting news ingestion...\n")
+            api_key = os.environ.get("ALPACA_API_KEY", "")
+            secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
+            ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+            config = load_from_yaml(PROJECT_ROOT / "agents" / "trading_agent.yaml")
+
+            model_registry = ModelRegistry()
+            cfg = config.models.get("news_classifier")
+            if cfg:
+                model_registry.register("news_classifier", OllamaProvider(cfg.model, base_url=ollama_url))
+
+            bus = EventBus()
+
+            alpaca_news = AlpacaNewsSource(api_key, secret_key)
+            rss_source = RSSNewsSource()
+            yahoo_source = YahooSymbolSource()
+            aggregator = NewsAggregator(alpaca_news, rss_source, yahoo_source)
+            news_classifier_agent = await build_news_classifier_agent(config, bus, model_registry)
+            storage = StorageLayer(str(PROJECT_ROOT / "trading_agent.db"))
+            news_service = NewsIngestionService(aggregator, news_classifier_agent, storage)
+
+            fetched, classified = await news_service.run_market_ingestion()
+            redirector.write(f"[news] Done — {fetched} articles fetched, {classified} classified.\n")
+
+        try:
+            loop.run_until_complete(_run())
+        except Exception as e:
+            redirector.write(f"[news] Error: {e}\n")
+        finally:
+            loop.close()
+
+    threading.Thread(target=_thread_fn, daemon=True).start()
+
+
 def _clear_log(log: scrolledtext.ScrolledText):
     log.configure(state="normal")
     log.delete("1.0", tk.END)
@@ -215,11 +269,20 @@ def main():
         command=lambda: _force_analysis(log),
     )
 
+    btn_news = tk.Button(
+        toolbar,
+        text="Analyze news",
+        width=14,
+        height=2,
+        command=lambda: _run_news_ingestion(log),
+    )
+
     btn_monitor.configure(
         command=lambda: _toggle_monitor(log, btn_monitor, btn_analyze, market_label, root)
     )
     btn_monitor.pack(side="left", padx=4)
     btn_analyze.pack(side="left", padx=4)
+    btn_news.pack(side="left", padx=4)
 
     tk.Button(
         toolbar,
