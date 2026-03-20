@@ -1,9 +1,12 @@
 import hashlib
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from .ingestion import Article
+
+
+_RETENTION_DAYS: dict[str | None, int] = {"HIGH": 7, "MEDIUM": 3, "LOW": 1, None: 1}
 
 
 @dataclass
@@ -29,20 +32,36 @@ class StorageLayer:
         with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS articles (
-                    url          TEXT PRIMARY KEY,
-                    content_hash TEXT UNIQUE,
-                    title        TEXT,
-                    source       TEXT,
-                    published_at TEXT,
-                    company      TEXT,
-                    ticker       TEXT,
-                    impact_level TEXT,
-                    impact_type  TEXT,
-                    confidence   INTEGER,
-                    reason       TEXT,
-                    alert_sent   INTEGER DEFAULT 0,
-                    created_at   TEXT
+                    url               TEXT PRIMARY KEY,
+                    content_hash      TEXT UNIQUE,
+                    title             TEXT,
+                    description       TEXT,
+                    source            TEXT,
+                    published_at      TEXT,
+                    feed_group        TEXT,
+                    scope             TEXT,
+                    ticker            TEXT,
+                    exchange_affected TEXT,
+                    impact            TEXT,
+                    reasoning         TEXT,
+                    expires_at        TEXT,
+                    -- Legacy columns (conservadas para compatibilidad)
+                    company           TEXT,
+                    impact_level      TEXT,
+                    impact_type       TEXT,
+                    confidence        INTEGER,
+                    reason            TEXT,
+                    alert_sent        INTEGER DEFAULT 0,
+                    created_at        TEXT
                 )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_articles_scope
+                ON articles(scope, ticker, exchange_affected)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_articles_expires
+                ON articles(expires_at)
             """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS price_snapshots (
@@ -117,6 +136,14 @@ class StorageLayer:
                 "ALTER TABLE trades ADD COLUMN pnl REAL",
                 "ALTER TABLE trades ADD COLUMN fees REAL",
                 "ALTER TABLE symbol_states ADD COLUMN position_side TEXT DEFAULT 'long'",
+                # Fase 3: nuevas columnas de clasificación de artículos
+                "ALTER TABLE articles ADD COLUMN description TEXT",
+                "ALTER TABLE articles ADD COLUMN feed_group TEXT",
+                "ALTER TABLE articles ADD COLUMN scope TEXT",
+                "ALTER TABLE articles ADD COLUMN exchange_affected TEXT",
+                "ALTER TABLE articles ADD COLUMN impact TEXT",
+                "ALTER TABLE articles ADD COLUMN reasoning TEXT",
+                "ALTER TABLE articles ADD COLUMN expires_at TEXT",
             ]
             for _sql in _migrations:
                 try:
@@ -197,6 +224,110 @@ class StorageLayer:
     def reset(self):
         with self._connect() as conn:
             conn.execute("DELETE FROM articles")
+
+    def save_article(self, article: Article, classification: dict | None = None) -> bool:
+        """
+        Inserta un artículo nuevo con sus datos de clasificación.
+
+        Retorna True si es nuevo, False si ya existía (deduplicación por url).
+        Si classification es None, el artículo queda sin clasificar (scope=NULL).
+        expires_at se calcula según impact: HIGH=7d, MEDIUM=3d, LOW/None=1d.
+        """
+        content_hash = self._content_hash(article)
+        now = datetime.now(timezone.utc)
+
+        scope = classification.get("scope") if classification else None
+        ticker = classification.get("ticker") if classification else None
+        exchange_affected = classification.get("exchange") if classification else None
+        impact = classification.get("impact") if classification else None
+        reasoning = classification.get("reasoning") if classification else None
+
+        retention_days = _RETENTION_DAYS.get(impact, 1)
+        expires_at = (now + timedelta(days=retention_days)).isoformat()
+
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO articles
+                        (url, content_hash, title, description, source, published_at,
+                         feed_group, scope, ticker, exchange_affected, impact, reasoning,
+                         expires_at, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        article.url,
+                        content_hash,
+                        article.title,
+                        article.description,
+                        article.source,
+                        article.published_at.isoformat(),
+                        article.feed_group,
+                        scope,
+                        ticker,
+                        exchange_affected,
+                        impact,
+                        reasoning,
+                        expires_at,
+                        now.isoformat(),
+                    ),
+                )
+            return True
+        except sqlite3.IntegrityError:
+            # url o content_hash duplicado — artículo ya existe
+            return False
+
+    def get_articles_by_scope(
+        self,
+        scope: str,
+        ticker: str | None = None,
+        exchange: str | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """
+        Devuelve artículos clasificados no expirados filtrados por scope.
+
+        scope="company" + ticker="AAPL" → noticias de empresa.
+        scope="exchange" + exchange="NASDAQ" → noticias de exchange.
+        scope="market" → noticias macro.
+        Filtra WHERE expires_at > NOW() OR expires_at IS NULL.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        params: list = [scope]
+        where_extra = ""
+
+        if ticker:
+            where_extra += " AND ticker = ?"
+            params.append(ticker.upper())
+        if exchange:
+            where_extra += " AND exchange_affected = ?"
+            params.append(exchange.upper())
+
+        params.extend([now, limit])
+
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                f"""
+                SELECT * FROM articles
+                WHERE scope = ?{where_extra}
+                  AND (expires_at > ? OR expires_at IS NULL)
+                ORDER BY published_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def expire_old_articles(self) -> int:
+        """Elimina artículos cuyo expires_at ya pasó. Retorna el número de filas borradas."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM articles WHERE expires_at IS NOT NULL AND expires_at <= ?",
+                (now,),
+            )
+            return cursor.rowcount
 
     def reset_all(self):
         """Borra todos los datos de todas las tablas (watchlist incluida)."""

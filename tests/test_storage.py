@@ -561,3 +561,151 @@ def test_get_last_sell_trade_returns_none_when_no_sells(tmp_db):
     tmp_db.save_trade("AAPL", "buy", 5.0, 175.0, "ord-1", "filled", "entry", "")
     result = tmp_db.get_last_sell_trade("AAPL")
     assert result is None
+
+
+# ── save_article / get_articles_by_scope / expire_old_articles (Fase 3) ────────
+
+def test_save_article_returns_true_on_new(tmp_db):
+    """save_article retorna True al insertar un artículo nuevo."""
+    article = _make_article(url="https://example.com/new-1")
+    result = tmp_db.save_article(article)
+    assert result is True
+
+
+def test_save_article_returns_false_on_duplicate_url(tmp_db):
+    """save_article retorna False si la URL ya existe."""
+    article = _make_article(url="https://example.com/dup-1")
+    tmp_db.save_article(article)
+    result = tmp_db.save_article(article)
+    assert result is False
+
+
+def test_save_article_returns_false_on_duplicate_content_hash(tmp_db):
+    """save_article retorna False si el content_hash ya existe (mismo título+fecha, diferente URL)."""
+    a1 = _make_article(title="Same Title", url="https://example.com/hash-1", date="2024-01-15")
+    a2 = _make_article(title="Same Title", url="https://example.com/hash-2", date="2024-01-15")
+    tmp_db.save_article(a1)
+    result = tmp_db.save_article(a2)
+    assert result is False
+
+
+def test_save_article_with_classification_persists_scope(tmp_db):
+    """save_article almacena los campos de clasificación correctamente."""
+    article = _make_article(url="https://example.com/classified-1")
+    classification = {
+        "scope": "company", "ticker": "AAPL", "exchange": None,
+        "impact": "HIGH", "reasoning": "Apple earnings beat.",
+    }
+    tmp_db.save_article(article, classification)
+
+    rows = tmp_db.get_articles_by_scope("company", ticker="AAPL")
+    assert len(rows) == 1
+    assert rows[0]["scope"] == "company"
+    assert rows[0]["ticker"] == "AAPL"
+    assert rows[0]["impact"] == "HIGH"
+    assert rows[0]["reasoning"] == "Apple earnings beat."
+
+
+def test_save_article_expires_at_high_is_7_days(tmp_db):
+    """Artículos con impact=HIGH tienen expires_at en 7 días."""
+    from datetime import timedelta
+    article = _make_article(url="https://example.com/high-1")
+    classification = {"scope": "company", "ticker": "AAPL", "exchange": None, "impact": "HIGH", "reasoning": ""}
+    now_before = datetime.now(timezone.utc)
+    tmp_db.save_article(article, classification)
+    now_after = datetime.now(timezone.utc)
+
+    rows = tmp_db.get_articles_by_scope("company", ticker="AAPL")
+    expires_at = datetime.fromisoformat(rows[0]["expires_at"])
+    assert (now_before + timedelta(days=7)) <= expires_at <= (now_after + timedelta(days=7))
+
+
+def test_save_article_expires_at_medium_is_3_days(tmp_db):
+    """Artículos con impact=MEDIUM tienen expires_at en 3 días."""
+    from datetime import timedelta
+    article = _make_article(url="https://example.com/medium-1")
+    classification = {"scope": "market", "ticker": None, "exchange": None, "impact": "MEDIUM", "reasoning": ""}
+    now_before = datetime.now(timezone.utc)
+    tmp_db.save_article(article, classification)
+    now_after = datetime.now(timezone.utc)
+
+    rows = tmp_db.get_articles_by_scope("market")
+    expires_at = datetime.fromisoformat(rows[0]["expires_at"])
+    assert (now_before + timedelta(days=3)) <= expires_at <= (now_after + timedelta(days=3))
+
+
+def test_save_article_expires_at_low_is_1_day(tmp_db):
+    """Artículos con impact=LOW tienen expires_at en 1 día."""
+    from datetime import timedelta
+    article = _make_article(url="https://example.com/low-1")
+    classification = {"scope": "market", "ticker": None, "exchange": None, "impact": "LOW", "reasoning": ""}
+    now_before = datetime.now(timezone.utc)
+    tmp_db.save_article(article, classification)
+    now_after = datetime.now(timezone.utc)
+
+    rows = tmp_db.get_articles_by_scope("market")
+    expires_at = datetime.fromisoformat(rows[0]["expires_at"])
+    assert (now_before + timedelta(days=1)) <= expires_at <= (now_after + timedelta(days=1))
+
+
+def test_get_articles_by_scope_company_filters_by_ticker(tmp_db):
+    """get_articles_by_scope filtra correctamente por ticker."""
+    a_aapl = _make_article(url="https://example.com/aapl-1")
+    a_msft = _make_article(url="https://example.com/msft-1")
+    cls_aapl = {"scope": "company", "ticker": "AAPL", "exchange": None, "impact": "HIGH", "reasoning": ""}
+    cls_msft = {"scope": "company", "ticker": "MSFT", "exchange": None, "impact": "MEDIUM", "reasoning": ""}
+    tmp_db.save_article(a_aapl, cls_aapl)
+    tmp_db.save_article(a_msft, cls_msft)
+
+    rows = tmp_db.get_articles_by_scope("company", ticker="AAPL")
+    assert len(rows) == 1
+    assert rows[0]["ticker"] == "AAPL"
+
+
+def test_get_articles_by_scope_exchange(tmp_db):
+    """get_articles_by_scope filtra correctamente por exchange."""
+    article = _make_article(url="https://example.com/nasdaq-1")
+    classification = {"scope": "exchange", "ticker": None, "exchange": "NASDAQ", "impact": "HIGH", "reasoning": ""}
+    tmp_db.save_article(article, classification)
+
+    rows = tmp_db.get_articles_by_scope("exchange", exchange="NASDAQ")
+    assert len(rows) == 1
+    assert rows[0]["exchange_affected"] == "NASDAQ"
+
+
+def test_get_articles_by_scope_filters_expired(tmp_db):
+    """get_articles_by_scope no devuelve artículos cuyo expires_at ya pasó."""
+    import sqlite3 as _sqlite3
+    from datetime import timedelta
+    article = _make_article(url="https://example.com/expired-1")
+    tmp_db.save_article(article, {"scope": "market", "ticker": None, "exchange": None, "impact": "LOW", "reasoning": ""})
+
+    # Forzar expires_at en el pasado
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    with _sqlite3.connect(tmp_db.db_path) as conn:
+        conn.execute("UPDATE articles SET expires_at = ? WHERE url = ?", (past, article.url))
+
+    rows = tmp_db.get_articles_by_scope("market")
+    assert len(rows) == 0
+
+
+def test_expire_old_articles_deletes_past_expires(tmp_db):
+    """expire_old_articles borra artículos expirados y retorna el conteo."""
+    import sqlite3 as _sqlite3
+    from datetime import timedelta
+    a1 = _make_article(title="Expiring article", url="https://example.com/exp-a", date="2024-01-15")
+    a2 = _make_article(title="Surviving article", url="https://example.com/exp-b", date="2024-01-16")
+    tmp_db.save_article(a1, {"scope": "market", "ticker": None, "exchange": None, "impact": "LOW", "reasoning": ""})
+    tmp_db.save_article(a2, {"scope": "market", "ticker": None, "exchange": None, "impact": "HIGH", "reasoning": ""})
+
+    # Forzar solo a1 en el pasado
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    with _sqlite3.connect(tmp_db.db_path) as conn:
+        conn.execute("UPDATE articles SET expires_at = ? WHERE url = ?", (past, a1.url))
+
+    deleted = tmp_db.expire_old_articles()
+    assert deleted == 1
+
+    remaining = tmp_db.get_articles_by_scope("market")
+    assert len(remaining) == 1
+    assert remaining[0]["url"] == a2.url
