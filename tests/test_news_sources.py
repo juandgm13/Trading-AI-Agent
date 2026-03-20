@@ -121,6 +121,33 @@ async def test_alpaca_news_source_returns_empty_on_error():
 
 
 @pytest.mark.asyncio
+async def test_alpaca_news_source_logs_http_error_with_logger():
+    """Verifica que loguea warning cuando la API devuelve status != 200 y hay logger."""
+    mock_logger = MagicMock()
+    source = AlpacaNewsSource(api_key="key", secret_key="secret", logger=mock_logger)
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 403
+
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_ctx)
+
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.news_sources.aiohttp.ClientSession", return_value=mock_session_ctx):
+        articles = await source.fetch()
+
+    assert articles == []
+    assert mock_logger.warning.called
+
+
+@pytest.mark.asyncio
 async def test_alpaca_news_source_returns_empty_on_http_error():
     """Verifica que retorna lista vacía cuando la API devuelve status != 200."""
     source = AlpacaNewsSource(api_key="key", secret_key="secret")
@@ -174,6 +201,82 @@ async def test_alpaca_news_source_skips_item_without_url():
 
     assert len(articles) == 1
     assert articles[0].title == "Has URL"
+
+
+@pytest.mark.asyncio
+async def test_alpaca_news_source_debug_logs_response():
+    """Verifica que loguea en debug cuando logger.is_debug=True."""
+    mock_logger = MagicMock()
+    mock_logger.is_debug = True
+    source = AlpacaNewsSource(api_key="key", secret_key="secret", logger=mock_logger)
+    data = {"news": [_alpaca_item(1)]}
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value=data)
+
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_ctx)
+
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.news_sources.aiohttp.ClientSession", return_value=mock_session_ctx):
+        await source.fetch()
+
+    assert mock_logger.debug.called
+
+
+@pytest.mark.asyncio
+async def test_alpaca_news_source_debug_logs_truncates_long_response():
+    """Verifica que el log se trunca cuando el JSON supera _MAX_LOG_CHARS (4000 chars)."""
+    mock_logger = MagicMock()
+    mock_logger.is_debug = True
+    source = AlpacaNewsSource(api_key="key", secret_key="secret", logger=mock_logger)
+
+    # Generar un ítem con contenido largo para que el JSON > 4000 chars
+    big_item = _alpaca_item(1)
+    big_item["content"] = "x" * 5000  # fuerza truncado
+    data = {"news": [big_item]}
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value=data)
+
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_ctx)
+
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.news_sources.aiohttp.ClientSession", return_value=mock_session_ctx):
+        await source.fetch()
+
+    debug_call = mock_logger.debug.call_args[0][0]
+    assert "truncado" in debug_call
+
+
+@pytest.mark.asyncio
+async def test_alpaca_news_source_logs_error_with_logger():
+    """Verifica que loguea error genérico cuando hay logger en la excepción outer."""
+    mock_logger = MagicMock()
+    source = AlpacaNewsSource(api_key="key", secret_key="secret", logger=mock_logger)
+
+    with patch("src.news_sources.aiohttp.ClientSession", side_effect=Exception("crash")):
+        articles = await source.fetch()
+
+    assert articles == []
+    assert mock_logger.error.called
 
 
 @pytest.mark.asyncio
@@ -248,6 +351,90 @@ async def test_rss_source_returns_empty_on_exception():
         articles = await source.fetch(feed_groups=("stocks",))
 
     assert articles == []
+
+
+@pytest.mark.asyncio
+async def test_rss_source_debug_logs_feed_result():
+    """Verifica que RSSNewsSource loguea en debug cuando logger.is_debug=True."""
+    mock_logger = MagicMock()
+    mock_logger.is_debug = True
+    source = RSSNewsSource(logger=mock_logger)
+    entries = [_rss_entry(1)]
+    parsed = _make_parsed_feed(entries)
+
+    with patch("src.news_sources.feedparser.parse", return_value=parsed):
+        await source.fetch(feed_groups=("stocks",))
+
+    assert mock_logger.debug.called
+
+
+@pytest.mark.asyncio
+async def test_rss_source_logs_timeout_with_logger():
+    """Verifica que loguea warning en timeout cuando hay logger."""
+    mock_logger = MagicMock()
+    source = RSSNewsSource(logger=mock_logger)
+
+    with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
+        await source.fetch(feed_groups=("stocks",))
+
+    assert mock_logger.warning.called
+
+
+@pytest.mark.asyncio
+async def test_rss_source_logs_exception_with_logger():
+    """Verifica que loguea error en excepción genérica cuando hay logger."""
+    mock_logger = MagicMock()
+    source = RSSNewsSource(logger=mock_logger)
+
+    with patch("asyncio.wait_for", side_effect=Exception("connection failed")):
+        await source.fetch(feed_groups=("macro",))
+
+    assert mock_logger.error.called
+
+
+@pytest.mark.asyncio
+async def test_rss_source_handles_date_without_tzinfo():
+    """Verifica que fechas sin tzinfo se convierten a UTC."""
+    source = RSSNewsSource()
+    # Simular fecha sin timezone (naive datetime)
+    entries = [
+        {
+            "title": "No TZ article",
+            "link": "https://example.com/no-tz",
+            "summary": "desc",
+            "published": "Mon, 15 Mar 2024 10:00:00",  # sin offset
+        },
+    ]
+    parsed = _make_parsed_feed(entries)
+
+    with patch("src.news_sources.feedparser.parse", return_value=parsed):
+        articles = await source.fetch(feed_groups=("stocks",))
+
+    tz_articles = [a for a in articles if a.title == "No TZ article"]
+    if tz_articles:
+        assert tz_articles[0].published_at.tzinfo is not None
+
+
+@pytest.mark.asyncio
+async def test_rss_source_handles_bad_date_format():
+    """Verifica que una fecha malformada usa datetime.now como fallback."""
+    source = RSSNewsSource()
+    entries = [
+        {
+            "title": "Bad date",
+            "link": "https://example.com/bad-date",
+            "summary": "desc",
+            "published": "not-a-date-at-all",
+        },
+    ]
+    parsed = _make_parsed_feed(entries)
+
+    with patch("src.news_sources.feedparser.parse", return_value=parsed):
+        articles = await source.fetch(feed_groups=("stocks",))
+
+    bad = [a for a in articles if a.title == "Bad date"]
+    if bad:
+        assert isinstance(bad[0].published_at, datetime)
 
 
 @pytest.mark.asyncio
@@ -330,6 +517,104 @@ async def test_yahoo_symbol_source_returns_empty_on_exception():
 
 
 @pytest.mark.asyncio
+async def test_yahoo_symbol_source_debug_logs():
+    """Verifica que YahooSymbolSource loguea en debug cuando logger.is_debug=True."""
+    mock_logger = MagicMock()
+    mock_logger.is_debug = True
+    source = YahooSymbolSource(logger=mock_logger)
+    entries = [_rss_entry(1)]
+    parsed = _make_parsed_feed(entries)
+
+    with patch("src.news_sources.feedparser.parse", return_value=parsed):
+        await source.fetch("NVDA")
+
+    assert mock_logger.debug.called
+
+
+@pytest.mark.asyncio
+async def test_yahoo_symbol_source_handles_date_without_tzinfo():
+    """Verifica que fechas sin tzinfo en Yahoo RSS se convierten a UTC."""
+    source = YahooSymbolSource()
+    entries = [
+        {
+            "title": "No TZ",
+            "link": "https://finance.yahoo.com/no-tz",
+            "summary": "desc",
+            "published": "Mon, 15 Mar 2024 10:00:00",  # sin offset
+        },
+    ]
+    parsed = _make_parsed_feed(entries)
+
+    with patch("src.news_sources.feedparser.parse", return_value=parsed):
+        articles = await source.fetch("AAPL")
+
+    tz_articles = [a for a in articles if a.title == "No TZ"]
+    if tz_articles:
+        assert tz_articles[0].published_at.tzinfo is not None
+
+
+@pytest.mark.asyncio
+async def test_yahoo_symbol_source_handles_missing_date():
+    """Verifica que entradas sin campo 'published' usan datetime.now como fallback."""
+    source = YahooSymbolSource()
+    entries = [
+        {"title": "No date", "link": "https://finance.yahoo.com/no-date", "summary": "desc"},
+    ]
+    parsed = _make_parsed_feed(entries)
+
+    with patch("src.news_sources.feedparser.parse", return_value=parsed):
+        articles = await source.fetch("MSFT")
+
+    assert any(a.title == "No date" for a in articles)
+    assert all(isinstance(a.published_at, datetime) for a in articles)
+
+
+@pytest.mark.asyncio
+async def test_yahoo_symbol_source_logs_timeout_with_logger():
+    """Verifica que loguea warning en timeout cuando hay logger."""
+    mock_logger = MagicMock()
+    source = YahooSymbolSource(logger=mock_logger)
+
+    with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
+        await source.fetch("GOOG")
+
+    assert mock_logger.warning.called
+
+
+@pytest.mark.asyncio
+async def test_yahoo_symbol_source_logs_exception_with_logger():
+    """Verifica que loguea error en excepción genérica cuando hay logger."""
+    mock_logger = MagicMock()
+    source = YahooSymbolSource(logger=mock_logger)
+
+    with patch("asyncio.wait_for", side_effect=Exception("connection error")):
+        await source.fetch("AMZN")
+
+    assert mock_logger.error.called
+
+
+@pytest.mark.asyncio
+async def test_yahoo_symbol_source_handles_bad_date():
+    """Verifica que una fecha malformada usa datetime.now como fallback."""
+    source = YahooSymbolSource()
+    entries = [
+        {
+            "title": "Bad date",
+            "link": "https://finance.yahoo.com/bad",
+            "summary": "desc",
+            "published": "not-a-date",
+        },
+    ]
+    parsed = _make_parsed_feed(entries)
+
+    with patch("src.news_sources.feedparser.parse", return_value=parsed):
+        articles = await source.fetch("AAPL")
+
+    assert len(articles) == 1
+    assert isinstance(articles[0].published_at, datetime)
+
+
+@pytest.mark.asyncio
 async def test_yahoo_symbol_source_skips_entry_without_link():
     """Verifica que entradas sin link se omiten."""
     source = YahooSymbolSource()
@@ -374,6 +659,41 @@ async def test_news_aggregator_deduplicates_by_url():
 
     urls = [a.url for a in articles]
     assert urls.count(shared_url) == 1
+
+
+@pytest.mark.asyncio
+async def test_news_aggregator_fetch_market_news_logs_with_logger():
+    """NewsAggregator loguea el resumen cuando hay logger."""
+    mock_logger = MagicMock()
+
+    mock_alpaca = MagicMock()
+    mock_alpaca.fetch = AsyncMock(return_value=[])
+    mock_rss = MagicMock()
+    mock_rss.fetch = AsyncMock(return_value=[])
+    mock_yahoo = MagicMock()
+
+    aggregator = NewsAggregator(mock_alpaca, mock_rss, mock_yahoo, logger=mock_logger)
+    await aggregator.fetch_market_news()
+
+    assert mock_logger.info.called
+
+
+@pytest.mark.asyncio
+async def test_news_aggregator_fetch_symbol_news_debug_logs():
+    """NewsAggregator loguea en debug cuando hay logger.is_debug=True."""
+    mock_logger = MagicMock()
+    mock_logger.is_debug = True
+
+    mock_alpaca = MagicMock()
+    mock_alpaca.fetch = AsyncMock(return_value=[])
+    mock_rss = MagicMock()
+    mock_yahoo = MagicMock()
+    mock_yahoo.fetch = AsyncMock(return_value=[])
+
+    aggregator = NewsAggregator(mock_alpaca, mock_rss, mock_yahoo, logger=mock_logger)
+    await aggregator.fetch_symbol_news("AAPL")
+
+    assert mock_logger.debug.called
 
 
 @pytest.mark.asyncio

@@ -73,7 +73,7 @@ class PriceMonitor:
         trading_opportunity_agent,
         trading_entry_agent,
         logger: AgentLogger,
-        gnews_api_key: str,
+        news_service,  # NewsIngestionService
         max_position_value: float = 500.0,
         analysis_interval_hours: float = 4.0,
         alerter=None,
@@ -89,7 +89,7 @@ class PriceMonitor:
         self._trading_opportunity_agent = trading_opportunity_agent
         self._trading_entry_agent = trading_entry_agent
         self._logger = logger
-        self._gnews_api_key = gnews_api_key
+        self._news_service = news_service
         self._max_position_value = max_position_value
         self._analysis_interval_hours = analysis_interval_hours
         self._alerter = alerter
@@ -389,7 +389,8 @@ class PriceMonitor:
             return None
 
         # Company analysis — noticias recientes de la empresa para evaluar riesgo de entrada
-        company_report = await self._run_company_analysis(symbol)
+        exchange = state_row.get("exchange") if state_row else None
+        company_report = await self._run_company_analysis(symbol, exchange)
         if company_report is None:
             self._logger.warning(f"{symbol}: company analysis falló — continuando sin él", source="monitor")
 
@@ -750,20 +751,25 @@ class PriceMonitor:
         await self._run_market_context()
 
     async def _run_market_context(self) -> None:
-        """Obtiene noticias generales y genera el informe holístico de contexto global."""
+        """Ingesta noticias de mercado, las clasifica y genera el informe holístico de contexto global."""
         self._logger.info("Actualizando contexto global de mercado...", source="monitor")
         try:
-            from .tools.news_tool import SearchNewsTool
-            news_tool = SearchNewsTool(self._gnews_api_key, logger=self._logger)
+            fetched, classified = await self._news_service.run_market_ingestion()
+            self._logger.info(
+                f"News ingestion: {fetched} artículos únicos fetched, {classified} clasificados",
+                source="monitor",
+            )
 
-            market_raw = await news_tool.execute("stock market economy")
-            market_news = _parse_news_list(market_raw)
+            # Las 20 noticias macro más recientes + 10 de empresa de alto impacto
+            market_articles = self._storage.get_articles_by_scope("market", limit=20)
+            high_impact_company = self._storage.get_articles_by_scope("company", limit=10)
+            all_context_news = market_articles + high_impact_company
 
-            prompt = build_market_context_prompt(market_news)
+            prompt = build_market_context_prompt(all_context_news)
             response = await self._market_context_agent.run(prompt)
             report = validate_market_context(response)
 
-            self._storage.save_market_context(json.dumps(report), len(market_news))
+            self._storage.save_market_context(json.dumps(report), len(all_context_news))
             self._logger.info(
                 f"Contexto global actualizado — sentiment: {report.get('market_sentiment', '?')} | "
                 f"risk: {report.get('risk_appetite', '?')}",
@@ -784,14 +790,11 @@ class PriceMonitor:
         except Exception:
             return None
 
-    async def _run_company_analysis(self, symbol: str) -> dict | None:
-        """Obtiene noticias de la empresa y genera un informe breve de riesgo de entrada."""
+    async def _run_company_analysis(self, symbol: str, exchange: str | None = None) -> dict | None:
+        """Obtiene noticias clasificadas de BD + Yahoo fresco y genera informe de riesgo de entrada."""
         try:
-            from .tools.news_tool import SearchNewsTool
-            news_tool = SearchNewsTool(self._gnews_api_key, logger=self._logger)
-
-            company_raw = await news_tool.execute(symbol)
-            company_news = _parse_news_list(company_raw)
+            # Artículos de BD (company + exchange) + fetch fresco de Yahoo RSS por símbolo
+            company_news = await self._news_service.run_symbol_ingestion(symbol, exchange)
 
             prompt = build_company_analysis_prompt(symbol, company_news)
             response = await self._company_analysis_agent.run(prompt)
@@ -840,15 +843,6 @@ class PriceMonitor:
 
 
 # ── Utilidades ────────────────────────────────────────────────────────────────
-
-def _parse_news_list(raw: str) -> list[dict]:
-    """Extrae la lista de artículos del JSON devuelto por SearchNewsTool."""
-    try:
-        data = json.loads(raw)
-        return data.get("articles", [])
-    except Exception:
-        return []
-
 
 async def _wait_or_stop(stop_event: asyncio.Event | None, seconds: int):
     if stop_event:
@@ -903,7 +897,6 @@ async def run_monitor(
     api_key = os.environ.get("ALPACA_API_KEY")
     secret_key = os.environ.get("ALPACA_SECRET_KEY")
     trading_url = os.environ.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
-    gnews_key = os.environ.get("GNEWS_API_KEY")
     ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
     gmail_user = os.environ.get("GMAIL_USER")
     gmail_pass = os.environ.get("GMAIL_APP_PASSWORD")
@@ -912,9 +905,6 @@ async def run_monitor(
 
     if not api_key or not secret_key:
         logger.error("ALPACA_API_KEY y ALPACA_SECRET_KEY requeridas en .env", source="monitor")
-        return
-    if not gnews_key:
-        logger.error("GNEWS_API_KEY requerida en .env", source="monitor")
         return
 
     # Inicializar Alpaca
@@ -1009,6 +999,7 @@ async def run_monitor(
     _register("technical")
     _register("technical_entry")
     _register("economics")
+    _register("news_classifier")
     _register("trader_opportunity")
     _register("trader_entry")
 
@@ -1031,13 +1022,25 @@ async def run_monitor(
 
     bus.subscribe("*", on_event)
 
-    # Construir sub-agentes (F1: 4 agentes especializados)
+    # Construir sub-agentes
     technical_watching_agent = await build_technical_watching_agent(config, bus, model_registry)
     technical_entry_agent = await build_technical_entry_agent(config, bus, model_registry)
     market_context_agent = await build_market_context_agent(config, bus, model_registry)
     company_analysis_agent = await build_company_analysis_agent(config, bus, model_registry)
     trading_opportunity_agent = await build_trading_opportunity_agent(config, bus, model_registry)
     trading_entry_agent = await build_trading_entry_agent(config, bus, model_registry)
+
+    # Construir NewsIngestionService (reemplaza GNews)
+    from src.news_sources import AlpacaNewsSource, RSSNewsSource, YahooSymbolSource, NewsAggregator
+    from src.news_service import NewsIngestionService
+    from .economics_agent import build_news_classifier_agent
+
+    alpaca_news = AlpacaNewsSource(api_key, secret_key, logger=logger)
+    rss_source = RSSNewsSource(logger=logger)
+    yahoo_source = YahooSymbolSource(logger=logger)
+    aggregator = NewsAggregator(alpaca_news, rss_source, yahoo_source, logger=logger)
+    news_classifier_agent = await build_news_classifier_agent(config, bus, model_registry)
+    news_service = NewsIngestionService(aggregator, news_classifier_agent, storage, logger=logger)
 
     # Arrancar monitor
     monitor = PriceMonitor(
@@ -1050,7 +1053,7 @@ async def run_monitor(
         trading_opportunity_agent=trading_opportunity_agent,
         trading_entry_agent=trading_entry_agent,
         logger=logger,
-        gnews_api_key=gnews_key,
+        news_service=news_service,
         max_position_value=effective_max_position,
         analysis_interval_hours=analysis_interval,
         alerter=alerter,
