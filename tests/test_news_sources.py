@@ -120,6 +120,92 @@ async def test_alpaca_news_source_returns_empty_on_error():
     assert articles == []
 
 
+@pytest.mark.asyncio
+async def test_alpaca_news_source_returns_empty_on_http_error():
+    """Verifica que retorna lista vacía cuando la API devuelve status != 200."""
+    source = AlpacaNewsSource(api_key="key", secret_key="secret")
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 403
+
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_ctx)
+
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.news_sources.aiohttp.ClientSession", return_value=mock_session_ctx):
+        articles = await source.fetch()
+
+    assert articles == []
+
+
+@pytest.mark.asyncio
+async def test_alpaca_news_source_skips_item_without_url():
+    """Verifica que artículos sin URL se omiten."""
+    source = AlpacaNewsSource(api_key="key", secret_key="secret")
+    data = {"news": [
+        {"headline": "No URL item", "summary": "desc", "url": "", "created_at": "2024-01-01T00:00:00Z"},
+        {"headline": "Has URL", "summary": "desc", "url": "https://example.com/1", "created_at": "2024-01-01T00:00:00Z"},
+    ]}
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value=data)
+
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_ctx)
+
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.news_sources.aiohttp.ClientSession", return_value=mock_session_ctx):
+        articles = await source.fetch()
+
+    assert len(articles) == 1
+    assert articles[0].title == "Has URL"
+
+
+@pytest.mark.asyncio
+async def test_alpaca_news_source_handles_bad_date():
+    """Verifica que una fecha malformada no rompe el parseo."""
+    source = AlpacaNewsSource(api_key="key", secret_key="secret")
+    data = {"news": [
+        {"headline": "Bad date", "summary": "desc", "url": "https://example.com/1", "created_at": "not-a-date"},
+    ]}
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value=data)
+
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_ctx)
+
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.news_sources.aiohttp.ClientSession", return_value=mock_session_ctx):
+        articles = await source.fetch()
+
+    assert len(articles) == 1
+    assert isinstance(articles[0].published_at, datetime)
+
+
 # ── RSSNewsSource ─────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -153,6 +239,50 @@ async def test_rss_source_returns_empty_on_timeout():
     assert articles == []
 
 
+@pytest.mark.asyncio
+async def test_rss_source_returns_empty_on_exception():
+    """Verifica que una excepción genérica en un feed no rompe el resto."""
+    source = RSSNewsSource()
+
+    with patch("asyncio.wait_for", side_effect=Exception("connection error")):
+        articles = await source.fetch(feed_groups=("stocks",))
+
+    assert articles == []
+
+
+@pytest.mark.asyncio
+async def test_rss_source_skips_entry_without_link():
+    """Verifica que entradas sin link se omiten."""
+    source = RSSNewsSource()
+    entries = [
+        {"title": "No link", "summary": "desc", "published": "Mon, 15 Mar 2024 10:00:00 +0000"},
+        {"title": "Has link", "link": "https://example.com/1", "summary": "desc", "published": "Mon, 15 Mar 2024 10:00:00 +0000"},
+    ]
+    parsed = _make_parsed_feed(entries)
+
+    with patch("src.news_sources.feedparser.parse", return_value=parsed):
+        articles = await source.fetch(feed_groups=("stocks",))
+
+    titles = [a.title for a in articles]
+    assert "No link" not in titles
+
+
+@pytest.mark.asyncio
+async def test_rss_source_handles_missing_published_date():
+    """Verifica que entradas sin fecha usan datetime.now como fallback."""
+    source = RSSNewsSource()
+    entries = [
+        {"title": "No date", "link": "https://example.com/2", "summary": "desc"},
+    ]
+    parsed = _make_parsed_feed(entries)
+
+    with patch("src.news_sources.feedparser.parse", return_value=parsed):
+        articles = await source.fetch(feed_groups=("macro",))
+
+    assert any(a.title == "No date" for a in articles)
+    assert all(isinstance(a.published_at, datetime) for a in articles)
+
+
 # ── YahooSymbolSource ─────────────────────────────────────────────────────────────
 
 def test_yahoo_symbol_source_builds_correct_url():
@@ -175,6 +305,46 @@ async def test_yahoo_symbol_source_parses_feed():
     assert len(articles) == 1
     assert articles[0].feed_group == "yahoo_symbol"
     assert articles[0].source == "Yahoo Finance"
+
+
+@pytest.mark.asyncio
+async def test_yahoo_symbol_source_returns_empty_on_timeout():
+    """Verifica que un timeout retorna lista vacía."""
+    source = YahooSymbolSource()
+
+    with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
+        articles = await source.fetch("MSFT")
+
+    assert articles == []
+
+
+@pytest.mark.asyncio
+async def test_yahoo_symbol_source_returns_empty_on_exception():
+    """Verifica que una excepción genérica retorna lista vacía."""
+    source = YahooSymbolSource()
+
+    with patch("asyncio.wait_for", side_effect=Exception("connection error")):
+        articles = await source.fetch("MSFT")
+
+    assert articles == []
+
+
+@pytest.mark.asyncio
+async def test_yahoo_symbol_source_skips_entry_without_link():
+    """Verifica que entradas sin link se omiten."""
+    source = YahooSymbolSource()
+    entries = [
+        {"title": "No link", "summary": "desc"},
+        {"title": "Has link", "link": "https://finance.yahoo.com/news/1", "summary": "desc",
+         "published": "Mon, 15 Mar 2024 10:00:00 +0000"},
+    ]
+    parsed = _make_parsed_feed(entries)
+
+    with patch("src.news_sources.feedparser.parse", return_value=parsed):
+        articles = await source.fetch("AAPL")
+
+    assert len(articles) == 1
+    assert articles[0].title == "Has link"
 
 
 # ── NewsAggregator ─────────────────────────────────────────────────────────────────

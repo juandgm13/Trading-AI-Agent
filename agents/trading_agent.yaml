@@ -17,6 +17,12 @@ models:
     temperature: 0.2
     max_tokens: 768
 
+  news_classifier:     # NewsClassifierAgent — clasifica artículos individuales
+    provider: ollama
+    model: qwen2.5:7b
+    temperature: 0.1   # consistencia > creatividad para clasificar
+    max_tokens: 256    # respuesta corta (JSON de ~5 campos)
+
   trader_opportunity:  # TradingAgent — ¿vale la pena vigilar más? (temperatura más alta → más apertura a HOLD)
     provider: ollama
     model: qwen2.5:7b

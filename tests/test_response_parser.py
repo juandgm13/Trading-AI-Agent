@@ -20,6 +20,7 @@ from src.response_parser import (
     validate_market_context,
     validate_company_analysis,
     validate_trading_decision,
+    validate_news_classification,
 )
 
 
@@ -336,3 +337,45 @@ def test_validate_trading_decision_embedded_in_prose():
     result = validate_trading_decision(text)
     assert result["decision"] == "HOLD"
     assert result["symbol"] == "GOOG"
+
+
+# ── validate_news_classification ──────────────────────────────────────────────
+
+def test_validate_news_classification_company():
+    text = json.dumps({
+        "scope": "company", "ticker": "AAPL", "exchange": None,
+        "impact": "HIGH", "reasoning": "Apple earnings beat.",
+    })
+    result = validate_news_classification(text)
+    assert result["scope"] == "company"
+    assert result["ticker"] == "AAPL"
+    assert result["exchange"] is None
+    assert result["impact"] == "HIGH"
+    assert result["reasoning"] == "Apple earnings beat."
+
+
+def test_validate_news_classification_irrelevant_impact_is_null():
+    text = json.dumps({
+        "scope": "irrelevant", "ticker": None, "exchange": None,
+        "impact": "HIGH",  # debería ignorarse y quedar None
+        "reasoning": "Sports news.",
+    })
+    result = validate_news_classification(text)
+    assert result["scope"] == "irrelevant"
+    assert result["impact"] is None
+
+
+def test_validate_news_classification_defaults_on_missing_fields():
+    result = validate_news_classification('{}')
+    assert result["scope"] == "irrelevant"
+    assert result["ticker"] is None
+    assert result["exchange"] is None
+    assert result["impact"] is None
+    assert result["reasoning"] == ""
+
+
+def test_validate_news_classification_invalid_scope_defaults_to_irrelevant():
+    text = json.dumps({"scope": "global", "impact": "MEDIUM"})
+    result = validate_news_classification(text)
+    assert result["scope"] == "irrelevant"
+    assert result["impact"] is None

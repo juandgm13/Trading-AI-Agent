@@ -27,6 +27,7 @@ from src.response_parser import (
     validate_market_context,
     validate_company_analysis,
     validate_trading_decision,
+    validate_news_classification,
 )
 
 
@@ -40,7 +41,7 @@ def agent_deps():
     ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 
     registry = ModelRegistry()
-    for role in ("technical", "technical_entry", "economics", "trader_opportunity", "trader_entry"):
+    for role in ("technical", "technical_entry", "economics", "news_classifier", "trader_opportunity", "trader_entry"):
         cfg = config.models.get(role)
         if cfg:
             registry.register(role, OllamaProvider(cfg.model, base_url=ollama_url))
@@ -264,3 +265,68 @@ async def test_trading_agent_rejects_on_bearish(agent_deps):
     result = validate_trading_decision(response)
     print(f"[TradingAgent bearish] validated:\n{json.dumps(result, indent=2)}")
     assert result["decision"] in {"HOLD", "REJECT"}
+
+
+# ── NewsClassifierAgent ────────────────────────────────────────────────────────
+
+@requires_ollama
+@pytest.mark.asyncio
+async def test_news_classifier_company_article(agent_deps):
+    """NewsClassifierAgent clasifica correctamente una noticia de empresa."""
+    from agents.economics_agent import build_news_classifier_agent, build_news_classifier_prompt
+    from src.ingestion import Article
+    from datetime import datetime, timezone
+
+    config, bus, registry = agent_deps
+    agent = await build_news_classifier_agent(config, bus, registry)
+
+    article = Article(
+        source="Reuters",
+        title="Apple reports record Q1 earnings, iPhone sales surge 20%",
+        description="Apple Inc. reported first-quarter earnings that exceeded analyst expectations by 15%, driven by strong iPhone 16 sales in China.",
+        content="",
+        url="https://reuters.com/apple-q1-2025",
+        published_at=datetime(2025, 2, 1, tzinfo=timezone.utc),
+        feed_group="stocks",
+    )
+    prompt = build_news_classifier_prompt(article)
+    response = await agent.run(prompt)
+    print(f"\n[NewsClassifier company] raw response:\n{response}")
+
+    result = validate_news_classification(response)
+    print(f"[NewsClassifier company] validated:\n{json.dumps(result, indent=2)}")
+
+    assert result["scope"] in {"company", "market", "exchange", "irrelevant"}
+    assert result["impact"] in {"HIGH", "MEDIUM", "LOW", None}
+    assert isinstance(result["reasoning"], str)
+
+
+@requires_ollama
+@pytest.mark.asyncio
+async def test_news_classifier_market_article(agent_deps):
+    """NewsClassifierAgent clasifica correctamente una noticia macro."""
+    from agents.economics_agent import build_news_classifier_agent, build_news_classifier_prompt
+    from src.ingestion import Article
+    from datetime import datetime, timezone
+
+    config, bus, registry = agent_deps
+    agent = await build_news_classifier_agent(config, bus, registry)
+
+    article = Article(
+        source="Federal Reserve",
+        title="Fed raises interest rates by 25 basis points, signals pause",
+        description="The Federal Reserve raised its benchmark interest rate by 25 basis points, signaling a potential pause in its rate-hiking cycle amid signs of slowing inflation.",
+        content="",
+        url="https://federalreserve.gov/press-2025",
+        published_at=datetime(2025, 2, 1, tzinfo=timezone.utc),
+        feed_group="macro",
+    )
+    prompt = build_news_classifier_prompt(article)
+    response = await agent.run(prompt)
+    print(f"\n[NewsClassifier macro] raw response:\n{response}")
+
+    result = validate_news_classification(response)
+    print(f"[NewsClassifier macro] validated:\n{json.dumps(result, indent=2)}")
+
+    assert result["scope"] in {"company", "market", "exchange", "irrelevant"}
+    assert result["impact"] in {"HIGH", "MEDIUM", "LOW", None}

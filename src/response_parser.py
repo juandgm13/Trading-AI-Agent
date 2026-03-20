@@ -189,6 +189,45 @@ def validate_company_analysis(text: str) -> dict:
     }
 
 
+def validate_news_classification(text: str) -> dict:
+    """
+    Extrae y valida la respuesta del NewsClassifierAgent.
+
+    Campos con default seguro si faltan o son inválidos:
+      scope → "irrelevant", ticker → None, exchange → None,
+      impact → None (si irrelevant) o "LOW" (si otro scope), reasoning → "".
+
+    Raises:
+        ParseError: si no se puede extraer ningún JSON del texto.
+    """
+    data = extract_json(text)
+    scope = _coerce_enum(
+        data.get("scope"),
+        {"COMPANY", "MARKET", "EXCHANGE", "IRRELEVANT"},
+        "IRRELEVANT",
+    ).lower()
+
+    impact: str | None
+    if scope == "irrelevant":
+        impact = None
+    else:
+        impact = _coerce_enum(data.get("impact"), {"HIGH", "MEDIUM", "LOW"}, "LOW")
+
+    raw_ticker = data.get("ticker")
+    ticker = str(raw_ticker).upper() if raw_ticker and str(raw_ticker).strip() != "null" else None
+
+    raw_exchange = data.get("exchange")
+    exchange = str(raw_exchange).upper() if raw_exchange and str(raw_exchange).strip() != "null" else None
+
+    return {
+        "scope":     scope,
+        "ticker":    ticker,
+        "exchange":  exchange,
+        "impact":    impact,
+        "reasoning": str(data.get("reasoning", "")),
+    }
+
+
 def validate_trading_decision(text: str) -> dict:
     """
     Extrae y valida la respuesta del TradingAgent.

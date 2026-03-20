@@ -190,6 +190,72 @@ def build_company_analysis_prompt(symbol: str, company_news: list[dict]) -> str:
     )
 
 
+NEWS_CLASSIFIER_SYSTEM_PROMPT = """\
+You are a financial news classifier.
+
+You will receive ONE news article (title, description, source, published date).
+Classify it and return ONLY a valid JSON object — no markdown, no explanation outside JSON.
+
+Required JSON structure:
+{
+  "scope": "company" | "market" | "exchange" | "irrelevant",
+  "ticker": "<SYMBOL>" | null,
+  "exchange": "<EXCHANGE_NAME>" | null,
+  "impact": "HIGH" | "MEDIUM" | "LOW" | null,
+  "reasoning": "<one sentence>"
+}
+
+Rules:
+- scope="company": news primarily affects one specific publicly-traded company → set ticker (e.g. "AAPL").
+- scope="market": news affects the broad equity market (Fed decisions, macro data, geopolitics, indices).
+- scope="exchange": news primarily affects one exchange or sector (e.g. NASDAQ tech selloff) → set exchange.
+- scope="irrelevant": sports, entertainment, non-financial content, or clearly unrelated to financial markets.
+- impact=null ONLY when scope="irrelevant".
+- impact="HIGH": major earnings surprise, acquisition, regulatory action, Fed rate decision, market crash.
+- impact="MEDIUM": analyst upgrades/downgrades, product launches, minor macro data releases.
+- impact="LOW": routine news, small events with marginal financial relevance.\
+"""
+
+
+async def build_news_classifier_agent(
+    config,
+    bus: EventBus,
+    model_registry: ModelRegistry,
+) -> object:
+    """
+    Construye el NewsClassifierAgent — clasifica artículos individuales.
+
+    scope → company | market | exchange | irrelevant
+    impact → HIGH | MEDIUM | LOW | null
+    """
+    agent = (
+        AgentBuilder()
+        .name("news_classifier")
+        .planner("simple")
+        .tools([])
+        .model_role("news_classifier")
+        .system_prompt(NEWS_CLASSIFIER_SYSTEM_PROMPT)
+        .stateless()
+        .with_config(config)
+        .with_event_bus(bus)
+        .with_model_registry(model_registry)
+        .build()
+    )
+    return agent
+
+
+def build_news_classifier_prompt(article) -> str:
+    """Prompt para clasificar un artículo individual con el NewsClassifierAgent."""
+    return (
+        "Classify the following news article:\n\n"
+        f"Title: {article.title}\n"
+        f"Source: {article.source}\n"
+        f"Published: {article.published_at.isoformat()}\n"
+        f"Description: {article.description}\n\n"
+        "Return your classification as JSON."
+    )
+
+
 def build_economics_prompt(
     symbol: str,
     company_news: list[dict],
