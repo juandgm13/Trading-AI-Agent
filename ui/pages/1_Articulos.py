@@ -21,11 +21,15 @@ st.title("Articles")
 storage = StorageLayer()
 
 # ── Filters ───────────────────────────────────────────────────────────────────
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 with col1:
-    filter_level = st.multiselect("Impact level", ["LOW", "MEDIUM", "HIGH"])
+    filter_scope = st.multiselect(
+        "Scope", ["company", "market", "exchange", "irrelevant"]
+    )
 with col2:
-    filter_type = st.multiselect("Impact type", ["POSITIVE", "NEGATIVE", "NEUTRAL"])
+    filter_impact = st.multiselect("Impact", ["HIGH", "MEDIUM", "LOW"])
+with col3:
+    filter_ticker = st.text_input("Ticker (e.g. AAPL)")
 
 # ── Data ──────────────────────────────────────────────────────────────────────
 articles = storage.get_all()
@@ -35,18 +39,45 @@ if df.empty:
     st.info("No articles in the database.")
     st.stop()
 
-if filter_level:
-    df = df[df["impact_level"].isin(filter_level)]
-if filter_type:
-    df = df[df["impact_type"].isin(filter_type)]
+# Ensure new columns exist (graceful for old rows)
+for col in ("scope", "feed_group", "exchange_affected", "impact", "reasoning", "expires_at"):
+    if col not in df.columns:
+        df[col] = None
+
+if filter_scope:
+    df = df[df["scope"].isin(filter_scope)]
+if filter_impact:
+    df = df[df["impact"].isin(filter_impact)]
+if filter_ticker:
+    df = df[df["ticker"].str.upper() == filter_ticker.strip().upper()]
 
 # ── Table ─────────────────────────────────────────────────────────────────────
 display_cols = [
-    "title", "source", "company", "ticker",
-    "impact_level", "impact_type", "confidence",
-    "alert_sent", "published_at",
+    "title", "source", "feed_group",
+    "scope", "ticker", "exchange_affected",
+    "impact", "reasoning",
+    "expires_at", "published_at",
 ]
-st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
+# Only include columns that actually exist
+display_cols = [c for c in display_cols if c in df.columns]
+
+st.dataframe(
+    df[display_cols],
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "title": st.column_config.TextColumn("Title", width="large"),
+        "source": st.column_config.TextColumn("Source", width="small"),
+        "feed_group": st.column_config.TextColumn("Feed", width="small"),
+        "scope": st.column_config.TextColumn("Scope", width="small"),
+        "ticker": st.column_config.TextColumn("Ticker", width="small"),
+        "exchange_affected": st.column_config.TextColumn("Exchange", width="small"),
+        "impact": st.column_config.TextColumn("Impact", width="small"),
+        "reasoning": st.column_config.TextColumn("Reasoning", width="medium"),
+        "expires_at": st.column_config.DatetimeColumn("Expires", format="YYYY-MM-DD HH:mm"),
+        "published_at": st.column_config.DatetimeColumn("Published", format="YYYY-MM-DD HH:mm"),
+    },
+)
 st.caption(f"{len(df)} articles shown")
 
 # ── Delete individual ─────────────────────────────────────────────────────────
