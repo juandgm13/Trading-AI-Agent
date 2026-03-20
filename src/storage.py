@@ -55,6 +55,26 @@ class StorageLayer:
                     created_at        TEXT
                 )
             """)
+            # Migraciones — añadir columnas nuevas si no existen
+            _migrations = [
+                "ALTER TABLE symbol_states ADD COLUMN pending_order_id TEXT",
+                "ALTER TABLE trades ADD COLUMN pnl REAL",
+                "ALTER TABLE trades ADD COLUMN fees REAL",
+                "ALTER TABLE symbol_states ADD COLUMN position_side TEXT DEFAULT 'long'",
+                # Fase 3: nuevas columnas de clasificación de artículos
+                "ALTER TABLE articles ADD COLUMN description TEXT",
+                "ALTER TABLE articles ADD COLUMN feed_group TEXT",
+                "ALTER TABLE articles ADD COLUMN scope TEXT",
+                "ALTER TABLE articles ADD COLUMN exchange_affected TEXT",
+                "ALTER TABLE articles ADD COLUMN impact TEXT",
+                "ALTER TABLE articles ADD COLUMN reasoning TEXT",
+                "ALTER TABLE articles ADD COLUMN expires_at TEXT",
+            ]
+            for _sql in _migrations:
+                try:
+                    conn.execute(_sql)
+                except Exception:
+                    pass  # columna ya existe
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_articles_scope
                 ON articles(scope, ticker, exchange_affected)
@@ -130,26 +150,6 @@ class StorageLayer:
                     created_at  TEXT NOT NULL
                 )
             """)
-            # Migraciones — añadir columnas nuevas si no existen
-            _migrations = [
-                "ALTER TABLE symbol_states ADD COLUMN pending_order_id TEXT",
-                "ALTER TABLE trades ADD COLUMN pnl REAL",
-                "ALTER TABLE trades ADD COLUMN fees REAL",
-                "ALTER TABLE symbol_states ADD COLUMN position_side TEXT DEFAULT 'long'",
-                # Fase 3: nuevas columnas de clasificación de artículos
-                "ALTER TABLE articles ADD COLUMN description TEXT",
-                "ALTER TABLE articles ADD COLUMN feed_group TEXT",
-                "ALTER TABLE articles ADD COLUMN scope TEXT",
-                "ALTER TABLE articles ADD COLUMN exchange_affected TEXT",
-                "ALTER TABLE articles ADD COLUMN impact TEXT",
-                "ALTER TABLE articles ADD COLUMN reasoning TEXT",
-                "ALTER TABLE articles ADD COLUMN expires_at TEXT",
-            ]
-            for _sql in _migrations:
-                try:
-                    conn.execute(_sql)
-                except Exception:
-                    pass  # columna ya existe
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
