@@ -115,7 +115,7 @@ Produces a holistic macro view of the global market once every `analysis_interva
 ```mermaid
 flowchart TB
     subgraph IN["📥 Input · text"]
-        I1["General market news — GNews API<br/>'stock market economy'"]
+        I1["General market news — Alpaca News API + RSS feeds<br/>(Reuters, CNBC, Yahoo Finance, MarketWatch, FT, Fed Reserve…)"]
     end
 
     AG["MarketContextAgent<br/>model: economics · qwen2.5:7b"]
@@ -141,7 +141,7 @@ Fetches company-specific news when a symbol reaches `OPPORTUNITY_FOUND` and asse
 ```mermaid
 flowchart TB
     subgraph IN["📥 Input · text"]
-        I1["Company news — GNews API"]
+        I1["Company news — Yahoo Finance RSS + Alpaca News (by symbol)<br/>pre-classified and persisted in DB"]
         --- I2["Symbol"]
     end
 
@@ -218,10 +218,13 @@ The chart path is logged as `file:///absolute/path.png` and displayed in the **E
 
 | Module | Input | Output |
 |---|---|---|
+| **NewsClassifierAgent** | `Article` (title, description, content) | `{scope, ticker, exchange, impact, reasoning}` |
+| **NewsIngestionService** | `NewsAggregator` + `NewsClassifierAgent` + `StorageLayer` | `(fetched, classified)` / `list[dict]` |
+| **NewsAggregator** | Alpaca API key/secret | `list[Article]` (market news or symbol-specific) |
 | **TechnicalWatchingAgent** | 90 daily OHLCV bars JSON | `{trend, signal, key_supports: [float], key_resistances: [float], confidence, summary}` |
 | **TechnicalEntryAgent** | 96 × 15-min OHLCV bars JSON + optional medium-term context | `{trend, signal, target_price, stop_loss, confidence, summary}` |
-| **MarketContextAgent** | General news JSON | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
-| **CompanyAnalysisAgent** | Company news JSON | `{sentiment, key_events, entry_risk, confidence, summary}` |
+| **MarketContextAgent** | Classified market news JSON from DB | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
+| **CompanyAnalysisAgent** | Classified company news JSON from DB | `{sentiment, key_events, entry_risk, confidence, summary}` |
 | **TradingOpportunityAgent** | Technical + market reports | `{decision: OPPORTUNITY_FOUND\|HOLD\|REJECT, symbol, reasoning}` |
 | **TradingEntryAgent** | Technical + company reports | `{decision: OPEN_POSITION\|OPEN_SHORT\|HOLD\|REJECT, symbol, qty: <int or null>, reasoning}` |
 | **AlpacaClient.get_asset()** | Symbol string | `{symbol, name, exchange, marginable, shortable}` or `None` |
@@ -236,7 +239,10 @@ The chart path is logged as `file:///absolute/path.png` and displayed in the **E
 - Each agent is independently replaceable (swap model, planner, or provider in YAML).
 - `SimplePlanner` embeds the system prompt in the user message.
 - All crypto symbols are filtered out (`asset_class=us_equity`, `exchange != CRYPTO`).
-- SQLite deduplication uses `url` as unique key for articles; `symbol` as primary key for `symbol_states`.
+- SQLite deduplication for articles: primary key `url`; also `content_hash` (sha256 of title + date) for cross-source dedup. `symbol` as primary key for `symbol_states`.
+- **News pipeline**: `NewsAggregator` (Alpaca News API + RSS feeds + Yahoo Finance by symbol) → `NewsClassifierAgent` (scope/impact classification) → persisted in `articles` table with retention (HIGH=7d, MEDIUM=3d, LOW=1d). Agents read pre-classified articles from DB, not raw feeds.
+- **Article scopes**: `company` (ticker-specific), `market` (general macro), `exchange` (NYSE/NASDAQ-level), `irrelevant` (filtered out by agents).
+- **Manual news ingestion**: the "Analyze news" button in Tkinter runs `NewsIngestionService.run_market_ingestion()` independently of the monitor loop.
 - `AgentLogger` writes to `logs/agent.log` and `logs/prompts.log` (rotating, configurable via `LOG_LEVEL`).
 - **Position sizing**: `TradingEntryAgent` recommends a qty; the monitor caps it to `max(1, int(MAX_POSITION_VALUE / price))`. Fallback to the cap if the agent returns `null`.
 - Stop signal is checked at the beginning of each symbol iteration (not only at the `while` loop boundary), so the monitor halts within one symbol's analysis time.

@@ -17,7 +17,6 @@ pip install -r requirements.txt
 Configuration via `.env` file (never commit this):
 - `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` – Alpaca paper trading credentials
 - `ALPACA_BASE_URL` – defaults to `https://paper-api.alpaca.markets`
-- `GNEWS_API_KEY` – GNews API key
 - `GMAIL_USER` / `GMAIL_APP_PASSWORD` – Gmail SMTP credentials
 - `OLLAMA_BASE_URL` – defaults to `http://localhost:11434`
 - `WATCHLIST_SYMBOLS` – comma-separated symbols (e.g. `AAPL,MSFT`); if empty, loads all Alpaca US equities
@@ -32,8 +31,9 @@ python main.py
 
 The Tkinter UI provides:
 - **Monitor ON/OFF**: starts/stops the price monitor loop
-- **Analizar ahora**: forces an immediate full analysis of all WATCHING symbols
-- **Abrir dashboard**: opens the Streamlit UI
+- **Analyze now**: forces an immediate full analysis of all WATCHING symbols
+- **Analyze news**: runs market news ingestion (fetch + classify) independently of the monitor
+- **Open dashboard**: opens the Streamlit UI
 
 ## Architecture
 
@@ -72,12 +72,13 @@ processing the current symbol and then exits — it does not abandon mid-cycle.
 |---|---|---|---|---|
 | `TechnicalWatchingAgent` | `agents/technical_agent.py` | `technical` | OHLCV daily bars (90d, pre-fetched) | `{trend, signal, key_supports: [], key_resistances: [], confidence, summary}` |
 | `TechnicalEntryAgent` | `agents/technical_agent.py` | `technical_entry` | OHLCV 15min bars (5d, pre-fetched) + optional medium-term context | `{trend, signal, target_price, stop_loss, confidence, summary}` |
-| `MarketContextAgent` | `agents/economics_agent.py` | `economics` | General market news (GNews) | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
-| `CompanyAnalysisAgent` | `agents/economics_agent.py` | `economics` | Company-specific news (GNews) | `{sentiment, key_events, entry_risk, confidence, summary}` |
+| `MarketContextAgent` | `agents/economics_agent.py` | `economics` | Classified market news (from DB) | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
+| `CompanyAnalysisAgent` | `agents/economics_agent.py` | `economics` | Classified company news (from DB) | `{sentiment, key_events, entry_risk, confidence, summary}` |
+| `NewsClassifierAgent` | `agents/economics_agent.py` | `news_classifier` | Raw article (title/description/content) | `{scope, ticker, exchange, impact, reasoning}` |
 | `TradingOpportunityAgent` | `agents/trading_agent.py` | `trader_opportunity` | Technical + market context reports | `{decision: OPPORTUNITY_FOUND\|HOLD\|REJECT, symbol, reasoning}` |
 | `TradingEntryAgent` | `agents/trading_agent.py` | `trader_entry` | Technical + company reports | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: <int or null>, reasoning}` |
 
-The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects it into each agent's prompt. Agents are purely text analyzers — no tool loops.
+The monitor pre-fetches bars via Alpaca and reads pre-classified news from the DB (populated by `NewsIngestionService`). Agents are purely text analyzers — no tool loops.
 
 **Prompt separation by state:**
 - `TECHNICAL_WATCHING_PROMPT`: macro trend detection, support/resistance, no tight targets required.
@@ -91,12 +92,13 @@ The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects i
 
 | Module | Input | Output |
 |---|---|---|
-| **News Ingestion** | API credentials + query params | `Article { source, title, description, content, url, published_at }` |
-| **Deduplication** | `Article` | `DeduplicationResult { is_new: bool, article: Article }` |
+| **NewsAggregator** | Alpaca API creds | `list[Article]` (from Alpaca News + RSS + Yahoo by symbol) |
+| **NewsClassifierAgent** | `Article` (title/description/content) | `{scope, ticker, exchange, impact, reasoning}` |
+| **NewsIngestionService** | aggregator + classifier + storage | `(fetched, classified)` or `list[dict]` (symbol articles) |
 | **TechnicalWatchingAgent** | OHLCV daily bars JSON | `{trend, signal, key_supports: [], key_resistances: [], confidence, summary}` |
 | **TechnicalEntryAgent** | OHLCV 15min bars JSON + optional medium-term context | `{trend, signal, target_price, stop_loss, confidence, summary}` |
-| **MarketContextAgent** | General market news JSON | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
-| **CompanyAnalysisAgent** | Company news JSON | `{sentiment, key_events, entry_risk, confidence, summary}` |
+| **MarketContextAgent** | Classified market news JSON (from DB) | `{market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary}` |
+| **CompanyAnalysisAgent** | Classified company news JSON (from DB) | `{sentiment, key_events, entry_risk, confidence, summary}` |
 | **TradingOpportunityAgent** | Sub-agent reports in prompt | `{decision: OPPORTUNITY_FOUND\|HOLD\|REJECT, symbol, reasoning}` |
 | **TradingEntryAgent** | Sub-agent reports in prompt | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: <int or null>, reasoning}` |
 | **AlpacaClient.get_asset()** | Symbol string | `{symbol, name, exchange, marginable, shortable}` or `None` |
@@ -110,7 +112,8 @@ The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects i
 - Each agent is **independently replaceable** (swap model, planner, or provider in YAML).
 - `SimplePlanner` embeds the system prompt in the user message — framework does not separate system/user prompts.
 - All crypto symbols are filtered out from Alpaca assets and watchlist (`asset_class=us_equity`, `exchange != CRYPTO`).
-- SQLite deduplication uses `url` as unique key for articles; `symbol` as primary key for `symbol_states`.
+- SQLite deduplication uses `url` as unique key for articles; `content_hash` (sha256 of title+date) for cross-source dedup. `symbol` as primary key for `symbol_states`.
+- **News pipeline**: `NewsAggregator` (Alpaca News + RSS + Yahoo by symbol) → `NewsClassifierAgent` → persisted with retention (HIGH=7d, MEDIUM=3d, LOW=1d). Article scopes: `company`, `market`, `exchange`, `irrelevant`.
 - `AgentLogger` writes to `logs/agent.log` and `logs/prompts.log` (rotating, configurable via `LOG_LEVEL`).
 - **Position value limit**: `MAX_POSITION_VALUE` (env) overrides `max_position_value` (yaml). Agent qty is capped to `max(1, int(MAX_POSITION_VALUE / price))`; `null` falls back to the cap.
 - **Evidence charts**: PNG candlestick charts are generated via `mplfinance` at state transitions (opportunity detected, position opened) and stored in `charts/`. Path is persisted in `symbol_states.chart_path`.
@@ -135,25 +138,25 @@ The monitor pre-fetches all data (bars via Alpaca, news via GNews) and injects i
 - **LLM**: `qwen2.5:7b` via [Ollama](https://ollama.com/) (local inference, no GPU required)
 - **Agent Framework**: `AgentBuilder` + `OllamaProvider` + `EventBus`. Config in `agents/trading_agent.yaml`.
 - **Broker**: Alpaca (paper trading mode by default)
-- **News source**: GNews free tier
+- **News sources**: Alpaca News API + RSS feeds (feedparser) + Yahoo Finance RSS by symbol
 - **Database**: SQLite (standard library)
 - **Alerts**: Gmail SMTP with App Password
 - **Charts**: `mplfinance` — candlestick PNG saved to `charts/`
 - **UI**: Tkinter (control panel) + Streamlit (dashboard)
-- **Dependencies**: `agent-framework` (local), `aiohttp`, `requests`, `python-dotenv`, `streamlit`, `mplfinance`
+- **Dependencies**: `agent-framework` (local), `aiohttp`, `feedparser`, `requests`, `python-dotenv`, `streamlit`, `mplfinance`
 
 ## File map
 
 ```
 agents/
-  monitor.py          PriceMonitor — state machine loop (4 specialized agents)
+  monitor.py          PriceMonitor — state machine loop (6 specialized agents + NewsIngestionService)
   technical_agent.py  TechnicalWatchingAgent + TechnicalEntryAgent + prompt builders
-  economics_agent.py  MarketContextAgent + CompanyAnalysisAgent + prompt builders
+  economics_agent.py  MarketContextAgent + CompanyAnalysisAgent + NewsClassifierAgent + prompt builders
   trading_agent.py    TradingOpportunityAgent + TradingEntryAgent + prompt builders
-  trading_agent.yaml  Model config (5 roles) + trading params
+  trading_agent.yaml  Model config (6 roles) + trading params
   tools/
     price_tool.py            GetPriceTool
-    news_tool.py             SearchNewsTool
+    news_tool.py             SearchNewsTool (LEGADO — no usado en flujo principal)
     portfolio_tool.py        GetPortfolioTool
     order_tool.py            PlaceOrderTool
     historical_bars_tool.py  GetHistoricalBarsTool
@@ -161,20 +164,23 @@ src/
   alpaca.py          AlpacaClient (async REST) — get_assets returns exchange/marginable/shortable
   storage.py         StorageLayer (SQLite)
   logger.py          AgentLogger (structured logging)
-  ingestion.py       NewsIngestionModule (GNews)
+  ingestion.py       Article dataclass + NewsIngestionModule (LEGADO — GNews, no usado en flujo principal)
+  news_sources.py    AlpacaNewsSource + RSSNewsSource + YahooSymbolSource + NewsAggregator
+  news_service.py    NewsIngestionService (fetch + classify + persist)
+  response_parser.py JSON validators including validate_news_classification()
   alerting.py        TradeAlerter (Gmail SMTP)
   chart_generator.py generate_candlestick_chart (mplfinance PNG)
 ui/
   app.py             Streamlit main page
   pages/
-    1_Articulos.py   News articles table
+    1_Articulos.py   News articles table (scope/impact/expires_at + filters)
     2_Precios.py     Price history chart
     3_Trades.py      Trade history + P&L
     4_Portfolio.py   Live portfolio (Alpaca)
     5_Watchlist.py   Watchlist management (shows exchange/marginable/shortable)
     6_Estados.py     Symbol states + agent reports + evidence charts
-main.py      Tkinter UI + thread management
-tests/       pytest suite (285 tests, ~93% coverage)
+main.py      Tkinter UI + thread management (Monitor ON/OFF, Analyze now, Analyze news)
+tests/       pytest suite (~427 tests, 100% coverage)
 charts/      Evidence PNG charts (auto-created, gitignored)
 logs/        agent.log + prompts.log (auto-created)
 ```
@@ -186,6 +192,7 @@ logs/        agent.log + prompts.log (auto-created)
 | `technical` | 0.1 | Medium-term daily bar analysis (WATCHING state) |
 | `technical_entry` | 0.1 | Short-term 15min bar analysis (OPPORTUNITY_FOUND state) |
 | `economics` | 0.2 | Market context + company news analysis |
+| `news_classifier` | 0.1 | Classify article scope/impact (background pipeline) |
 | `trader_opportunity` | 0.3 | Should we watch more closely? (higher temp → more HOLD) |
 | `trader_entry` | 0.1 | Enter NOW? (lower temp → stricter OPEN_POSITION) |
 

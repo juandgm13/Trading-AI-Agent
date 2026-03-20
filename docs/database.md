@@ -5,25 +5,38 @@ SQLite database (`trading_agent.db`), managed by `StorageLayer` in `src/storage.
 ## Tables
 
 ### `articles`
-Legacy news articles from the old news pipeline.
+News articles ingested via Alpaca News API + RSS feeds, classified by `NewsClassifierAgent`.
 
 ```sql
 articles (
-    url             TEXT PRIMARY KEY,
-    content_hash    TEXT UNIQUE,
-    title           TEXT,
-    source          TEXT,
-    published_at    TEXT,
-    company         TEXT,
-    ticker          TEXT,
-    impact_level    TEXT,   -- HIGH | MEDIUM | LOW | null
-    impact_type     TEXT,
-    confidence      INTEGER,
-    reason          TEXT,
-    alert_sent      INTEGER DEFAULT 0,
-    created_at      TEXT NOT NULL
+    url               TEXT PRIMARY KEY,
+    content_hash      TEXT UNIQUE,       -- sha256(title.lower() + "|" + date_iso)
+    title             TEXT,
+    source            TEXT,
+    description       TEXT,
+    feed_group        TEXT,              -- alpaca | stocks | macro | yahoo_symbol
+    published_at      TEXT,
+    -- Classification fields (populated by NewsClassifierAgent)
+    scope             TEXT,             -- company | market | exchange | irrelevant
+    ticker            TEXT,             -- e.g. "AAPL" (when scope=company)
+    exchange_affected TEXT,             -- e.g. "NASDAQ" (when scope=exchange)
+    impact            TEXT,             -- HIGH | MEDIUM | LOW | null (null when scope=irrelevant)
+    reasoning         TEXT,             -- classifier justification
+    expires_at        TEXT,             -- ISO datetime; HIGH=7d, MEDIUM=3d, LOW/null=1d
+    -- Legacy columns (kept for backwards compatibility)
+    company           TEXT,
+    impact_level      TEXT,
+    impact_type       TEXT,
+    confidence        INTEGER,
+    reason            TEXT,
+    alert_sent        INTEGER DEFAULT 0,
+    created_at        TEXT NOT NULL
 )
 ```
+
+**Indexes:**
+- `idx_articles_scope ON articles(scope, ticker, exchange_affected)` — fast lookup by scope/ticker/exchange
+- `idx_articles_expires ON articles(expires_at)` — fast expiry cleanup
 
 ### `price_snapshots`
 Historical price snapshots captured each poll cycle.
@@ -134,6 +147,9 @@ market_context (
 | `save_market_context(report, news_count)` | Persist a new global market context report |
 | `get_latest_market_context()` | Get the most recent market context row |
 | `get_market_context_history(limit)` | Get history of market context reports |
+| `save_article(article, classification=None) -> bool` | Insert article; calculates expires_at from impact; returns True if new |
+| `get_articles_by_scope(scope, ticker=None, exchange=None, limit=20) -> list[dict]` | Fetch non-expired articles by scope/ticker/exchange, ordered by recency |
+| `expire_old_articles() -> int` | Delete articles where expires_at < now; returns count deleted |
 | `save_trade(..., pnl, fees)` | Record an executed order (pnl/fees optional, for sell trades) |
 | `get_trades(limit)` | Retrieve trade history |
 | `get_last_buy_trade(symbol)` | Get the most recent buy trade for a symbol (used for long P&L calculation) |
@@ -143,15 +159,28 @@ market_context (
 
 ## Notes on schema migrations
 
-New columns added to existing tables (`watchlist.exchange`, `watchlist.marginable`, `watchlist.shortable`, `symbol_states.chart_path`) are defined in `CREATE TABLE IF NOT EXISTS` statements with `DEFAULT` values. **Existing databases do not automatically gain these columns** — use `ALTER TABLE` to add them manually if upgrading from an earlier version:
+Schema migrations are applied automatically at startup via the `_migrations` list in `StorageLayer._ensure_schema()`. Each migration is executed once (try/except to skip if the column already exists — SQLite does not support `IF NOT EXISTS` in `ALTER TABLE`).
+
+**Migrations applied:**
 
 ```sql
+-- watchlist
 ALTER TABLE watchlist ADD COLUMN exchange TEXT DEFAULT '';
 ALTER TABLE watchlist ADD COLUMN marginable INTEGER DEFAULT 0;
 ALTER TABLE watchlist ADD COLUMN shortable INTEGER DEFAULT 0;
+-- symbol_states
 ALTER TABLE symbol_states ADD COLUMN chart_path TEXT;
 ALTER TABLE symbol_states ADD COLUMN pending_order_id TEXT;
-ALTER TABLE trades ADD COLUMN pnl REAL;
-ALTER TABLE trades ADD COLUMN fees REAL;   -- populated from Alpaca's commission field (0 in paper mode)
 ALTER TABLE symbol_states ADD COLUMN position_side TEXT DEFAULT 'long';
+-- trades
+ALTER TABLE trades ADD COLUMN pnl REAL;
+ALTER TABLE trades ADD COLUMN fees REAL;   -- populated from Alpaca commission field
+-- articles (news refactor)
+ALTER TABLE articles ADD COLUMN description TEXT;
+ALTER TABLE articles ADD COLUMN feed_group TEXT;
+ALTER TABLE articles ADD COLUMN scope TEXT;
+ALTER TABLE articles ADD COLUMN exchange_affected TEXT;
+ALTER TABLE articles ADD COLUMN impact TEXT;
+ALTER TABLE articles ADD COLUMN reasoning TEXT;
+ALTER TABLE articles ADD COLUMN expires_at TEXT;
 ```

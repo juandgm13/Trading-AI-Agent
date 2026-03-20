@@ -18,7 +18,8 @@ def _has_alpaca() -> bool:
     return bool(os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY"))
 
 def _has_gnews() -> bool:
-    return bool(os.environ.get("GNEWS_API_KEY"))
+    # GNews reemplazado por Alpaca News + RSS. Siempre False para saltar estos tests.
+    return False
 
 def _has_gmail() -> bool:
     return bool(os.environ.get("GMAIL_USER") and os.environ.get("GMAIL_APP_PASSWORD"))
@@ -40,8 +41,8 @@ requires_gnews  = pytest.mark.skipif(not _has_gnews(),  reason="GNEWS_API_KEY no
 requires_gmail  = pytest.mark.skipif(not _has_gmail(),  reason="GMAIL_USER / GMAIL_APP_PASSWORD no configuradas")
 requires_ollama = pytest.mark.skipif(not _has_ollama(), reason="Ollama no está corriendo")
 requires_all    = pytest.mark.skipif(
-    not (_has_alpaca() and _has_gnews()),
-    reason="Requiere ALPACA y GNEWS configuradas",
+    not _has_alpaca(),
+    reason="Requiere ALPACA_API_KEY / ALPACA_SECRET_KEY configuradas",
 )
 
 

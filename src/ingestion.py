@@ -1,3 +1,5 @@
+# LEGADO — conservado para compatibilidad con tests históricos.
+# El flujo principal de noticias usa src/news_sources.py + src/news_service.py.
 import json
 import requests
 from dataclasses import dataclass

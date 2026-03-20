@@ -1,4 +1,7 @@
-"""Tool: busca noticias recientes en GNews para un ticker o empresa."""
+"""LEGADO — GNews tool ya no se usa en el flujo principal.
+Conservado para compatibilidad con tests históricos.
+El flujo actual usa NewsIngestionService (src/news_service.py).
+"""
 import json
 from agent_framework.tools.base_tool import BaseTool
 from src.ingestion import NewsIngestionModule

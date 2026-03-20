@@ -5,7 +5,6 @@
 - Python 3.11+
 - [Ollama](https://ollama.com/) installed and running
 - [Alpaca Markets](https://alpaca.markets/) account (free paper trading)
-- [GNews](https://gnews.io/) API key (free tier)
 - Gmail with [App Password](https://support.google.com/accounts/answer/185833) (optional, for trade alerts)
 - `agent-framework` package installed (local dependency)
 
@@ -32,9 +31,6 @@ Copy `.env.example` to `.env` and fill in your values:
 ALPACA_API_KEY=your_key
 ALPACA_SECRET_KEY=your_secret
 ALPACA_BASE_URL=https://paper-api.alpaca.markets
-
-# GNews
-GNEWS_API_KEY=your_key
 
 # Gmail (optional — only needed for trade alert emails)
 GMAIL_USER=your@gmail.com
@@ -69,6 +65,7 @@ python main.py
 |---|---|
 | **Monitor ON/OFF** | Start/stop the continuous price monitoring loop |
 | **Analyze now** | Force immediate full analysis of all WATCHING symbols (bypasses market-hours check) |
+| **Analyze news** | Run market news ingestion (fetch + classify) independently of the monitor |
 | **Open dashboard** | Launch Streamlit dashboard in browser |
 | **Clear log** | Clear the log area |
 | **Reset DB + Logs** | Delete all database data and truncate log files |
@@ -103,6 +100,10 @@ models:
     model: qwen2.5:7b
     temperature: 0.2
     max_tokens: 768
+  news_classifier:    # NewsClassifierAgent — scope/impact classification
+    model: qwen2.5:7b
+    temperature: 0.1
+    max_tokens: 256
   trader_opportunity: # TradingOpportunityAgent — "watch more closely?"
     model: qwen2.5:7b
     temperature: 0.3
