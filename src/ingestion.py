@@ -12,6 +12,7 @@ class Article:
     content: str
     url: str
     published_at: datetime
+    feed_group: str = "unknown"  # "stocks"|"macro"|"alpaca"|"yahoo_symbol"
 
 
 _MAX_LOG_CHARS = 4000
