@@ -424,6 +424,23 @@ def test_agent_reports_empty_for_unknown_symbol(tmp_db):
     assert reports == []
 
 
+def test_get_last_agent_report_returns_most_recent(tmp_db):
+    """get_last_agent_report devuelve el informe más reciente del agente."""
+    tmp_db.save_agent_report("AAPL", "technical", '{"run": 1}')
+    tmp_db.save_agent_report("AAPL", "technical", '{"run": 2}')
+
+    result = tmp_db.get_last_agent_report("AAPL", "technical")
+
+    assert result is not None
+    assert '"run": 2' in result["report"]
+
+
+def test_get_last_agent_report_returns_none_when_missing(tmp_db):
+    """get_last_agent_report retorna None si no hay informes para ese agente."""
+    result = tmp_db.get_last_agent_report("AAPL", "nonexistent_agent")
+    assert result is None
+
+
 # ── Market context ─────────────────────────────────────────────────────────────
 
 def test_market_context_returns_none_when_empty(tmp_db):

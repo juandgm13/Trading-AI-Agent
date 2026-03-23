@@ -104,6 +104,8 @@ class StorageLayer:
                     status     TEXT,
                     trigger    TEXT,
                     reason     TEXT,
+                    pnl        REAL,
+                    fees       REAL,
                     created_at TEXT NOT NULL
                 )
             """)
@@ -130,6 +132,8 @@ class StorageLayer:
                     position_qty     REAL,
                     position_open_at TEXT,
                     chart_path       TEXT,
+                    pending_order_id TEXT,
+                    position_side    TEXT DEFAULT 'long',
                     updated_at       TEXT NOT NULL
                 )
             """)
