@@ -189,35 +189,54 @@ def _run_news_ingestion(log: scrolledtext.ScrolledText):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
+        from src.logger import get_logger
+        logger = get_logger(on_log=lambda msg: redirector.write(msg + "\n"))
+
         async def _run():
-            redirector.write("[news] Starting news ingestion...\n")
+            logger.info("Iniciando ingesta de noticias de mercado...", source="news")
+
             api_key = os.environ.get("ALPACA_API_KEY", "")
             secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
             ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+            logger.info("Cargando configuración de modelos...", source="news")
             config = load_from_yaml(PROJECT_ROOT / "agents" / "trading_agent.yaml")
 
             model_registry = ModelRegistry()
             cfg = config.models.get("news_classifier")
             if cfg:
+                logger.info(f"Modelo clasificador: {cfg.model} ({ollama_url})", source="news")
                 model_registry.register("news_classifier", OllamaProvider(cfg.model, base_url=ollama_url))
+            else:
+                logger.warning("No se encontró configuración 'news_classifier' en YAML", source="news")
 
             bus = EventBus()
 
-            alpaca_news = AlpacaNewsSource(api_key, secret_key)
-            rss_source = RSSNewsSource()
-            yahoo_source = YahooSymbolSource()
-            aggregator = NewsAggregator(alpaca_news, rss_source, yahoo_source)
-            news_classifier_agent = await build_news_classifier_agent(config, bus, model_registry)
-            storage = StorageLayer(str(PROJECT_ROOT / "trading_agent.db"))
-            news_service = NewsIngestionService(aggregator, news_classifier_agent, storage)
+            logger.info("Inicializando fuentes: Alpaca News, RSS, Yahoo Finance...", source="news")
+            alpaca_news = AlpacaNewsSource(api_key, secret_key, logger=logger)
+            rss_source = RSSNewsSource(logger=logger)
+            yahoo_source = YahooSymbolSource(logger=logger)
+            aggregator = NewsAggregator(alpaca_news, rss_source, yahoo_source, logger=logger)
 
+            logger.info("Construyendo agente clasificador...", source="news")
+            news_classifier_agent = await build_news_classifier_agent(config, bus, model_registry)
+
+            storage = StorageLayer(str(PROJECT_ROOT / "trading_agent.db"))
+            news_service = NewsIngestionService(
+                aggregator, news_classifier_agent, storage, logger=logger
+            )
+
+            logger.info("Obteniendo artículos de mercado (Alpaca + RSS)...", source="news")
             fetched, classified = await news_service.run_market_ingestion()
-            redirector.write(f"[news] Done — {fetched} articles fetched, {classified} classified.\n")
+            logger.info(
+                f"Completado — {fetched} artículos obtenidos, {classified} clasificados.",
+                source="news",
+            )
 
         try:
             loop.run_until_complete(_run())
         except Exception as e:
-            redirector.write(f"[news] Error: {e}\n")
+            logger.error(str(e), source="news")
         finally:
             loop.close()
 
