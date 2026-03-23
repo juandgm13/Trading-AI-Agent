@@ -229,6 +229,18 @@ class StorageLayer:
         with self._connect() as conn:
             conn.execute("DELETE FROM articles")
 
+    def get_classified_article_urls(self, urls: list[str]) -> set[str]:
+        """Devuelve el subconjunto de URLs que ya están clasificadas (scope IS NOT NULL)."""
+        if not urls:
+            return set()
+        placeholders = ",".join("?" * len(urls))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT url FROM articles WHERE url IN ({placeholders}) AND scope IS NOT NULL",
+                urls,
+            ).fetchall()
+        return {row[0] for row in rows}
+
     def save_article(self, article: Article, classification: dict | None = None) -> bool:
         """
         Inserta un artículo nuevo con sus datos de clasificación.

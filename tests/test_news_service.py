@@ -91,10 +91,9 @@ async def test_run_market_ingestion_classifies_only_new_articles(tmp_db):
     fetched, classified = await service.run_market_ingestion()
 
     assert fetched == 1
-    # save_article retorna False (duplicado), así que classified=0
     assert classified == 0
-    # El clasificador sí se llama (clasificamos antes de intentar guardar)
-    assert mock_classifier.run.call_count == 1
+    # El clasificador NO se llama: el artículo ya está clasificado en BD (scope IS NOT NULL)
+    assert mock_classifier.run.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -157,16 +156,16 @@ async def test_run_symbol_ingestion_with_exchange(tmp_db):
 # ── _classify_batch / error handling ─────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_classify_batch_runs_in_parallel(tmp_db):
-    """_classify_batch usa gather para clasificar en paralelo."""
+async def test_classify_and_persist_runs_in_parallel(tmp_db):
+    """_classify_and_persist usa gather para clasificar en paralelo."""
     articles = [_make_article(i) for i in range(3)]
     service, _, mock_classifier = _make_service(tmp_db, articles_from_aggregator=articles)
 
     with patch("asyncio.gather", wraps=asyncio.gather) as mock_gather:
-        pairs = await service._classify_batch(articles)
+        count = await service._classify_and_persist(articles)
 
     assert mock_gather.called
-    assert len(pairs) == 3
+    assert count == 3
 
 
 @pytest.mark.asyncio

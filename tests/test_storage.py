@@ -665,6 +665,33 @@ def test_save_article_expires_at_low_is_1_day(tmp_db):
     assert (now_before + timedelta(days=1)) <= expires_at <= (now_after + timedelta(days=1))
 
 
+# ── get_classified_article_urls ─────────────────────────────────────────────────
+
+def test_get_classified_article_urls_returns_classified_only(tmp_db):
+    """Devuelve únicamente las URLs cuyo scope IS NOT NULL."""
+    classified = _make_article(url="https://example.com/classified")
+    unclassified = _make_article(url="https://example.com/unclassified")
+    tmp_db.save_article(classified, {"scope": "market", "ticker": None, "exchange": None, "impact": "LOW", "reasoning": ""})
+    tmp_db.save_article(unclassified, None)  # sin clasificar → scope=NULL
+
+    result = tmp_db.get_classified_article_urls([classified.url, unclassified.url])
+
+    assert classified.url in result
+    assert unclassified.url not in result
+
+
+def test_get_classified_article_urls_empty_input(tmp_db):
+    """Con lista vacía devuelve set vacío sin consultar la BD."""
+    result = tmp_db.get_classified_article_urls([])
+    assert result == set()
+
+
+def test_get_classified_article_urls_ignores_unknown_urls(tmp_db):
+    """URLs que no están en BD no aparecen en el resultado."""
+    result = tmp_db.get_classified_article_urls(["https://nonexistent.com/1"])
+    assert result == set()
+
+
 def test_get_articles_by_scope_company_filters_by_ticker(tmp_db):
     """get_articles_by_scope filtra correctamente por ticker."""
     a_aapl = _make_article(url="https://example.com/aapl-1")

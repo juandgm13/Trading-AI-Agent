@@ -27,7 +27,7 @@ class NewsIngestionService:
         classifier_agent,  # NewsClassifierAgent (agent_framework agent)
         storage: StorageLayer,
         logger=None,
-        max_concurrent_classifications: int = 5,
+        max_concurrent_classifications: int = 1,
     ):
         self._aggregator = aggregator
         self._classifier = classifier_agent
@@ -54,7 +54,11 @@ class NewsIngestionService:
                 seen.add(article.url)
                 unique_new.append(article)
 
-        classified_count = await self._classify_and_persist(unique_new)
+        # Omitir artículos ya clasificados en BD (scope IS NOT NULL) para evitar llamadas LLM innecesarias
+        already_classified = self._storage.get_classified_article_urls([a.url for a in unique_new])
+        to_classify = [a for a in unique_new if a.url not in already_classified]
+
+        classified_count = await self._classify_and_persist(to_classify)
 
         expired = self._storage.expire_old_articles()
         if self._logger and expired > 0:
@@ -123,57 +127,65 @@ class NewsIngestionService:
 
     async def _classify_and_persist(self, articles: list[Article]) -> int:
         """
-        Clasifica una lista de artículos en paralelo y persiste los nuevos.
-        Retorna el número de artículos clasificados exitosamente.
+        Clasifica artículos en paralelo y persiste cada uno en BD inmediatamente al clasificarlo.
+        Retorna el número de artículos guardados exitosamente.
         """
         if not articles:
             return 0
 
-        pairs = await self._classify_batch(articles)
-        classified = 0
-        for article, classification in pairs:
-            saved = self._storage.save_article(article, classification)
-            if saved:
-                classified += 1
-        return classified
-
-    async def _classify_batch(
-        self, articles: list[Article]
-    ) -> list[tuple[Article, dict | None]]:
-        """Clasifica N artículos en paralelo con semáforo max_concurrent."""
         sem = asyncio.Semaphore(self._max_concurrent)
 
-        async def _classify_one(article: Article) -> tuple[Article, dict | None]:
+        async def _process_one(article: Article) -> bool:
             async with sem:
                 classification = await self._classify_article(article)
-            return article, classification
+            return self._storage.save_article(article, classification)
 
-        return list(await asyncio.gather(*[_classify_one(a) for a in articles]))
+        results = await asyncio.gather(*[_process_one(a) for a in articles])
+        return sum(1 for r in results if r)
 
     async def _classify_article(self, article: Article) -> dict | None:
         """
         Clasifica un artículo individual con el NewsClassifierAgent.
+        Reintenta hasta 2 veces ante errores de Ollama (p.ej. CUDA OOM transitorio).
         Retorna None si el agente falla o la respuesta no es parseable.
         """
         from agents.economics_agent import build_news_classifier_prompt
         from src.response_parser import validate_news_classification, ParseError
 
-        try:
-            prompt = build_news_classifier_prompt(article)
-            response = await self._classifier.run(prompt)
-            return validate_news_classification(response)
-        except ParseError as exc:
-            if self._logger:
-                self._logger.warning(
-                    f"ParseError clasificando '{article.title[:60]}': {exc}",
-                    source="news_service",
-                )
-            return None
-        except Exception as exc:
-            if self._logger:
-                self._logger.error(
-                    f"Error clasificando artículo: {exc}",
-                    source="news_service",
-                    exc_info=True,
-                )
-            return None
+        if self._logger:
+            self._logger.debug(
+                f"Clasificando: '{article.title[:80]}'", source="news_service"
+            )
+
+        prompt = build_news_classifier_prompt(article)
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = await self._classifier.run(prompt)
+                return validate_news_classification(response)
+            except ParseError as exc:
+                if self._logger:
+                    self._logger.warning(
+                        f"ParseError clasificando '{article.title[:60]}': {exc}",
+                        source="news_service",
+                    )
+                return None
+            except Exception as exc:
+                if attempt < max_attempts:
+                    wait = attempt * 5
+                    if self._logger:
+                        self._logger.warning(
+                            f"Error clasificando (intento {attempt}/{max_attempts}), "
+                            f"reintentando en {wait}s: {exc}",
+                            source="news_service",
+                        )
+                    await asyncio.sleep(wait)
+                else:
+                    if self._logger:
+                        self._logger.error(
+                            f"Error clasificando '{article.title[:60]}' tras "
+                            f"{max_attempts} intentos: {exc}",
+                            source="news_service",
+                            exc_info=True,
+                        )
+                    return None
