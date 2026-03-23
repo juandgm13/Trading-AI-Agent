@@ -324,7 +324,7 @@ async def test_rss_source_parses_feed():
     # Al menos los artículos de los feeds stocks (4 feeds, uno mockeado)
     urls = [a.url for a in articles]
     assert "https://rss.com/article/1" in urls
-    assert all(a.feed_group == "stocks" for a in articles)
+    assert all(a.feed_group in {src for src, _ in RSSNewsSource.FEEDS_STOCKS} for a in articles)
     assert all(isinstance(a.published_at, datetime) for a in articles)
 
 
@@ -490,7 +490,7 @@ async def test_yahoo_symbol_source_parses_feed():
         articles = await source.fetch("TSLA")
 
     assert len(articles) == 1
-    assert articles[0].feed_group == "yahoo_symbol"
+    assert articles[0].feed_group == "Yahoo Finance"
     assert articles[0].source == "Yahoo Finance"
 
 

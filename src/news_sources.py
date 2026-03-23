@@ -132,11 +132,13 @@ class RSSNewsSource:
     async def fetch(
         self,
         feed_groups: tuple[str, ...] = ("stocks", "macro"),
+        max_articles_per_feed: int = 20,
     ) -> list[Article]:
         """
         Obtiene artículos de los feeds RSS de los grupos indicados.
 
         feed_groups puede incluir "stocks", "macro", "crypto" (deshabilitado).
+        max_articles_per_feed: máximo de artículos a devolver por feed (los más recientes).
         """
         feeds: list[tuple[str, str, str]] = []  # (source, url, group)
         if "stocks" in feed_groups:
@@ -148,7 +150,7 @@ class RSSNewsSource:
 
         loop = asyncio.get_event_loop()
         tasks = [
-            self._fetch_feed(loop, source, url, group)
+            self._fetch_feed(loop, source, url, group, max_articles_per_feed)
             for source, url, group in feeds
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -165,8 +167,9 @@ class RSSNewsSource:
         source: str,
         url: str,
         group: str,
+        max_articles: int = 20,
     ) -> list[Article]:
-        """Parsea un feed RSS en un executor con timeout."""
+        """Parsea un feed RSS en un executor con timeout. Devuelve los max_articles más recientes."""
         try:
             parsed = await asyncio.wait_for(
                 loop.run_in_executor(None, feedparser.parse, url),
@@ -209,13 +212,17 @@ class RSSNewsSource:
                     content=description,
                     url=url_entry,
                     published_at=published_at,
-                    feed_group=group,
+                    feed_group=source,
                 )
             )
 
+        articles.sort(key=lambda a: a.published_at, reverse=True)
+        articles = articles[:max_articles]
+
         if self._logger and self._logger.is_debug:
             self._logger.debug(
-                f"RSS {source}: {len(articles)} artículos", source="rss_news"
+                f"RSS {source}: {len(articles)} artículos (top {max_articles} recientes)",
+                source="rss_news",
             )
         return articles
 
@@ -228,8 +235,8 @@ class YahooSymbolSource:
     def __init__(self, logger=None):
         self._logger = logger
 
-    async def fetch(self, symbol: str) -> list[Article]:
-        """Obtiene noticias de Yahoo Finance para un símbolo concreto."""
+    async def fetch(self, symbol: str, max_articles: int = 20) -> list[Article]:
+        """Obtiene noticias de Yahoo Finance para un símbolo concreto (los max_articles más recientes)."""
         url = self.TEMPLATE.format(symbol=symbol)
         loop = asyncio.get_event_loop()
         try:
@@ -276,13 +283,17 @@ class YahooSymbolSource:
                     content=description,
                     url=url_entry,
                     published_at=published_at,
-                    feed_group="yahoo_symbol",
+                    feed_group="Yahoo Finance",
                 )
             )
 
+        articles.sort(key=lambda a: a.published_at, reverse=True)
+        articles = articles[:max_articles]
+
         if self._logger and self._logger.is_debug:
             self._logger.debug(
-                f"Yahoo {symbol}: {len(articles)} artículos", source="yahoo_news"
+                f"Yahoo {symbol}: {len(articles)} artículos (top {max_articles} recientes)",
+                source="yahoo_news",
             )
         return articles
 
@@ -309,15 +320,15 @@ class NewsAggregator:
         self._yahoo = yahoo_source
         self._logger = logger
 
-    async def fetch_market_news(self, limit_per_source: int = 30) -> list[Article]:
+    async def fetch_market_news(self, limit_per_source: int = 20) -> list[Article]:
         """
         Noticias para contexto global de mercado:
         - Alpaca News general (sin filtro de símbolo)
         - RSS stocks + macro
-        Deduplica por URL.
+        Deduplica por URL. Devuelve los limit_per_source artículos más recientes por fuente.
         """
         alpaca_task = self._alpaca.fetch(symbols=None, limit=limit_per_source)
-        rss_task = self._rss.fetch(feed_groups=("stocks", "macro"))
+        rss_task = self._rss.fetch(feed_groups=("stocks", "macro"), max_articles_per_feed=limit_per_source)
 
         alpaca_articles, rss_articles = await asyncio.gather(alpaca_task, rss_task)
 
@@ -349,7 +360,7 @@ class NewsAggregator:
         """
         stored_urls = stored_urls or set()
 
-        yahoo_task = self._yahoo.fetch(symbol)
+        yahoo_task = self._yahoo.fetch(symbol, max_articles=20)
         alpaca_task = self._alpaca.fetch(symbols=[symbol], limit=20)
 
         yahoo_articles, alpaca_articles = await asyncio.gather(yahoo_task, alpaca_task)
