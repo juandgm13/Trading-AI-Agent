@@ -30,7 +30,13 @@ except ImportError:
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-VALID_FEED_GROUPS = {"alpaca", "stocks", "macro", "yahoo_symbol"}
+VALID_FEED_GROUPS = {
+    "alpaca",
+    # RSS stocks
+    "Reuters", "CNBC", "Yahoo Finance", "MarketWatch",
+    # RSS macro
+    "Federal Reserve", "Financial Times", "The Economist",
+}
 
 
 def _is_valid_http_url(url: str) -> bool:
@@ -178,7 +184,7 @@ async def test_rss_stocks_returns_articles():
         "Los feeds RSS de stocks (Reuters/CNBC/Yahoo/MarketWatch) deben devolver artículos"
     )
     for article in articles:
-        _assert_article(article, expected_feed_group="stocks")
+        _assert_article(article)
 
 
 @requires_network
@@ -193,7 +199,7 @@ async def test_rss_macro_returns_articles():
         "Los feeds RSS macro (Fed Reserve/FT/Economist) deben devolver artículos"
     )
     for article in articles:
-        _assert_article(article, expected_feed_group="macro")
+        _assert_article(article)
 
 
 @requires_network
@@ -235,7 +241,7 @@ async def test_rss_individual_feeds_format():
         if articles:
             # Al menos 1 artículo por feed que responde
             for a in articles[:5]:
-                _assert_article(a, expected_feed_group=feed_group)
+                _assert_article(a, expected_feed_group=feed_name)
             successes.append(feed_name)
 
     assert len(successes) >= 2, (
@@ -287,7 +293,7 @@ async def test_yahoo_symbol_returns_articles():
     assert len(articles) > 0, "Yahoo Finance RSS para AAPL debería tener artículos"
 
     for article in articles:
-        _assert_article(article, expected_feed_group="yahoo_symbol")
+        _assert_article(article, expected_feed_group="Yahoo Finance")
         assert article.source == "Yahoo Finance"
 
 
