@@ -1,13 +1,12 @@
 """
 Tests de las tools del agente ReAct.
 - GetPriceTool / GetPortfolioTool: requieren Alpaca
-- SearchNewsTool: requiere GNews
 - PlaceOrderTool: validaciones sin credenciales + orden real con Alpaca
 """
 import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from conftest import requires_alpaca, requires_gnews, requires_all
+from conftest import requires_alpaca, requires_all
 
 
 # ── GetPriceTool ──────────────────────────────────────────────────────────────
@@ -51,36 +50,6 @@ def test_get_price_tool_error_on_bad_symbol():
     result = asyncio.run(tool.execute(symbol="ZZZZINVALID"))
     data = json.loads(result)
     assert "error" in data
-
-
-# ── SearchNewsTool ────────────────────────────────────────────────────────────
-
-@requires_gnews
-@pytest.mark.asyncio
-async def test_search_news_tool_returns_articles():
-    import os
-    from agents.tools.news_tool import SearchNewsTool
-
-    tool = SearchNewsTool(os.environ["GNEWS_API_KEY"])
-    result = await tool.execute(query="Apple")
-
-    data = json.loads(result)
-    assert data["query"] == "Apple"
-    assert "articles" in data
-    assert isinstance(data["articles"], list)
-    assert data["count"] == len(data["articles"])
-
-
-@requires_gnews
-@pytest.mark.asyncio
-async def test_search_news_tool_empty_query_returns_dict():
-    import os
-    from agents.tools.news_tool import SearchNewsTool
-
-    tool = SearchNewsTool(os.environ["GNEWS_API_KEY"])
-    result = await tool.execute(query="xyzabcnotarealcompany12345")
-    data = json.loads(result)
-    assert "articles" in data  # puede estar vacío, no debe lanzar excepción
 
 
 # ── GetPortfolioTool ──────────────────────────────────────────────────────────
@@ -243,27 +212,6 @@ async def test_place_order_alerter_exception_does_not_fail_order():
     result = await tool.execute(symbol="MSFT", side="buy", qty=1, reason="test")
     data = json.loads(result)
     assert data["order_id"] == "ord-xy"  # orden OK a pesar del fallo de alerta
-
-
-# ── SearchNewsTool: logger forwarding ────────────────────────────────────────
-
-def test_search_news_tool_accepts_logger_and_forwards_it():
-    """SearchNewsTool pasa el logger a NewsIngestionModule."""
-    from unittest.mock import MagicMock
-    from agents.tools.news_tool import SearchNewsTool
-
-    mock_logger = MagicMock()
-    tool = SearchNewsTool("fake-api-key", logger=mock_logger)
-
-    assert tool._ingestion._logger is mock_logger
-
-
-def test_search_news_tool_no_logger_by_default():
-    """Sin logger, NewsIngestionModule._logger es None."""
-    from agents.tools.news_tool import SearchNewsTool
-
-    tool = SearchNewsTool("fake-api-key")
-    assert tool._ingestion._logger is None
 
 
 @pytest.mark.asyncio
