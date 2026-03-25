@@ -142,6 +142,20 @@ async def test_watching_no_analysis_on_first_cycle_if_no_time_elapsed(tmp_db):
 # ── Estado OPPORTUNITY_FOUND ──────────────────────────────────────────────────
 
 @pytest.mark.asyncio
+async def test_process_symbol_skips_non_watching_state_when_market_closed(tmp_db):
+    """Con mercado cerrado, _process_symbol devuelve None para estados no-WATCHING."""
+    monitor, _, mock_tech, _, _ = _make_monitor(tmp_db)
+    tmp_db.upsert_symbol_state("AAPL", state="OPPORTUNITY_FOUND")
+    state_row = tmp_db.get_symbol_state("AAPL")
+    snap = {"close": 175.0, "volume": 1000, "timestamp": "t"}
+
+    result = await monitor._process_symbol("AAPL", snap, state_row, market_is_open=False)
+
+    assert result is None
+    mock_tech.run.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_opportunity_found_runs_short_term_analysis(tmp_db):
     """En OPPORTUNITY_FOUND, se ejecuta el análisis técnico de corto plazo."""
     monitor, _, mock_tech, _, mock_trader = _make_monitor(tmp_db)
@@ -504,6 +518,22 @@ async def test_full_analysis_detects_opportunity(tmp_db):
     assert tmp_db.get_symbol_state("AAPL")["state"] == "OPPORTUNITY_FOUND"
 
 
+@pytest.mark.asyncio
+async def test_full_analysis_saves_chart_path_to_opportunity_report(tmp_db):
+    """Si hay oportunidad y se genera chart, el chart_path queda en el report de trading."""
+    monitor, _, _, _, mock_trader = _make_monitor(tmp_db)
+    mock_trader.run.return_value = json.dumps({
+        "decision": "OPPORTUNITY_FOUND", "symbol": "AAPL", "reasoning": "Strong signal",
+    })
+    monitor._generate_chart = MagicMock(return_value="/charts/AAPL_opportunity_test.png")
+
+    await monitor._full_analysis("AAPL", 175.0)
+
+    report = tmp_db.get_last_agent_report("AAPL", "trading_opportunity_eval")
+    assert report is not None
+    assert report.get("chart_path") == "/charts/AAPL_opportunity_test.png"
+
+
 # ── _look_for_entry — paths adicionales ──────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -563,6 +593,23 @@ async def test_look_for_entry_with_alerter_on_open_position(tmp_db):
     # La alerta de compra se envía desde _check_opening al confirmar el fill, no desde _look_for_entry
     assert not mock_alerter.send_trade_alert.called
     assert tmp_db.get_symbol_state("AAPL")["state"] == "OPENING"
+
+
+@pytest.mark.asyncio
+async def test_look_for_entry_saves_chart_path_to_entry_report(tmp_db):
+    """Al abrir posición con chart generado, el chart_path queda en el report de entry."""
+    monitor, _, _, _, mock_trader = _make_monitor(tmp_db)
+    mock_trader.run.return_value = json.dumps({
+        "decision": "OPEN_POSITION", "symbol": "AAPL", "qty": 2, "reasoning": "Entry now",
+    })
+    monitor._generate_chart = MagicMock(return_value="/charts/AAPL_entry_test.png")
+
+    state_row = tmp_db.get_symbol_state("AAPL")
+    await monitor._look_for_entry("AAPL", 175.0, state_row)
+
+    report = tmp_db.get_last_agent_report("AAPL", "trading_entry_eval")
+    assert report is not None
+    assert report.get("chart_path") == "/charts/AAPL_entry_test.png"
 
 
 @pytest.mark.asyncio

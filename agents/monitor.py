@@ -379,6 +379,10 @@ class PriceMonitor:
         if decision and decision.get("decision") == "OPPORTUNITY_FOUND":
             # F5: generar gráfico de evidencia al detectar oportunidad
             chart_path = self._generate_chart(symbol, bars, "1Day", "opportunity")
+            if chart_path:
+                report_id = self._storage.get_last_agent_report_id(symbol, "trading_opportunity_eval")
+                if report_id:
+                    self._storage.update_agent_report_chart_path(report_id, chart_path)
             self._logger.info(f"{symbol}: oportunidad detectada → OPPORTUNITY_FOUND", source="monitor")
             self._storage.upsert_symbol_state(
                 symbol,
@@ -450,6 +454,10 @@ class PriceMonitor:
 
             # Generar gráfico de evidencia al abrir posición
             chart_path = self._generate_chart(symbol, bars, "15Min", "entry")
+            if chart_path:
+                report_id = self._storage.get_last_agent_report_id(symbol, "trading_entry_eval")
+                if report_id:
+                    self._storage.update_agent_report_chart_path(report_id, chart_path)
 
             try:
                 result = await self._alpaca.place_order(symbol, qty, side)

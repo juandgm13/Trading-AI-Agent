@@ -58,27 +58,25 @@ if not symbols_with_reports:
 else:
     selected = st.selectbox("Select symbol", symbols_with_reports)
 
-    sym_state = storage.get_symbol_state(selected)
-    chart_path = sym_state.get("chart_path")
-    if chart_path and Path(chart_path).exists():
-        with st.expander(f"Evidence chart — {selected}", expanded=True):
-            st.image(chart_path, use_container_width=True)
-            st.caption(chart_path)
-
     reports = storage.get_agent_reports(selected, limit=30)
 
     if not reports:
         st.info(f"No reports for {selected}.")
     else:
+        import json
+
         for report in reports:
             agent_name = report.get("agent_name", "?")
             created_at = report.get("created_at", "?")
             report_text = report.get("report", "{}")
+            chart_path = report.get("chart_path")
 
             with st.expander(f"{agent_name} — {created_at}"):
                 try:
-                    import json
                     parsed = json.loads(report_text)
                     st.json(parsed)
                 except Exception:
                     st.text(report_text)
+                if chart_path and Path(chart_path).exists():
+                    st.image(chart_path, use_container_width=True)
+                    st.caption(chart_path)

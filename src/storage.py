@@ -69,6 +69,7 @@ class StorageLayer:
                 "ALTER TABLE articles ADD COLUMN impact TEXT",
                 "ALTER TABLE articles ADD COLUMN reasoning TEXT",
                 "ALTER TABLE articles ADD COLUMN expires_at TEXT",
+                "ALTER TABLE agent_reports ADD COLUMN chart_path TEXT",
             ]
             for _sql in _migrations:
                 try:
@@ -143,7 +144,8 @@ class StorageLayer:
                     symbol      TEXT NOT NULL,
                     agent_name  TEXT NOT NULL,
                     report      TEXT NOT NULL,
-                    created_at  TEXT NOT NULL
+                    created_at  TEXT NOT NULL,
+                    chart_path  TEXT
                 )
             """)
             conn.execute("""
@@ -588,6 +590,23 @@ class StorageLayer:
                 """,
                 (symbol.upper(), agent_name, report, datetime.now(timezone.utc).isoformat()),
             )
+
+    def update_agent_report_chart_path(self, report_id: int, chart_path: str) -> None:
+        """Asocia un chart de evidencia a un informe de agente existente."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE agent_reports SET chart_path = ? WHERE id = ?",
+                (chart_path, report_id),
+            )
+
+    def get_last_agent_report_id(self, symbol: str, agent_name: str) -> int | None:
+        """Retorna el id del informe más reciente de un agente para un símbolo."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM agent_reports WHERE symbol = ? AND agent_name = ? ORDER BY created_at DESC LIMIT 1",
+                (symbol.upper(), agent_name),
+            ).fetchone()
+        return row[0] if row else None
 
     # ── Market context (informe holístico global) ─────────────────────────────
 

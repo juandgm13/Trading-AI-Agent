@@ -441,6 +441,31 @@ def test_get_last_agent_report_returns_none_when_missing(tmp_db):
     assert result is None
 
 
+def test_update_agent_report_chart_path(tmp_db):
+    """update_agent_report_chart_path persiste el chart_path en el report."""
+    tmp_db.save_agent_report("AAPL", "trading_entry_eval", '{"decision": "OPEN_POSITION"}')
+    report_id = tmp_db.get_last_agent_report_id("AAPL", "trading_entry_eval")
+    assert report_id is not None
+    tmp_db.update_agent_report_chart_path(report_id, "/charts/AAPL_entry_123.png")
+    reports = tmp_db.get_agent_reports("AAPL", limit=1)
+    assert reports[0].get("chart_path") == "/charts/AAPL_entry_123.png"
+
+
+def test_get_last_agent_report_id_returns_most_recent(tmp_db):
+    """get_last_agent_report_id devuelve el id del informe más reciente."""
+    tmp_db.save_agent_report("AAPL", "trading_entry_eval", '{"run": 1}')
+    tmp_db.save_agent_report("AAPL", "trading_entry_eval", '{"run": 2}')
+    report_id = tmp_db.get_last_agent_report_id("AAPL", "trading_entry_eval")
+    assert isinstance(report_id, int)
+    reports = tmp_db.get_agent_reports("AAPL", limit=1)
+    assert reports[0]["id"] == report_id
+
+
+def test_get_last_agent_report_id_returns_none_when_missing(tmp_db):
+    """get_last_agent_report_id retorna None si no hay informes para ese agente."""
+    assert tmp_db.get_last_agent_report_id("AAPL", "nonexistent") is None
+
+
 # ── Market context ─────────────────────────────────────────────────────────────
 
 def test_market_context_returns_none_when_empty(tmp_db):
