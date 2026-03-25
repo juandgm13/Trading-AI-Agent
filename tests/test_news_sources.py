@@ -393,6 +393,24 @@ async def test_rss_source_logs_exception_with_logger():
 
 
 @pytest.mark.asyncio
+async def test_rss_source_logs_warning_when_feed_returns_no_articles():
+    """Verifica que loguea warning en INFO cuando un feed devuelve 0 artículos (sin error)."""
+    mock_logger = MagicMock()
+    mock_logger.is_debug = False
+    source = RSSNewsSource(logger=mock_logger)
+
+    parsed = _make_parsed_feed([])  # feed vacío, sin entradas
+
+    with patch("src.news_sources.feedparser.parse", return_value=parsed):
+        articles = await source.fetch(feed_groups=("stocks",))
+
+    assert articles == []
+    assert mock_logger.warning.called
+    warning_msg = mock_logger.warning.call_args[0][0]
+    assert "0 artículos" in warning_msg
+
+
+@pytest.mark.asyncio
 async def test_rss_source_handles_date_without_tzinfo():
     """Verifica que fechas sin tzinfo se convierten a UTC."""
     source = RSSNewsSource()

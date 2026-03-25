@@ -17,7 +17,11 @@ Main overview page:
 - **Recent trades** — last 10 executed orders.
 
 ### 1 · Artículos (`ui/pages/1_Articulos.py`)
-Table of news articles ingested by the legacy news pipeline, with filters by symbol and impact level.
+Table of news articles ingested by the news pipeline. Filters: scope, impact level, ticker.
+
+**Click any row** to open a modal with the full article detail: title, description, source, feed group, published date, scope, ticker, exchange affected, impact, LLM reasoning, clickable URL, and expiry/saved timestamps.
+
+Requires Streamlit ≥ 1.36.0 (uses `@st.dialog` and `st.dataframe` row selection).
 
 ### 2 · Precios (`ui/pages/2_Precios.py`)
 Price history chart for a selected symbol, sourced from `price_snapshots`.
