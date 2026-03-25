@@ -142,6 +142,9 @@ class PriceMonitor:
     async def _check_all(self, watchlist: list[dict], stop_event: asyncio.Event | None = None):
         """Consulta precios en batch y procesa los cambios detectados."""
         # Verificar horario de mercado (se omite si hay análisis forzado)
+        market_is_open = True
+        wait_secs: float | None = None
+
         if self._force_analysis:
             self._logger.info(
                 "Análisis forzado — se omite la verificación de horario de mercado",
@@ -153,6 +156,7 @@ class PriceMonitor:
             try:
                 clock = await self._alpaca.get_clock()
                 if not clock["is_open"]:
+                    market_is_open = False
                     next_open_str = clock.get("next_open", "")
                     if next_open_str:
                         next_open_utc = datetime.fromisoformat(next_open_str.replace("Z", "+00:00"))
@@ -170,7 +174,8 @@ class PriceMonitor:
                         source="monitor",
                     )
                     self._logger.debug(
-                        f"Mercado cerrado — esperando {wait_secs:.0f}s ({wait_secs / 60:.1f} min)",
+                        f"Mercado cerrado — esperando {wait_secs:.0f}s ({wait_secs / 60:.1f} min) "
+                        f"(análisis WATCHING y contexto de mercado se ejecutarán antes)",
                         source="monitor",
                     )
 
@@ -180,9 +185,6 @@ class PriceMonitor:
                         self._logger.info("Órdenes pendientes canceladas (mercado cerrado)", source="monitor")
                     except Exception as e:
                         self._logger.warning(f"No se pudieron cancelar órdenes pendientes: {e}", source="monitor")
-
-                    await _interruptible_sleep(wait_secs, stop_event)
-                    return
             except Exception as e:
                 self._logger.warning(f"No se pudo verificar horario de mercado: {e}", source="monitor")
             else:
@@ -190,23 +192,24 @@ class PriceMonitor:
                 if clock and clock.get("is_open") and self._market_status_callback:
                     self._market_status_callback(True, None)
 
-        # ¿Cierre inminente? (< 5 min para next_close)
+        # ¿Cierre inminente? (< 5 min para next_close) — solo relevante con mercado abierto
         close_imminent = False
-        next_close_str = clock.get("next_close", "") if clock else ""
-        if next_close_str:
-            try:
-                next_close_utc = datetime.fromisoformat(next_close_str.replace("Z", "+00:00"))
-                mins_to_close = (next_close_utc - datetime.now(timezone.utc)).total_seconds() / 60
-                if mins_to_close < 5:
-                    close_imminent = True
-                    self._logger.info(
-                        f"Cierre de mercado en {mins_to_close:.1f} min — análisis nuevos omitidos",
-                        source="monitor",
-                    )
-            except Exception:
-                pass
+        if market_is_open:
+            next_close_str = clock.get("next_close", "") if clock else ""
+            if next_close_str:
+                try:
+                    next_close_utc = datetime.fromisoformat(next_close_str.replace("Z", "+00:00"))
+                    mins_to_close = (next_close_utc - datetime.now(timezone.utc)).total_seconds() / 60
+                    if mins_to_close < 5:
+                        close_imminent = True
+                        self._logger.info(
+                            f"Cierre de mercado en {mins_to_close:.1f} min — análisis nuevos omitidos",
+                            source="monitor",
+                        )
+                except Exception:
+                    pass
 
-        # Actualizar contexto global de mercado si corresponde
+        # Actualizar contexto global de mercado si corresponde (siempre, incluso con mercado cerrado)
         await self._maybe_update_market_context()
 
         symbols = [item["symbol"] for item in watchlist]
@@ -252,7 +255,7 @@ class PriceMonitor:
                     source="monitor",
                 )
             else:
-                triggered = await self._process_symbol(symbol, snap, state_row)
+                triggered = await self._process_symbol(symbol, snap, state_row, market_is_open=market_is_open)
                 if triggered:
                     alerts_triggered.append(triggered)
 
@@ -272,9 +275,15 @@ class PriceMonitor:
         else:
             self._logger.info("Ciclo fin — sin alertas", source="monitor")
 
+        # Con mercado cerrado: dormir hasta apertura tras haber ejecutado análisis WATCHING y contexto
+        if not market_is_open and wait_secs is not None:
+            await _interruptible_sleep(wait_secs, stop_event)
+
     # ── Máquina de estados ────────────────────────────────────────────────────
 
-    async def _process_symbol(self, symbol: str, snap: dict, state_row: dict) -> str | None:
+    async def _process_symbol(
+        self, symbol: str, snap: dict, state_row: dict, market_is_open: bool = True
+    ) -> str | None:
         """
         Procesa un símbolo según su estado actual.
 
@@ -288,6 +297,14 @@ class PriceMonitor:
             f"{symbol}: ${current_price:.2f} | estado: {state}",
             source="monitor",
         )
+
+        # Con mercado cerrado solo se ejecuta el análisis a largo plazo (WATCHING)
+        if not market_is_open and state != "WATCHING":
+            self._logger.debug(
+                f"{symbol}: estado {state} omitido — mercado cerrado",
+                source="monitor",
+            )
+            return None
 
         if state == "CLOSING":
             triggered = await self._check_closing(symbol, state_row)
