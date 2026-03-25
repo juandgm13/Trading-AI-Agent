@@ -243,6 +243,97 @@ def _run_news_ingestion(log: scrolledtext.ScrolledText):
     threading.Thread(target=_thread_fn, daemon=True).start()
 
 
+def _run_market_context_analysis(log: scrolledtext.ScrolledText):
+    """Ejecuta fetch + clasificación de noticias + análisis de contexto global de mercado (MarketContextAgent)."""
+    redirector = _TextRedirector(log)
+
+    def _thread_fn():
+        import os
+        import json
+        import asyncio
+        from agent_framework.config.config_loader import load_from_yaml
+        from agent_framework.events import EventBus
+        from agent_framework.models.model_registry import ModelRegistry
+        from agent_framework.providers import OllamaProvider
+        from src.storage import StorageLayer
+        from src.news_sources import AlpacaNewsSource, RSSNewsSource, YahooSymbolSource, NewsAggregator
+        from src.news_service import NewsIngestionService
+        from src.response_parser import validate_market_context
+        from agents.economics_agent import (
+            build_news_classifier_agent,
+            build_market_context_agent,
+            build_market_context_prompt,
+        )
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        from src.logger import get_logger
+        logger = get_logger(on_log=lambda msg: redirector.write(msg + "\n"))
+
+        async def _run():
+            logger.info("Iniciando análisis de contexto global de mercado...", source="market")
+
+            api_key = os.environ.get("ALPACA_API_KEY", "")
+            secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
+            ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+            config = load_from_yaml(PROJECT_ROOT / "agents" / "trading_agent.yaml")
+            model_registry = ModelRegistry()
+            bus = EventBus()
+
+            for role in ("news_classifier", "economics"):
+                cfg = config.models.get(role)
+                if cfg:
+                    model_registry.register(role, OllamaProvider(cfg.model, base_url=ollama_url))
+                else:
+                    logger.warning(f"No se encontró configuración '{role}' en YAML", source="market")
+
+            alpaca_news = AlpacaNewsSource(api_key, secret_key, logger=logger)
+            rss_source = RSSNewsSource(logger=logger)
+            yahoo_source = YahooSymbolSource(logger=logger)
+            aggregator = NewsAggregator(alpaca_news, rss_source, yahoo_source, logger=logger)
+
+            news_classifier_agent = await build_news_classifier_agent(config, bus, model_registry)
+            storage = StorageLayer(str(PROJECT_ROOT / "trading_agent.db"))
+            news_service = NewsIngestionService(aggregator, news_classifier_agent, storage, logger=logger)
+
+            logger.info("Obteniendo y clasificando noticias de mercado...", source="market")
+            fetched, classified = await news_service.run_market_ingestion()
+            logger.info(f"Noticias: {fetched} obtenidas, {classified} clasificadas.", source="market")
+
+            market_articles = storage.get_articles_by_scope("market", limit=20)
+            high_impact_company = storage.get_articles_by_scope("company", limit=10)
+            all_context_news = market_articles + high_impact_company
+            logger.info(
+                f"Construyendo contexto con {len(all_context_news)} artículos "
+                f"({len(market_articles)} market + {len(high_impact_company)} company)...",
+                source="market",
+            )
+
+            market_context_agent = await build_market_context_agent(config, bus, model_registry)
+            prompt = build_market_context_prompt(all_context_news)
+            response = await market_context_agent.run(prompt)
+            report = validate_market_context(response)
+            storage.save_market_context(json.dumps(report), len(all_context_news))
+
+            logger.info(
+                f"Contexto global actualizado — sentiment: {report.get('market_sentiment', '?')} | "
+                f"risk: {report.get('risk_appetite', '?')} | "
+                f"confidence: {report.get('confidence', '?')}",
+                source="market",
+            )
+
+        try:
+            loop.run_until_complete(_run())
+        except Exception as e:
+            logger.error(str(e), source="market")
+        finally:
+            loop.close()
+
+    threading.Thread(target=_thread_fn, daemon=True).start()
+
+
 def _clear_log(log: scrolledtext.ScrolledText):
     log.configure(state="normal")
     log.delete("1.0", tk.END)
@@ -296,12 +387,21 @@ def main():
         command=lambda: _run_news_ingestion(log),
     )
 
+    btn_market_ctx = tk.Button(
+        toolbar,
+        text="Market context",
+        width=15,
+        height=2,
+        command=lambda: _run_market_context_analysis(log),
+    )
+
     btn_monitor.configure(
         command=lambda: _toggle_monitor(log, btn_monitor, btn_analyze, market_label, root)
     )
     btn_monitor.pack(side="left", padx=4)
     btn_analyze.pack(side="left", padx=4)
     btn_news.pack(side="left", padx=4)
+    btn_market_ctx.pack(side="left", padx=4)
 
     tk.Button(
         toolbar,
