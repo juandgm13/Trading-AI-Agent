@@ -17,6 +17,7 @@ load_dotenv()
 # Estado compartido del monitor
 _monitor_stop_event: asyncio.Event | None = None
 _monitor_force_event: asyncio.Event | None = None
+_monitor_loop: asyncio.AbstractEventLoop | None = None
 _monitor_thread: threading.Thread | None = None
 
 
@@ -87,9 +88,10 @@ def _toggle_monitor(
             root.after(0, _update)
 
         def monitor_thread_fn():
-            global _monitor_stop_event, _monitor_force_event
+            global _monitor_stop_event, _monitor_force_event, _monitor_loop
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            _monitor_loop = loop
             _monitor_stop_event = asyncio.Event()
             _monitor_force_event = asyncio.Event()
 
@@ -106,6 +108,7 @@ def _toggle_monitor(
                     )
                 )
             finally:
+                _monitor_loop = None
                 loop.close()
                 btn_monitor.configure(text="Monitor ON", bg="SystemButtonFace")
                 btn_analyze.configure(state="disabled")
@@ -117,12 +120,12 @@ def _toggle_monitor(
 
 def _force_analysis(log: scrolledtext.ScrolledText):
     """Envía señal de análisis inmediato al monitor activo."""
-    global _monitor_force_event
+    global _monitor_force_event, _monitor_loop
     redirector = _TextRedirector(log)
 
-    if _monitor_force_event and _monitor_thread and _monitor_thread.is_alive():
-        _monitor_force_event.set()
-        redirector.write("[monitor] Forced analysis requested — will run next cycle\n")
+    if _monitor_force_event and _monitor_loop and _monitor_thread and _monitor_thread.is_alive():
+        _monitor_loop.call_soon_threadsafe(_monitor_force_event.set)
+        redirector.write("[monitor] Forced analysis requested — interrupting current sleep\n")
     else:
         redirector.write("[monitor] Monitor is not active\n")
 
@@ -178,7 +181,7 @@ def _run_news_ingestion(log: scrolledtext.ScrolledText):
         import os
         import asyncio
         from agent_framework.config.config_loader import load_from_yaml
-        from agent_framework.events import EventBus
+        from agent_framework.events import EventBus, EventType
         from agent_framework.models.model_registry import ModelRegistry
         from agent_framework.providers import OllamaProvider
         from src.storage import StorageLayer
@@ -211,6 +214,20 @@ def _run_news_ingestion(log: scrolledtext.ScrolledText):
                 logger.warning("No se encontró configuración 'news_classifier' en YAML", source="news")
 
             bus = EventBus()
+
+            async def on_event(event):
+                if event.type == EventType.MODEL_CALLED:
+                    logger.debug(f"Llamando al modelo ({event.data.get('role', '?')})...", source="agent")
+                elif event.type == EventType.MODEL_FINISHED:
+                    data = event.data
+                    logger.log_prompt(
+                        agent_name=data.get("role", "unknown"),
+                        prompt=data.get("prompt", ""),
+                        response=data.get("response", ""),
+                        system_prompt=data.get("system_prompt", ""),
+                    )
+
+            bus.subscribe("*", on_event)
 
             logger.info("Inicializando fuentes: Alpaca News, RSS, Yahoo Finance...", source="news")
             alpaca_news = AlpacaNewsSource(api_key, secret_key, logger=logger)
@@ -252,7 +269,7 @@ def _run_market_context_analysis(log: scrolledtext.ScrolledText):
         import json
         import asyncio
         from agent_framework.config.config_loader import load_from_yaml
-        from agent_framework.events import EventBus
+        from agent_framework.events import EventBus, EventType
         from agent_framework.models.model_registry import ModelRegistry
         from agent_framework.providers import OllamaProvider
         from src.storage import StorageLayer
@@ -281,6 +298,20 @@ def _run_market_context_analysis(log: scrolledtext.ScrolledText):
             config = load_from_yaml(PROJECT_ROOT / "agents" / "trading_agent.yaml")
             model_registry = ModelRegistry()
             bus = EventBus()
+
+            async def on_event(event):
+                if event.type == EventType.MODEL_CALLED:
+                    logger.debug(f"Llamando al modelo ({event.data.get('role', '?')})...", source="agent")
+                elif event.type == EventType.MODEL_FINISHED:
+                    data = event.data
+                    logger.log_prompt(
+                        agent_name=data.get("role", "unknown"),
+                        prompt=data.get("prompt", ""),
+                        response=data.get("response", ""),
+                        system_prompt=data.get("system_prompt", ""),
+                    )
+
+            bus.subscribe("*", on_event)
 
             for role in ("news_classifier", "economics"):
                 cfg = config.models.get(role)
