@@ -44,22 +44,6 @@ else:
     df_display = df[list(display_cols.keys())].rename(columns=display_cols)
     st.dataframe(df_display, use_container_width=True)
 
-    # ── Evidence charts ───────────────────────────────────────────────────────
-    symbols_with_charts = [
-        s for s in states
-        if s.get("chart_path") and Path(s["chart_path"]).exists()
-    ]
-    if symbols_with_charts:
-        st.divider()
-        st.subheader("Evidence Charts")
-        for s in symbols_with_charts:
-            chart_path = s["chart_path"]
-            symbol = s["symbol"]
-            state = s["state"]
-            with st.expander(f"{symbol} — {state_colors.get(state, '⚪')} {state}"):
-                st.image(chart_path, use_container_width=True)
-                st.caption(f"Path: {chart_path}")
-
 st.divider()
 
 # ── Sub-agent report history ──────────────────────────────────────────────────
@@ -73,6 +57,14 @@ if not symbols_with_reports:
     st.info("No agent reports yet.")
 else:
     selected = st.selectbox("Select symbol", symbols_with_reports)
+
+    sym_state = storage.get_symbol_state(selected)
+    chart_path = sym_state.get("chart_path")
+    if chart_path and Path(chart_path).exists():
+        with st.expander(f"Evidence chart — {selected}", expanded=True):
+            st.image(chart_path, use_container_width=True)
+            st.caption(chart_path)
+
     reports = storage.get_agent_reports(selected, limit=30)
 
     if not reports:

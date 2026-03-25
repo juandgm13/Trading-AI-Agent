@@ -42,8 +42,8 @@ Add new symbols (ticker + optional company name) or deactivate existing ones. Wh
 
 ### 6 · Estados (`ui/pages/6_Estados.py`)
 - State machine table for all symbols (state, last analysis, target, stop-loss, position details).
-- Per-symbol agent report history: browse the full JSON output of each sub-agent call.
-- **Gráficos de evidencia** — if a symbol has a `chart_path` stored in `symbol_states` and the PNG file exists on disk, the candlestick chart is displayed inline with `st.image()`.
+- Per-symbol agent report history: select a symbol from the dropdown to browse the full JSON output of each sub-agent call.
+- **Evidence chart** — if the selected symbol has a `chart_path` stored in `symbol_states` and the PNG file exists on disk, the candlestick chart is displayed inline (above the reports) via `st.expander` + `st.image()`, providing traceability between the chart and the reports that generated it.
 
 ## Shared components (`ui/components.py`)
 
