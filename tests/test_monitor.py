@@ -875,10 +875,10 @@ async def test_check_all_stops_mid_loop_on_stop_event(tmp_db):
     process_calls = []
     original_process = monitor._process_symbol
 
-    async def _patched_process(symbol, snap, state_row):
+    async def _patched_process(symbol, snap, state_row, market_is_open=True):
         process_calls.append(symbol)
         stop.set()  # activar stop después del primer símbolo procesado
-        return await original_process(symbol, snap, state_row)
+        return await original_process(symbol, snap, state_row, market_is_open=market_is_open)
 
     monitor._process_symbol = _patched_process
 
@@ -1038,7 +1038,7 @@ async def test_maybe_update_market_context_handles_invalid_date(tmp_db):
 
 @pytest.mark.asyncio
 async def test_check_all_standby_when_market_closed(tmp_db):
-    """Si get_clock devuelve is_open=False, _check_all retorna sin procesar símbolos."""
+    """Si get_clock devuelve is_open=False, _check_all fetcha snapshots pero solo procesa WATCHING."""
     from datetime import datetime, timezone
 
     monitor, mock_alpaca, mock_tech, _, _ = _make_monitor(tmp_db)
@@ -1071,8 +1071,9 @@ async def test_check_all_standby_when_market_closed(tmp_db):
     finally:
         monitor_mod._interruptible_sleep = original_sleep
 
-    # get_snapshots nunca debe llamarse cuando el mercado está cerrado
-    mock_alpaca.get_snapshots.assert_not_awaited()
+    # Con mercado cerrado, get_snapshots SÍ se llama (para análisis WATCHING)
+    mock_alpaca.get_snapshots.assert_awaited_once()
+    # Pero como last_analysis_at es reciente, el análisis técnico NO debe ejecutarse
     mock_tech.run.assert_not_awaited()
 
 
@@ -1292,8 +1293,9 @@ async def test_check_all_standby_cancel_exception_swallowed(tmp_db):
     finally:
         monitor_mod._interruptible_sleep = original
 
-    # El ciclo retorna antes de get_snapshots (mercado cerrado)
-    mock_alpaca.get_snapshots.assert_not_awaited()
+    # Con mercado cerrado, get_snapshots SÍ se llama (para análisis WATCHING)
+    # pero get_snapshots retorna {} → no hay precios → tech agent no se llama
+    mock_alpaca.get_snapshots.assert_awaited_once()
     mock_tech.run.assert_not_awaited()
 
 
@@ -1378,9 +1380,9 @@ async def test_check_all_close_imminent_keeps_position_open(tmp_db):
     process_called = []
     original_process = monitor._process_symbol
 
-    async def _spy_process(symbol, snap, state_row):
+    async def _spy_process(symbol, snap, state_row, market_is_open=True):
         process_called.append(symbol)
-        return await original_process(symbol, snap, state_row)
+        return await original_process(symbol, snap, state_row, market_is_open=market_is_open)
 
     monitor._process_symbol = _spy_process
 
@@ -2007,8 +2009,8 @@ async def test_force_analysis_flag_reset_in_run(tmp_db):
 
 
 @pytest.mark.asyncio
-async def test_normal_closed_market_still_returns_early(tmp_db):
-    """Sin force_analysis, el mercado cerrado sigue causando retorno temprano."""
+async def test_normal_closed_market_fetches_snapshots_for_watching(tmp_db):
+    """Sin force_analysis y mercado cerrado, get_snapshots SÍ se llama para análisis WATCHING."""
     from datetime import datetime, timezone
 
     monitor, mock_alpaca, mock_tech, _, _ = _make_monitor(tmp_db)
@@ -2022,7 +2024,9 @@ async def test_normal_closed_market_still_returns_early(tmp_db):
         "AAPL": {"close": 175.0, "volume": 1000, "timestamp": "t"},
     })
 
+    recent = datetime.now(timezone.utc).isoformat()
     tmp_db.upsert_watchlist("AAPL", "", 2.0)
+    tmp_db.upsert_symbol_state("AAPL", state="WATCHING", last_analysis_at=recent)
     monitor._force_analysis = False  # explícitamente sin force
 
     import agents.monitor as monitor_mod
@@ -2038,8 +2042,9 @@ async def test_normal_closed_market_still_returns_early(tmp_db):
     finally:
         monitor_mod._interruptible_sleep = original_sleep
 
-    # Sin force_analysis, el mercado cerrado retorna temprano — no se llama get_snapshots
-    mock_alpaca.get_snapshots.assert_not_awaited()
+    # Con mercado cerrado, get_snapshots SÍ se llama (análisis WATCHING habilitado)
+    mock_alpaca.get_snapshots.assert_awaited_once()
+    # last_analysis_at reciente → análisis no due → tech agent no se llama
     mock_tech.run.assert_not_awaited()
 
 
@@ -2124,11 +2129,11 @@ async def test_running_false_breaks_symbol_loop(tmp_db):
 
     call_count = 0
 
-    async def _stop_after_first(symbol, snap, state_row):
+    async def _stop_after_first(symbol, snap, state_row, market_is_open=True):
         nonlocal call_count
         call_count += 1
         monitor._running = False
-        return await original_process(symbol, snap, state_row)
+        return await original_process(symbol, snap, state_row, market_is_open=market_is_open)
 
     monitor._process_symbol = _stop_after_first
 
