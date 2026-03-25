@@ -115,7 +115,7 @@ Produces a holistic macro view of the global market once every `analysis_interva
 ```mermaid
 flowchart TB
     subgraph IN["📥 Input · text"]
-        I1["General market news — Alpaca News API + RSS feeds<br/>(Reuters, CNBC, Yahoo Finance, MarketWatch, FT, Fed Reserve…)"]
+        I1["General market news — Alpaca News API + RSS feeds<br/>(Investing.com, CNBC, Yahoo Finance, MarketWatch, FT, Fed Reserve…)"]
     end
 
     AG["MarketContextAgent<br/>model: economics · qwen2.5:7b"]

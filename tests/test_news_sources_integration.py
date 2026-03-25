@@ -33,7 +33,7 @@ except ImportError:
 VALID_FEED_GROUPS = {
     "alpaca",
     # RSS stocks
-    "Reuters", "CNBC", "Yahoo Finance", "MarketWatch",
+    "Investing.com", "CNBC", "Yahoo Finance", "MarketWatch",
     # RSS macro
     "Federal Reserve", "Financial Times", "The Economist",
 }
@@ -181,7 +181,7 @@ async def test_rss_stocks_returns_articles():
 
     assert isinstance(articles, list)
     assert len(articles) > 0, (
-        "Los feeds RSS de stocks (Reuters/CNBC/Yahoo/MarketWatch) deben devolver artículos"
+        "Los feeds RSS de stocks (Investing.com/CNBC/Yahoo/MarketWatch) deben devolver artículos"
     )
     for article in articles:
         _assert_article(article)

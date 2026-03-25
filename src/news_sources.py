@@ -112,7 +112,7 @@ class RSSNewsSource:
     """Noticias vía feeds RSS usando feedparser."""
 
     FEEDS_STOCKS: list[tuple[str, str]] = [
-        ("Reuters", "https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best"),
+        ("Investing.com", "https://www.investing.com/rss/news_1.rss"),
         ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
         ("Yahoo Finance", "https://finance.yahoo.com/rss/topstories"),
         ("MarketWatch", "https://feeds.marketwatch.com/marketwatch/topstories/"),
@@ -219,11 +219,18 @@ class RSSNewsSource:
         articles.sort(key=lambda a: a.published_at, reverse=True)
         articles = articles[:max_articles]
 
-        if self._logger and self._logger.is_debug:
-            self._logger.debug(
-                f"RSS {source}: {len(articles)} artículos (top {max_articles} recientes)",
-                source="rss_news",
-            )
+        if self._logger:
+            if articles:
+                if self._logger.is_debug:
+                    self._logger.debug(
+                        f"RSS {source}: {len(articles)} artículos (top {max_articles} recientes)",
+                        source="rss_news",
+                    )
+            else:
+                self._logger.warning(
+                    f"RSS {source}: feed devolvió 0 artículos ({url})",
+                    source="rss_news",
+                )
         return articles
 
 
