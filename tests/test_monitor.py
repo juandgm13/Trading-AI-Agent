@@ -806,6 +806,16 @@ async def test_wait_or_stop_with_stop_event_times_out():
 
 
 @pytest.mark.asyncio
+async def test_wait_or_stop_with_force_event_interrupts():
+    """_wait_or_stop retorna inmediatamente si force_event ya está seteado."""
+    from agents.monitor import _wait_or_stop
+    stop = asyncio.Event()
+    force = asyncio.Event()
+    force.set()
+    await _wait_or_stop(stop, 60, force_event=force)  # retorna inmediatamente
+
+
+@pytest.mark.asyncio
 async def test_init_watchlist_from_alpaca_populates_storage(tmp_db):
     """_init_watchlist_from_alpaca inserta activos de Alpaca en la BD."""
     from agents.monitor import _init_watchlist_from_alpaca
@@ -1061,7 +1071,7 @@ async def test_check_all_standby_when_market_closed(tmp_db):
     import agents.monitor as monitor_mod
     original_sleep = monitor_mod._interruptible_sleep
 
-    async def _instant_sleep(secs, stop_event):
+    async def _instant_sleep(secs, stop_event, force_event=None):
         pass  # no esperar
 
     monitor_mod._interruptible_sleep = _instant_sleep
@@ -1172,7 +1182,7 @@ async def test_entry_uses_max_qty_when_agent_returns_null(tmp_db):
 
 def _patch_sleep(monitor_mod):
     """Helper: parchea _interruptible_sleep para no esperar realmente."""
-    async def _instant_sleep(secs, stop_event):
+    async def _instant_sleep(secs, stop_event, force_event=None):
         pass
     original = monitor_mod._interruptible_sleep
     monitor_mod._interruptible_sleep = _instant_sleep
@@ -2032,7 +2042,7 @@ async def test_normal_closed_market_fetches_snapshots_for_watching(tmp_db):
     import agents.monitor as monitor_mod
     original_sleep = monitor_mod._interruptible_sleep
 
-    async def _instant_sleep(secs, stop_event):
+    async def _instant_sleep(secs, stop_event, force_event=None):
         pass
 
     monitor_mod._interruptible_sleep = _instant_sleep
@@ -2071,7 +2081,7 @@ async def test_market_closed_triggers_status_callback_with_false(tmp_db):
     import agents.monitor as monitor_mod
     original_sleep = monitor_mod._interruptible_sleep
 
-    async def _instant_sleep(secs, stop_event):
+    async def _instant_sleep(secs, stop_event, force_event=None):
         pass
 
     monitor_mod._interruptible_sleep = _instant_sleep
@@ -2248,6 +2258,16 @@ async def test_interruptible_sleep_with_already_set_stop_event():
     stop = asyncio.Event()
     stop.set()
     await _interruptible_sleep(60, stop)  # retorna inmediatamente
+
+
+@pytest.mark.asyncio
+async def test_interruptible_sleep_with_force_event_interrupts():
+    """_interruptible_sleep retorna inmediatamente si force_event ya está seteado."""
+    from agents.monitor import _interruptible_sleep
+    stop = asyncio.Event()
+    force = asyncio.Event()
+    force.set()
+    await _interruptible_sleep(60, stop, force_event=force)  # retorna inmediatamente
 
 
 # ── run_monitor: Alpaca no disponible retorna temprano ────────────────────────

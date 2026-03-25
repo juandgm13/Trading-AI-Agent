@@ -133,7 +133,7 @@ class PriceMonitor:
             # Resetear flag de análisis forzado al final del ciclo
             self._force_analysis = False
 
-            await _wait_or_stop(stop_event, poll_interval_seconds)
+            await _wait_or_stop(stop_event, poll_interval_seconds, self._force_event)
 
         self._logger.info("Monitorización detenida", source="monitor")
 
@@ -277,7 +277,7 @@ class PriceMonitor:
 
         # Con mercado cerrado: dormir hasta apertura tras haber ejecutado análisis WATCHING y contexto
         if not market_is_open and wait_secs is not None:
-            await _interruptible_sleep(wait_secs, stop_event)
+            await _interruptible_sleep(wait_secs, stop_event, self._force_event)
 
     # ── Máquina de estados ────────────────────────────────────────────────────
 
@@ -861,19 +861,36 @@ class PriceMonitor:
 
 # ── Utilidades ────────────────────────────────────────────────────────────────
 
-async def _wait_or_stop(stop_event: asyncio.Event | None, seconds: int):
+async def _wait_or_stop(
+    stop_event: asyncio.Event | None,
+    seconds: int,
+    force_event: asyncio.Event | None = None,
+):
+    waiters = []
     if stop_event:
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=seconds)
-        except asyncio.TimeoutError:
-            pass
+        waiters.append(asyncio.ensure_future(stop_event.wait()))
+    if force_event:
+        waiters.append(asyncio.ensure_future(force_event.wait()))
+
+    if waiters:
+        _, pending = await asyncio.wait(waiters, timeout=seconds, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     else:
         await asyncio.sleep(seconds)
 
 
-async def _interruptible_sleep(seconds: float, stop_event: asyncio.Event | None):
-    """Duerme hasta `seconds` segundos, interrumpible por stop_event."""
-    await _wait_or_stop(stop_event, int(seconds))
+async def _interruptible_sleep(
+    seconds: float,
+    stop_event: asyncio.Event | None,
+    force_event: asyncio.Event | None = None,
+):
+    """Duerme hasta `seconds` segundos, interrumpible por stop_event o force_event."""
+    await _wait_or_stop(stop_event, int(seconds), force_event)
 
 
 async def _init_watchlist_from_alpaca(
