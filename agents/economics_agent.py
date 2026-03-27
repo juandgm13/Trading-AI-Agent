@@ -162,11 +162,26 @@ async def build_company_analysis_agent(
     return agent
 
 
+_ARTICLE_PROMPT_FIELDS = frozenset([
+    "title", "source", "published_at", "scope", "ticker",
+    "impact", "article_summary", "reasoning",
+])
+
+
+def _clean_articles(articles: list[dict]) -> list[dict]:
+    """Filtra cada artículo a solo los campos relevantes para el prompt."""
+    return [
+        {k: v for k, v in a.items() if k in _ARTICLE_PROMPT_FIELDS and v is not None}
+        for a in articles
+    ]
+
+
 def build_market_context_prompt(market_news: list[dict]) -> str:
     """Prompt para el informe holístico de contexto global de mercado."""
     import json
+    clean = _clean_articles(market_news)
     market_section = (
-        json.dumps(market_news, indent=2) if market_news else "No market news available."
+        json.dumps(clean, indent=2) if clean else "No market news available."
     )
     return (
         "Analyze the following general market and financial news articles "
@@ -179,8 +194,9 @@ def build_market_context_prompt(market_news: list[dict]) -> str:
 def build_company_analysis_prompt(symbol: str, company_news: list[dict]) -> str:
     """Prompt para el informe breve de empresa en el momento de intento de entrada."""
     import json
+    clean = _clean_articles(company_news)
     company_section = (
-        json.dumps(company_news, indent=2) if company_news else "No company news available."
+        json.dumps(clean, indent=2) if clean else "No company news available."
     )
     return (
         f"Analyze the following company-specific news for {symbol} "

@@ -1,19 +1,11 @@
 import hashlib
 import sqlite3
-from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 
 from .ingestion import Article
 
 
 _RETENTION_DAYS: dict[str | None, int] = {"HIGH": 7, "MEDIUM": 3, "LOW": 1, None: 1}
-
-
-@dataclass
-class DeduplicationResult:
-    is_new: bool
-    is_analyzed: bool
-    article: Article
 
 
 class StorageLayer:
@@ -46,13 +38,6 @@ class StorageLayer:
                     reasoning         TEXT,
                     expires_at        TEXT,
                     article_summary   TEXT,
-                    -- Legacy columns (conservadas para compatibilidad)
-                    company           TEXT,
-                    impact_level      TEXT,
-                    impact_type       TEXT,
-                    confidence        INTEGER,
-                    reason            TEXT,
-                    alert_sent        INTEGER DEFAULT 0,
                     created_at        TEXT
                 )
             """)
@@ -73,6 +58,13 @@ class StorageLayer:
                 "ALTER TABLE agent_reports ADD COLUMN chart_path TEXT",
                 "ALTER TABLE symbol_states ADD COLUMN bracket_order_id TEXT",
                 "ALTER TABLE articles ADD COLUMN article_summary TEXT",
+                # Eliminar columnas legacy (SQLite 3.35+)
+                "ALTER TABLE articles DROP COLUMN company",
+                "ALTER TABLE articles DROP COLUMN impact_level",
+                "ALTER TABLE articles DROP COLUMN impact_type",
+                "ALTER TABLE articles DROP COLUMN confidence",
+                "ALTER TABLE articles DROP COLUMN reason",
+                "ALTER TABLE articles DROP COLUMN alert_sent",
             ]
             for _sql in _migrations:
                 try:
@@ -164,61 +156,6 @@ class StorageLayer:
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
 
-    def check_and_mark(self, article: Article) -> DeduplicationResult:
-        content_hash = self._content_hash(article)
-
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT impact_level FROM articles WHERE content_hash = ?", (content_hash,)
-            ).fetchone()
-
-            if row:
-                is_analyzed = row[0] is not None
-                return DeduplicationResult(is_new=False, is_analyzed=is_analyzed, article=article)
-
-            conn.execute(
-                """
-                INSERT INTO articles (url, content_hash, title, source, published_at, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    article.url,
-                    content_hash,
-                    article.title,
-                    article.source,
-                    article.published_at.isoformat(),
-                    datetime.now(timezone.utc).isoformat(),
-                ),
-            )
-
-        return DeduplicationResult(is_new=True, is_analyzed=False, article=article)
-
-    def save_analysis(self, article: Article, llm_output: dict, alert_result: dict):
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE articles
-                SET company      = ?,
-                    ticker       = ?,
-                    impact_level = ?,
-                    impact_type  = ?,
-                    confidence   = ?,
-                    reason       = ?,
-                    alert_sent   = ?
-                WHERE url = ?
-                """,
-                (
-                    llm_output.get("company"),
-                    llm_output.get("ticker"),
-                    llm_output.get("impact_level"),
-                    llm_output.get("impact_type"),
-                    llm_output.get("confidence"),
-                    llm_output.get("reason"),
-                    1 if alert_result.get("sent") else 0,
-                    article.url,
-                ),
-            )
-
     def get_all(self) -> list[dict]:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
@@ -307,6 +244,7 @@ class StorageLayer:
         ticker: str | None = None,
         exchange: str | None = None,
         limit: int = 20,
+        min_impact: str | None = None,
     ) -> list[dict]:
         """
         Devuelve artículos clasificados no expirados filtrados por scope.
@@ -315,6 +253,9 @@ class StorageLayer:
         scope="exchange" + exchange="NASDAQ" → noticias de exchange.
         scope="market" → noticias macro.
         Filtra WHERE expires_at > NOW() OR expires_at IS NULL.
+
+        min_impact="MEDIUM" excluye artículos con impact="LOW".
+        min_impact="HIGH" devuelve solo artículos con impact="HIGH".
         """
         now = datetime.now(timezone.utc).isoformat()
         params: list = [scope]
@@ -326,6 +267,10 @@ class StorageLayer:
         if exchange:
             where_extra += " AND exchange_affected = ?"
             params.append(exchange.upper())
+        if min_impact == "HIGH":
+            where_extra += " AND impact = 'HIGH'"
+        elif min_impact == "MEDIUM":
+            where_extra += " AND impact IN ('MEDIUM', 'HIGH')"
 
         params.extend([now, limit])
 

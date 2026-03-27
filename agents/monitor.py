@@ -905,10 +905,14 @@ class PriceMonitor:
                 source="monitor",
             )
 
-            # Las 20 noticias macro más recientes + 10 de empresa de alto impacto
-            market_articles = self._storage.get_articles_by_scope("market", limit=20)
-            high_impact_company = self._storage.get_articles_by_scope("company", limit=10)
-            all_context_news = market_articles + high_impact_company
+            # Noticias macro (MEDIUM+HIGH) + noticias de empresa (MEDIUM+HIGH)
+            market_articles = self._storage.get_articles_by_scope(
+                "market", limit=20, min_impact="MEDIUM"
+            )
+            company_articles = self._storage.get_articles_by_scope(
+                "company", limit=10, min_impact="MEDIUM"
+            )
+            all_context_news = market_articles + company_articles
 
             prompt = build_market_context_prompt(all_context_news)
             response = await self._market_context_agent.run(prompt)

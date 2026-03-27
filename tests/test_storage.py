@@ -20,7 +20,11 @@ def _make_article(title="Apple earnings beat", url="https://example.com/1", date
     )
 
 
-# ── Articles: check_and_mark, save_analysis, get_all, delete_by_url, reset ────
+# ── Articles: save_article, get_all, delete_by_url, reset ────────────────────
+
+def _make_classification(scope="market", impact="HIGH", ticker=None):
+    return {"scope": scope, "ticker": ticker, "exchange": None, "impact": impact, "reasoning": "test"}
+
 
 def test_content_hash_is_deterministic(tmp_db):
     from src.storage import StorageLayer
@@ -38,70 +42,25 @@ def test_content_hash_differs_on_different_date(tmp_db):
     assert StorageLayer._content_hash(a1) != StorageLayer._content_hash(a2)
 
 
-def test_check_and_mark_new_article_is_new(tmp_db):
+def test_save_article_new_returns_true(tmp_db):
     article = _make_article()
-    result = tmp_db.check_and_mark(article)
-    assert result.is_new is True
-    assert result.is_analyzed is False
-    assert result.article is article
+    result = tmp_db.save_article(article, _make_classification())
+    assert result is True
 
 
-def test_check_and_mark_duplicate_returns_is_new_false(tmp_db):
+def test_save_article_duplicate_returns_false(tmp_db):
     article = _make_article()
-    tmp_db.check_and_mark(article)
-    # Mismo título + fecha → duplicado
+    tmp_db.save_article(article, _make_classification())
+    # Mismo título + fecha → content_hash duplicado
     duplicate = _make_article(url="https://example.com/other")
-    result = tmp_db.check_and_mark(duplicate)
-    assert result.is_new is False
-
-
-def test_check_and_mark_analyzed_article_returns_is_analyzed_true(tmp_db):
-    article = _make_article()
-    tmp_db.check_and_mark(article)
-    tmp_db.save_analysis(
-        article,
-        llm_output={"company": "Apple", "ticker": "AAPL", "impact_level": "HIGH",
-                    "impact_type": "POSITIVE", "confidence": 85, "reason": "Earnings beat"},
-        alert_result={"sent": True},
-    )
-    # Volver a marcar el mismo artículo
-    duplicate = _make_article(url="https://example.com/other")
-    result = tmp_db.check_and_mark(duplicate)
-    assert result.is_new is False
-    assert result.is_analyzed is True
-
-
-def test_save_analysis_updates_article_fields(tmp_db):
-    article = _make_article()
-    tmp_db.check_and_mark(article)
-    tmp_db.save_analysis(
-        article,
-        llm_output={"company": "Apple", "ticker": "AAPL", "impact_level": "HIGH",
-                    "impact_type": "POSITIVE", "confidence": 85, "reason": "Earnings beat"},
-        alert_result={"sent": True},
-    )
-    rows = tmp_db.get_all()
-    assert len(rows) == 1
-    row = rows[0]
-    assert row["company"] == "Apple"
-    assert row["ticker"] == "AAPL"
-    assert row["impact_level"] == "HIGH"
-    assert row["confidence"] == 85
-    assert row["alert_sent"] == 1
-
-
-def test_save_analysis_alert_not_sent(tmp_db):
-    article = _make_article()
-    tmp_db.check_and_mark(article)
-    tmp_db.save_analysis(article, llm_output={}, alert_result={"sent": False})
-    rows = tmp_db.get_all()
-    assert rows[0]["alert_sent"] == 0
+    result = tmp_db.save_article(duplicate, _make_classification())
+    assert result is False
 
 
 def test_get_all_returns_articles_ordered_by_created_at(tmp_db):
     for i in range(3):
-        a = _make_article(title=f"Article {i}", url=f"https://example.com/{i}")
-        tmp_db.check_and_mark(a)
+        a = _make_article(title=f"Article {i}", url=f"https://example.com/{i}", date=f"2024-01-{15 + i}")
+        tmp_db.save_article(a, _make_classification())
     rows = tmp_db.get_all()
     assert len(rows) == 3
 
@@ -110,9 +69,20 @@ def test_get_all_empty_when_no_articles(tmp_db):
     assert tmp_db.get_all() == []
 
 
+def test_articles_do_not_have_legacy_columns(tmp_db):
+    """Las columnas legacy (company, impact_level, etc.) no existen en la tabla."""
+    article = _make_article()
+    tmp_db.save_article(article, _make_classification())
+    rows = tmp_db.get_all()
+    assert len(rows) == 1
+    row = rows[0]
+    for legacy_col in ("company", "impact_level", "impact_type", "confidence", "reason", "alert_sent"):
+        assert legacy_col not in row
+
+
 def test_delete_by_url_removes_article(tmp_db):
     article = _make_article()
-    tmp_db.check_and_mark(article)
+    tmp_db.save_article(article, _make_classification())
     assert len(tmp_db.get_all()) == 1
 
     tmp_db.delete_by_url(article.url)
@@ -121,7 +91,7 @@ def test_delete_by_url_removes_article(tmp_db):
 
 def test_delete_by_url_noop_on_unknown_url(tmp_db):
     article = _make_article()
-    tmp_db.check_and_mark(article)
+    tmp_db.save_article(article, _make_classification())
     tmp_db.delete_by_url("https://nonexistent.com/article")
     assert len(tmp_db.get_all()) == 1  # no tocó el artículo existente
 
@@ -129,13 +99,86 @@ def test_delete_by_url_noop_on_unknown_url(tmp_db):
 def test_reset_clears_only_articles(tmp_db):
     """reset() borra solo articles, no otras tablas."""
     article = _make_article()
-    tmp_db.check_and_mark(article)
+    tmp_db.save_article(article, _make_classification())
     tmp_db.upsert_watchlist("AAPL", "Apple", 2.0)
 
     tmp_db.reset()
 
     assert tmp_db.get_all() == []
     assert len(tmp_db.get_watchlist()) == 1  # watchlist intacta
+
+
+# ── get_articles_by_scope con min_impact ──────────────────────────────────────
+
+def _save_market_article(db, url, impact):
+    a = _make_article(url=url, title=f"Article {url}", date="2024-01-15")
+    db.save_article(a, {"scope": "market", "ticker": None, "exchange": None,
+                        "impact": impact, "reasoning": "test"})
+
+
+def test_get_articles_by_scope_no_min_impact_returns_all(tmp_db):
+    _save_market_article(tmp_db, "https://x.com/1", "HIGH")
+    _save_market_article(tmp_db, "https://x.com/2", "MEDIUM")
+    _save_market_article(tmp_db, "https://x.com/3", "LOW")
+    rows = tmp_db.get_articles_by_scope("market")
+    assert len(rows) == 3
+
+
+def test_get_articles_by_scope_min_impact_medium_excludes_low(tmp_db):
+    _save_market_article(tmp_db, "https://x.com/1", "HIGH")
+    _save_market_article(tmp_db, "https://x.com/2", "MEDIUM")
+    _save_market_article(tmp_db, "https://x.com/3", "LOW")
+    rows = tmp_db.get_articles_by_scope("market", min_impact="MEDIUM")
+    impacts = {r["impact"] for r in rows}
+    assert "LOW" not in impacts
+    assert len(rows) == 2
+
+
+def test_get_articles_by_scope_min_impact_high_only(tmp_db):
+    _save_market_article(tmp_db, "https://x.com/1", "HIGH")
+    _save_market_article(tmp_db, "https://x.com/2", "MEDIUM")
+    _save_market_article(tmp_db, "https://x.com/3", "LOW")
+    rows = tmp_db.get_articles_by_scope("market", min_impact="HIGH")
+    assert len(rows) == 1
+    assert rows[0]["impact"] == "HIGH"
+
+
+# ── Campos relevantes en prompts de economics_agent ───────────────────────────
+
+def test_build_market_context_prompt_excludes_legacy_fields(tmp_db):
+    """build_market_context_prompt no incluye campos legacy en el JSON inyectado."""
+    import json
+    from agents.economics_agent import build_market_context_prompt
+
+    articles = [{
+        "url": "https://example.com/1",
+        "title": "Fed raises rates",
+        "source": "Reuters",
+        "published_at": "2024-01-15T10:00:00+00:00",
+        "scope": "market",
+        "ticker": None,
+        "impact": "HIGH",
+        "article_summary": "Fed raises by 25bps.",
+        "reasoning": "Major macro event",
+        # campos legacy / irrelevantes
+        "company": "legacy",
+        "alert_sent": 0,
+        "content_hash": "abc123",
+        "created_at": "2024-01-15T10:00:00+00:00",
+        "expires_at": "2024-01-22T10:00:00+00:00",
+    }]
+    prompt = build_market_context_prompt(articles)
+
+    # Extraer el JSON embebido en el prompt
+    json_start = prompt.index("[")
+    json_end = prompt.rindex("]") + 1
+    parsed = json.loads(prompt[json_start:json_end])
+    article_dict = parsed[0]
+
+    for legacy in ("company", "alert_sent", "content_hash", "created_at", "expires_at", "url"):
+        assert legacy not in article_dict
+    assert "title" in article_dict
+    assert "impact" in article_dict
 
 
 # ── Watchlist ─────────────────────────────────────────────────────────────────

@@ -24,13 +24,6 @@ articles (
     reasoning         TEXT,             -- classifier justification
     expires_at        TEXT,             -- ISO datetime; HIGH=7d, MEDIUM=3d, LOW/null=1d
     article_summary   TEXT,             -- 2-3 sentence summary from second-pass classification (may be NULL)
-    -- Legacy columns (kept for backwards compatibility)
-    company           TEXT,
-    impact_level      TEXT,
-    impact_type       TEXT,
-    confidence        INTEGER,
-    reason            TEXT,
-    alert_sent        INTEGER DEFAULT 0,
     created_at        TEXT NOT NULL
 )
 ```
@@ -150,7 +143,7 @@ market_context (
 | `get_latest_market_context()` | Get the most recent market context row |
 | `get_market_context_history(limit)` | Get history of market context reports |
 | `save_article(article, classification=None) -> bool` | Insert article; calculates expires_at from impact; returns True if new |
-| `get_articles_by_scope(scope, ticker=None, exchange=None, limit=20) -> list[dict]` | Fetch non-expired articles by scope/ticker/exchange, ordered by recency |
+| `get_articles_by_scope(scope, ticker=None, exchange=None, limit=20, min_impact=None) -> list[dict]` | Fetch non-expired articles by scope/ticker/exchange, ordered by recency. `min_impact="MEDIUM"` excludes LOW; `min_impact="HIGH"` returns only HIGH. |
 | `expire_old_articles() -> int` | Delete articles where expires_at < now; returns count deleted |
 | `save_trade(..., pnl, fees)` | Record an executed order (pnl/fees optional, for sell trades) |
 | `get_trades(limit)` | Retrieve trade history |
@@ -189,4 +182,11 @@ ALTER TABLE articles ADD COLUMN expires_at TEXT;
 ALTER TABLE agent_reports ADD COLUMN chart_path TEXT;
 ALTER TABLE symbol_states ADD COLUMN bracket_order_id TEXT;  -- bracket order ID for auto-exit detection
 ALTER TABLE articles ADD COLUMN article_summary TEXT;        -- second-pass classification summary
+-- Remove legacy columns (applied with DROP COLUMN, SQLite 3.35+)
+ALTER TABLE articles DROP COLUMN company;
+ALTER TABLE articles DROP COLUMN impact_level;
+ALTER TABLE articles DROP COLUMN impact_type;
+ALTER TABLE articles DROP COLUMN confidence;
+ALTER TABLE articles DROP COLUMN reason;
+ALTER TABLE articles DROP COLUMN alert_sent;
 ```
