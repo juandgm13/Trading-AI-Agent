@@ -45,6 +45,7 @@ class StorageLayer:
                     impact            TEXT,
                     reasoning         TEXT,
                     expires_at        TEXT,
+                    article_summary   TEXT,
                     -- Legacy columns (conservadas para compatibilidad)
                     company           TEXT,
                     impact_level      TEXT,
@@ -70,6 +71,8 @@ class StorageLayer:
                 "ALTER TABLE articles ADD COLUMN reasoning TEXT",
                 "ALTER TABLE articles ADD COLUMN expires_at TEXT",
                 "ALTER TABLE agent_reports ADD COLUMN chart_path TEXT",
+                "ALTER TABLE symbol_states ADD COLUMN bracket_order_id TEXT",
+                "ALTER TABLE articles ADD COLUMN article_summary TEXT",
             ]
             for _sql in _migrations:
                 try:
@@ -135,6 +138,7 @@ class StorageLayer:
                     chart_path       TEXT,
                     pending_order_id TEXT,
                     position_side    TEXT DEFAULT 'long',
+                    bracket_order_id TEXT,
                     updated_at       TEXT NOT NULL
                 )
             """)
@@ -259,6 +263,7 @@ class StorageLayer:
         exchange_affected = classification.get("exchange") if classification else None
         impact = classification.get("impact") if classification else None
         reasoning = classification.get("reasoning") if classification else None
+        article_summary = classification.get("article_summary") if classification else None
 
         retention_days = _RETENTION_DAYS.get(impact, 1)
         expires_at = (now + timedelta(days=retention_days)).isoformat()
@@ -270,8 +275,8 @@ class StorageLayer:
                     INSERT INTO articles
                         (url, content_hash, title, description, source, published_at,
                          feed_group, scope, ticker, exchange_affected, impact, reasoning,
-                         expires_at, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         expires_at, article_summary, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         article.url,
@@ -287,6 +292,7 @@ class StorageLayer:
                         impact,
                         reasoning,
                         expires_at,
+                        article_summary,
                         now.isoformat(),
                     ),
                 )
@@ -512,6 +518,7 @@ class StorageLayer:
             "chart_path": None,
             "pending_order_id": None,
             "position_side": "long",
+            "bracket_order_id": None,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -533,8 +540,8 @@ class StorageLayer:
                         (symbol, state, last_analysis_at, analysis_summary,
                          entry_signal_at, target_price, stop_loss,
                          position_qty, position_open_at, chart_path, pending_order_id,
-                         position_side, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         position_side, bracket_order_id, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         symbol,
@@ -549,6 +556,7 @@ class StorageLayer:
                         kwargs.get("chart_path"),
                         kwargs.get("pending_order_id"),
                         kwargs.get("position_side", "long"),
+                        kwargs.get("bracket_order_id"),
                         now,
                     ),
                 )
@@ -558,7 +566,7 @@ class StorageLayer:
                     "state", "last_analysis_at", "analysis_summary",
                     "entry_signal_at", "target_price", "stop_loss",
                     "position_qty", "position_open_at", "chart_path", "pending_order_id",
-                    "position_side",
+                    "position_side", "bracket_order_id",
                 }
                 updates = {k: v for k, v in kwargs.items() if k in allowed}
                 updates["updated_at"] = now

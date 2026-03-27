@@ -460,7 +460,12 @@ class PriceMonitor:
                     self._storage.update_agent_report_chart_path(report_id, chart_path)
 
             try:
-                result = await self._alpaca.place_order(symbol, qty, side)
+                result = await self._alpaca.place_order(
+                    symbol, qty, side,
+                    take_profit_price=target if (target and stop) else None,
+                    stop_loss_price=stop if (target and stop) else None,
+                )
+                bracket_id = result.get("order_id") if (target and stop) else None
                 self._storage.upsert_symbol_state(
                     symbol,
                     state="OPENING",
@@ -469,10 +474,12 @@ class PriceMonitor:
                     position_qty=float(qty),
                     position_side=position_side,
                     pending_order_id=result.get("order_id"),
+                    bracket_order_id=bracket_id,
                     chart_path=chart_path,
                 )
+                bracket_info = " [bracket]" if bracket_id else ""
                 self._logger.info(
-                    f"{symbol}: orden {side.upper()}×{qty} enviada (order_id={result.get('order_id')}) → OPENING",
+                    f"{symbol}: orden {side.upper()}×{qty} enviada{bracket_info} (order_id={result.get('order_id')}) → OPENING",
                     source="monitor",
                 )
                 return f"{symbol} {side.upper()}×{qty} enviada (OPENING)"
@@ -488,32 +495,122 @@ class PriceMonitor:
     # ── Estado: POSITION_OPEN ─────────────────────────────────────────────────
 
     async def _manage_position(self, symbol: str, price: float, state_row: dict) -> str | None:
-        """Gestiona una posición abierta: comprueba target y stop-loss."""
+        """
+        Gestiona una posición abierta.
+
+        Orden de verificación:
+        1. Si existe bracket_order_id, comprueba si alguna leg fue ejecutada por Alpaca.
+        2. Fallback: compara precio actual contra target/stop del monitor.
+           Si se activa, cancela las legs activas del bracket antes de colocar la orden de cierre.
+        """
         target = state_row.get("target_price")
         stop = state_row.get("stop_loss")
         qty = state_row.get("position_qty") or 0
         position_side = state_row.get("position_side", "long")
+        bracket_order_id = state_row.get("bracket_order_id")
 
         if not qty:
-            # Posición sin cantidad registrada → resetear
             self._logger.warning(f"{symbol}: POSITION_OPEN sin qty registrada → WATCHING", source="monitor")
             self._storage.upsert_symbol_state(symbol, state="WATCHING")
             return None
 
+        close_side = "buy" if position_side == "short" else "sell"
+
+        # ── 1. Verificar si Alpaca ejecutó una leg del bracket automáticamente ─
+        if bracket_order_id:
+            try:
+                bracket_order = await self._alpaca.get_order(bracket_order_id)
+                if bracket_order:
+                    for leg in (bracket_order.get("legs") or []):
+                        if leg.get("status") == "filled":
+                            leg_id = leg.get("id")
+                            leg_order = await self._alpaca.get_order(leg_id) if leg_id else None
+                            fill_price = (leg_order.get("filled_avg_price") if leg_order else None) or price
+                            fill_qty = (leg_order.get("filled_qty") if leg_order else None) or qty
+                            fees = (leg_order.get("commission") if leg_order else 0.0) or 0.0
+
+                            leg_type = leg.get("type", "")
+                            if leg_type == "limit":
+                                trigger = f"Take-profit ${target:.2f} ejecutado automáticamente por Alpaca"
+                            else:
+                                trigger = f"Stop-loss ${stop:.2f} ejecutado automáticamente por Alpaca"
+
+                            if position_side == "short":
+                                entry_trade = self._storage.get_last_sell_trade(symbol)
+                                entry_price = entry_trade.get("price") if entry_trade else None
+                                pnl = (entry_price - fill_price) * fill_qty if (fill_price and entry_price) else None
+                                alert_buy, alert_sell = fill_price, entry_price
+                            else:
+                                entry_trade = self._storage.get_last_buy_trade(symbol)
+                                entry_price = entry_trade.get("price") if entry_trade else None
+                                pnl = (fill_price - entry_price) * fill_qty if (fill_price and entry_price) else None
+                                alert_buy, alert_sell = entry_price, fill_price
+
+                            self._storage.save_trade(
+                                symbol=symbol,
+                                side=close_side,
+                                qty=fill_qty,
+                                price=fill_price,
+                                order_id=leg_id,
+                                status="filled",
+                                trigger=trigger,
+                                reason=trigger,
+                                pnl=pnl,
+                                fees=fees,
+                            )
+                            self._storage.upsert_symbol_state(
+                                symbol,
+                                state="WATCHING",
+                                target_price=None,
+                                stop_loss=None,
+                                position_qty=None,
+                                position_open_at=None,
+                                chart_path=None,
+                                pending_order_id=None,
+                                analysis_summary=None,
+                                position_side="long",
+                                bracket_order_id=None,
+                            )
+                            pnl_str = f" | P&L: ${pnl:+.2f}" if pnl is not None else ""
+                            price_str = f"${fill_price:.2f}" if fill_price else "precio de mercado"
+                            self._logger.info(
+                                f"{symbol}: posición {position_side} cerrada por bracket Alpaca — "
+                                f"{fill_qty:.0f} acc. @ {price_str}{pnl_str} → WATCHING",
+                                source="monitor",
+                            )
+                            if self._alerter and fill_price and entry_price and pnl is not None:
+                                try:
+                                    self._alerter.send_close_alert(
+                                        symbol=symbol,
+                                        qty=fill_qty,
+                                        buy_price=alert_buy,
+                                        sell_price=alert_sell,
+                                        pnl=pnl,
+                                        fees=fees,
+                                        trigger=trigger,
+                                    )
+                                except Exception:
+                                    pass
+                            return f"{symbol} {close_side.upper()} FILLED @ {price_str}{pnl_str} (bracket)"
+            except Exception as e:
+                self._logger.error(
+                    f"{symbol}: error verificando bracket order {bracket_order_id}: {e}",
+                    source="monitor",
+                    exc_info=True,
+                )
+
+        # ── 2. Fallback: lógica de precio ──────────────────────────────────────
         reason = None
         if position_side == "short":
-            # Para cortos: precio baja → ganancia (target < entry), precio sube → pérdida (stop > entry)
             if target and price <= target:
                 reason = f"Short target ${target:.2f} alcanzado (precio actual: ${price:.2f})"
             elif stop and price >= stop:
                 reason = f"Short stop-loss ${stop:.2f} activado (precio actual: ${price:.2f})"
-            close_side = "buy"
         else:
             if target and price >= target:
                 reason = f"Target ${target:.2f} alcanzado (precio actual: ${price:.2f})"
             elif stop and price <= stop:
                 reason = f"Stop-loss ${stop:.2f} activado (precio actual: ${price:.2f})"
-            close_side = "sell"
 
         if not reason:
             self._logger.debug(
@@ -521,6 +618,27 @@ class PriceMonitor:
                 source="monitor",
             )
             return None
+
+        # Cancelar legs activas del bracket antes de colocar orden de cierre manual
+        if bracket_order_id:
+            try:
+                bracket_order = await self._alpaca.get_order(bracket_order_id)
+                if bracket_order:
+                    for leg in (bracket_order.get("legs") or []):
+                        if leg.get("status") not in ("filled", "cancelled", "expired", "rejected"):
+                            leg_id = leg.get("id")
+                            if leg_id:
+                                await self._alpaca.cancel_order(leg_id)
+                                self._logger.debug(
+                                    f"{symbol}: leg bracket {leg_id} cancelada (fallback precio)",
+                                    source="monitor",
+                                )
+            except Exception as e:
+                self._logger.error(
+                    f"{symbol}: error cancelando legs del bracket: {e}",
+                    source="monitor",
+                    exc_info=True,
+                )
 
         self._logger.info(f"{symbol}: cerrando posición {position_side} — {reason}", source="monitor")
         try:
@@ -530,6 +648,7 @@ class PriceMonitor:
                 state="CLOSING",
                 pending_order_id=result.get("order_id"),
                 analysis_summary=reason,
+                bracket_order_id=None,
             )
             self._logger.info(
                 f"{symbol}: orden {close_side.upper()}×{qty} enviada (order_id={result.get('order_id')}) → CLOSING",
@@ -681,6 +800,7 @@ class PriceMonitor:
                 pending_order_id=None,
                 analysis_summary=None,
                 position_side="long",
+                bracket_order_id=None,
             )
             pnl_str = f" | P&L: ${pnl:+.2f}" if pnl is not None else ""
             price_str = f"${fill_price:.2f}" if fill_price else "precio de mercado"
@@ -1082,7 +1202,16 @@ async def run_monitor(
     yahoo_source = YahooSymbolSource(logger=logger)
     aggregator = NewsAggregator(alpaca_news, rss_source, yahoo_source, logger=logger)
     news_classifier_agent = await build_news_classifier_agent(config, bus, model_registry)
-    news_service = NewsIngestionService(aggregator, news_classifier_agent, storage, logger=logger)
+    news_classifier_full_agent = await build_news_classifier_agent(
+        config, bus, model_registry, full_content=True
+    )
+    news_service = NewsIngestionService(
+        aggregator,
+        news_classifier_agent,
+        storage,
+        logger=logger,
+        full_content_classifier_agent=news_classifier_full_agent,
+    )
 
     # Arrancar monitor
     monitor = PriceMonitor(

@@ -704,3 +704,227 @@ async def test_get_order_commission_defaults_to_zero():
         result = await client.get_order("ord-2")
 
     assert result["commission"] == 0.0
+
+
+# ── Bracket orders ────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_place_order_bracket_includes_tp_and_sl_in_payload():
+    """place_order con take_profit_price y stop_loss_price envía bracket order."""
+    from src.alpaca import AlpacaClient
+
+    order_data = {
+        "id": "bracket-001",
+        "client_order_id": "cid-001",
+        "status": "accepted",
+        "symbol": "AAPL",
+        "side": "buy",
+        "qty": "2",
+        "submitted_at": "2024-01-01T10:00:00Z",
+        "order_class": "bracket",
+        "legs": [
+            {"id": "tp-001", "type": "limit", "status": "accepted", "side": "sell"},
+            {"id": "sl-001", "type": "stop", "status": "accepted", "side": "sell"},
+        ],
+    }
+    client = AlpacaClient("k", "s")
+    captured_payload = {}
+
+    def _fake_post(url, json=None, **kwargs):
+        captured_payload.update(json or {})
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = AsyncMock(return_value=order_data)
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+        ctx.__aexit__ = AsyncMock(return_value=None)
+        return ctx
+
+    mock_session = MagicMock()
+    mock_session.post.side_effect = _fake_post
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+        result = await client.place_order("AAPL", 2, "buy", take_profit_price=185.0, stop_loss_price=170.0)
+
+    assert captured_payload.get("order_class") == "bracket"
+    assert captured_payload.get("take_profit") == {"limit_price": "185.0"}
+    assert captured_payload.get("stop_loss") == {"stop_price": "170.0"}
+    assert result["order_id"] == "bracket-001"
+    assert result["take_profit_order_id"] == "tp-001"
+    assert result["stop_loss_order_id"] == "sl-001"
+
+
+@pytest.mark.asyncio
+async def test_place_order_no_bracket_when_prices_not_provided():
+    """place_order sin take_profit/stop_loss no incluye order_class en el payload."""
+    from src.alpaca import AlpacaClient
+
+    order_data = {
+        "id": "ord-001",
+        "client_order_id": "cid-001",
+        "status": "accepted",
+        "symbol": "AAPL",
+        "side": "buy",
+        "qty": "2",
+        "submitted_at": "2024-01-01T10:00:00Z",
+    }
+    client = AlpacaClient("k", "s")
+    captured_payload = {}
+
+    def _fake_post(url, json=None, **kwargs):
+        captured_payload.update(json or {})
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json = AsyncMock(return_value=order_data)
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+        ctx.__aexit__ = AsyncMock(return_value=None)
+        return ctx
+
+    mock_session = MagicMock()
+    mock_session.post.side_effect = _fake_post
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+        result = await client.place_order("AAPL", 2, "buy")
+
+    assert "order_class" not in captured_payload
+    assert "take_profit" not in captured_payload
+    assert "stop_loss" not in captured_payload
+    assert result["order_id"] == "ord-001"
+    assert "take_profit_order_id" not in result
+    assert "stop_loss_order_id" not in result
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_returns_true_on_success():
+    """cancel_order retorna True cuando la cancelación es exitosa (204 o 200)."""
+    from src.alpaca import AlpacaClient
+
+    mock_resp = MagicMock()
+    mock_resp.status = 204
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.delete.return_value = mock_req_ctx
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    client = AlpacaClient("k", "s")
+    with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+        result = await client.cancel_order("ord-123")
+
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_returns_false_on_404():
+    """cancel_order retorna False cuando la orden no existe (404)."""
+    from src.alpaca import AlpacaClient
+
+    mock_resp = MagicMock()
+    mock_resp.status = 404
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.delete.return_value = mock_req_ctx
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    client = AlpacaClient("k", "s")
+    with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+        result = await client.cancel_order("non-existent")
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_returns_false_on_422():
+    """cancel_order retorna False cuando la orden ya no es cancelable (422)."""
+    from src.alpaca import AlpacaClient
+
+    mock_resp = MagicMock()
+    mock_resp.status = 422
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.delete.return_value = mock_req_ctx
+    mock_session_ctx = MagicMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    client = AlpacaClient("k", "s")
+    with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
+        result = await client.cancel_order("already-filled")
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_get_order_returns_legs_for_bracket_order():
+    """get_order incluye las legs cuando la orden es un bracket."""
+    from src.alpaca import AlpacaClient
+
+    order_data = {
+        "id": "bracket-001",
+        "status": "accepted",
+        "filled_avg_price": None,
+        "filled_qty": "0",
+        "side": "buy",
+        "symbol": "AAPL",
+        "legs": [
+            {"id": "tp-001", "status": "accepted", "type": "limit", "side": "sell"},
+            {"id": "sl-001", "status": "accepted", "type": "stop", "side": "sell"},
+        ],
+    }
+    client = AlpacaClient("k", "s")
+    with _mock_http("get", 200, order_data):
+        result = await client.get_order("bracket-001")
+
+    assert result["id"] == "bracket-001"
+    assert len(result["legs"]) == 2
+    assert result["legs"][0]["id"] == "tp-001"
+    assert result["legs"][0]["type"] == "limit"
+    assert result["legs"][1]["id"] == "sl-001"
+    assert result["legs"][1]["type"] == "stop"
+
+
+@pytest.mark.asyncio
+async def test_get_order_returns_empty_legs_for_regular_order():
+    """get_order retorna lista vacía de legs para órdenes normales."""
+    from src.alpaca import AlpacaClient
+
+    order_data = {
+        "id": "ord-001",
+        "status": "filled",
+        "filled_avg_price": "150.00",
+        "filled_qty": "5",
+        "side": "buy",
+        "symbol": "AAPL",
+    }
+    client = AlpacaClient("k", "s")
+    with _mock_http("get", 200, order_data):
+        result = await client.get_order("ord-001")
+
+    assert result["legs"] == []

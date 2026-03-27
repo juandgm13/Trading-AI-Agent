@@ -152,33 +152,42 @@ class AlpacaClient:
         qty: float,
         side: str,
         order_type: str = "market",
+        take_profit_price: float | None = None,
+        stop_loss_price: float | None = None,
     ) -> dict:
         """
-        Envía una orden de mercado.
+        Envía una orden de mercado, opcionalmente como bracket order.
 
         Args:
             symbol: Ticker (e.g. "AAPL")
             qty: Número de acciones
             side: "buy" o "sell"
             order_type: "market" (default)
+            take_profit_price: Si se provee junto con stop_loss_price, crea bracket order
+            stop_loss_price: Precio de stop-loss para bracket order
 
         Returns:
-            dict con order_id, status, symbol, side, qty
+            dict con order_id, status, symbol, side, qty y opcionalmente
+            take_profit_order_id / stop_loss_order_id si es bracket order.
         """
         url = f"{self._trading_url}/v2/orders"
-        payload = {
+        payload: dict = {
             "symbol": symbol,
             "qty": str(qty),
             "side": side,
             "type": order_type,
             "time_in_force": "day",
         }
+        if take_profit_price is not None and stop_loss_price is not None:
+            payload["order_class"] = "bracket"
+            payload["take_profit"] = {"limit_price": str(round(take_profit_price, 2))}
+            payload["stop_loss"] = {"stop_price": str(round(stop_loss_price, 2))}
         async with aiohttp.ClientSession(headers=self._headers) as session:
             async with session.post(url, json=payload) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
                 self._log_response("POST", url, resp.status, data)
-        return {
+        result: dict = {
             "order_id": data.get("id"),
             "client_order_id": data.get("client_order_id"),
             "status": data.get("status"),
@@ -187,13 +196,22 @@ class AlpacaClient:
             "qty": float(data.get("qty", qty)),
             "submitted_at": data.get("submitted_at"),
         }
+        legs = data.get("legs") or []
+        for leg in legs:
+            leg_type = leg.get("type", "")
+            if leg_type == "limit":
+                result["take_profit_order_id"] = leg.get("id")
+            elif leg_type in ("stop", "stop_limit"):
+                result["stop_loss_order_id"] = leg.get("id")
+        return result
 
     async def get_order(self, order_id: str) -> dict | None:
         """
-        Devuelve el estado de una orden específica.
+        Devuelve el estado de una orden específica, incluyendo legs si es bracket.
 
         Returns:
-            dict con {id, status, filled_avg_price, filled_qty, side, symbol} o None si no existe.
+            dict con {id, status, filled_avg_price, filled_qty, side, symbol, legs} o None si no existe.
+            legs: lista de dicts con {id, status, type, side} para bracket orders.
         """
         url = f"{self._trading_url}/v2/orders/{order_id}"
         async with aiohttp.ClientSession(headers=self._headers) as session:
@@ -203,6 +221,15 @@ class AlpacaClient:
                 resp.raise_for_status()
                 data = await resp.json()
                 self._log_response("GET", url, resp.status, data)
+        legs = [
+            {
+                "id": leg.get("id"),
+                "status": leg.get("status"),
+                "type": leg.get("type"),
+                "side": leg.get("side"),
+            }
+            for leg in (data.get("legs") or [])
+        ]
         return {
             "id": data.get("id"),
             "status": data.get("status"),
@@ -211,7 +238,23 @@ class AlpacaClient:
             "side": data.get("side"),
             "symbol": data.get("symbol"),
             "commission": float(data["commission"]) if data.get("commission") else 0.0,
+            "legs": legs,
         }
+
+    async def cancel_order(self, order_id: str) -> bool:
+        """
+        Cancela una orden específica por ID.
+
+        Returns:
+            True si se canceló correctamente, False si ya no es cancelable (404, ya ejecutada).
+        """
+        url = f"{self._trading_url}/v2/orders/{order_id}"
+        async with aiohttp.ClientSession(headers=self._headers) as session:
+            async with session.delete(url) as resp:
+                if resp.status in (404, 422):
+                    return False
+                resp.raise_for_status()
+                return True
 
     async def cancel_all_orders(self) -> None:
         """Cancela todas las órdenes pendientes."""

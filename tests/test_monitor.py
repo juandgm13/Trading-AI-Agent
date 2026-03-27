@@ -2762,3 +2762,220 @@ def test_run_monitor_sync_calls_asyncio_run(monkeypatch):
 
     assert called_with.get("stop_event") is stop
     assert called_with.get("force_event") is force
+
+
+# ── Bracket orders ─────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_manage_position_bracket_tp_leg_filled_transitions_to_watching(tmp_db):
+    """Si la leg de take-profit del bracket está filled, Alpaca cerró la posición → WATCHING."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+
+    # Guardar trade de entrada para calcular P&L
+    tmp_db.save_trade("AAPL", "buy", 2.0, 176.5, "ord-buy", "filled", "entry", "")
+
+    # Estado con bracket_order_id activo
+    tmp_db.upsert_symbol_state(
+        "AAPL",
+        state="POSITION_OPEN",
+        target_price=185.0,
+        stop_loss=170.0,
+        position_qty=2.0,
+        bracket_order_id="bracket-1",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    parent_order = {
+        "id": "bracket-1",
+        "status": "accepted",
+        "filled_avg_price": None,
+        "filled_qty": 0,
+        "side": "buy",
+        "symbol": "AAPL",
+        "commission": 0,
+        "legs": [
+            {"id": "tp-1", "status": "filled", "type": "limit", "side": "sell"},
+            {"id": "sl-1", "status": "cancelled", "type": "stop", "side": "sell"},
+        ],
+    }
+    tp_order = {
+        "id": "tp-1",
+        "status": "filled",
+        "filled_avg_price": 185.0,
+        "filled_qty": 2.0,
+        "side": "sell",
+        "symbol": "AAPL",
+        "commission": 0.5,
+        "legs": [],
+    }
+    orders = {"bracket-1": parent_order, "tp-1": tp_order}
+    mock_alpaca.get_order = AsyncMock(side_effect=lambda oid: orders.get(oid))
+
+    result = await monitor._manage_position("AAPL", 175.0, state_row)
+
+    assert "bracket" in (result or "").lower() or result is not None
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "WATCHING"
+    assert tmp_db.get_symbol_state("AAPL")["bracket_order_id"] is None
+    # No se debe haber colocado una orden manual de cierre
+    mock_alpaca.place_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_manage_position_bracket_sl_leg_filled_transitions_to_watching(tmp_db):
+    """Si la leg de stop-loss del bracket está filled → WATCHING (stop activado por Alpaca)."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+
+    tmp_db.save_trade("AAPL", "buy", 3.0, 176.5, "ord-buy", "filled", "entry", "")
+    tmp_db.upsert_symbol_state(
+        "AAPL",
+        state="POSITION_OPEN",
+        target_price=185.0,
+        stop_loss=170.0,
+        position_qty=3.0,
+        bracket_order_id="bracket-2",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    parent_order = {
+        "id": "bracket-2",
+        "status": "accepted",
+        "filled_avg_price": None,
+        "filled_qty": 0,
+        "side": "buy",
+        "symbol": "AAPL",
+        "commission": 0,
+        "legs": [
+            {"id": "tp-2", "status": "cancelled", "type": "limit", "side": "sell"},
+            {"id": "sl-2", "status": "filled", "type": "stop", "side": "sell"},
+        ],
+    }
+    sl_order = {
+        "id": "sl-2",
+        "status": "filled",
+        "filled_avg_price": 170.0,
+        "filled_qty": 3.0,
+        "side": "sell",
+        "symbol": "AAPL",
+        "commission": 0.5,
+        "legs": [],
+    }
+    orders = {"bracket-2": parent_order, "sl-2": sl_order}
+    mock_alpaca.get_order = AsyncMock(side_effect=lambda oid: orders.get(oid))
+
+    await monitor._manage_position("AAPL", 172.0, state_row)
+
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "WATCHING"
+    mock_alpaca.place_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_manage_position_bracket_no_legs_filled_uses_price_fallback_and_cancels_legs(tmp_db):
+    """Si ninguna leg del bracket está filled pero el precio cruza el target, se cancela el bracket y se cierra manualmente."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+
+    mock_alpaca.cancel_order = AsyncMock(return_value=True)
+
+    tmp_db.upsert_symbol_state(
+        "AAPL",
+        state="POSITION_OPEN",
+        target_price=185.0,
+        stop_loss=170.0,
+        position_qty=2.0,
+        bracket_order_id="bracket-3",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    parent_order = {
+        "id": "bracket-3",
+        "status": "accepted",
+        "filled_avg_price": None,
+        "filled_qty": 0,
+        "side": "buy",
+        "symbol": "AAPL",
+        "commission": 0,
+        "legs": [
+            {"id": "tp-3", "status": "accepted", "type": "limit", "side": "sell"},
+            {"id": "sl-3", "status": "accepted", "type": "stop", "side": "sell"},
+        ],
+    }
+    mock_alpaca.get_order = AsyncMock(return_value=parent_order)
+
+    # Precio cruza el target → fallback
+    result = await monitor._manage_position("AAPL", 186.0, state_row)
+
+    # Las legs activas deben cancelarse
+    assert mock_alpaca.cancel_order.call_count == 2
+    cancelled_ids = {call.args[0] for call in mock_alpaca.cancel_order.call_args_list}
+    assert "tp-3" in cancelled_ids
+    assert "sl-3" in cancelled_ids
+    # Debe colocar orden de cierre manual → CLOSING
+    mock_alpaca.place_order.assert_called_once()
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "CLOSING"
+    assert tmp_db.get_symbol_state("AAPL")["bracket_order_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_manage_position_bracket_get_order_exception_falls_through_to_price(tmp_db):
+    """Si get_order falla al verificar el bracket, se continúa con la lógica de precio."""
+    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
+
+    tmp_db.upsert_symbol_state(
+        "AAPL",
+        state="POSITION_OPEN",
+        target_price=185.0,
+        stop_loss=170.0,
+        position_qty=2.0,
+        bracket_order_id="bracket-4",
+    )
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    # Primera llamada (verificación bracket) falla; segunda (fallback cancel) también falla
+    mock_alpaca.get_order = AsyncMock(side_effect=RuntimeError("API error"))
+
+    # Precio no cruza target/stop → no se cierra
+    result = await monitor._manage_position("AAPL", 175.0, state_row)
+
+    assert result is None
+    assert tmp_db.get_symbol_state("AAPL")["state"] == "POSITION_OPEN"
+
+
+@pytest.mark.asyncio
+async def test_open_position_stores_bracket_order_id(tmp_db):
+    """Cuando se abre posición con target y stop, se guarda bracket_order_id en symbol_states."""
+    monitor, mock_alpaca, mock_tech, mock_market_ctx, mock_trader = _make_monitor(tmp_db)
+    mock_alpaca.place_order = AsyncMock(return_value={
+        "order_id": "bracket-001",
+        "status": "submitted",
+        "take_profit_order_id": "tp-001",
+        "stop_loss_order_id": "sl-001",
+    })
+    mock_trader.run = AsyncMock(return_value=json.dumps({
+        "decision": "OPEN_POSITION",
+        "symbol": "AAPL",
+        "qty": 2,
+        "reasoning": "Strong signal",
+    }))
+    # TechnicalEntryAgent provee target y stop
+    mock_tech.run = AsyncMock(return_value=json.dumps({
+        "trend": "BULLISH",
+        "signal": "BUY",
+        "target_price": 185.0,
+        "stop_loss": 170.0,
+        "confidence": 80,
+        "summary": "Strong entry",
+    }))
+
+    tmp_db.upsert_symbol_state("AAPL", state="OPPORTUNITY_FOUND")
+    snap = {"close": 176.0, "volume": 1000, "timestamp": "t"}
+    state_row = tmp_db.get_symbol_state("AAPL")
+
+    await monitor._process_symbol("AAPL", snap, state_row)
+
+    # Verificar que place_order fue llamado con take_profit_price y stop_loss_price
+    call_kwargs = mock_alpaca.place_order.call_args
+    assert call_kwargs.kwargs.get("take_profit_price") == 185.0
+    assert call_kwargs.kwargs.get("stop_loss_price") == 170.0
+
+    # Verificar que bracket_order_id queda guardado en el estado
+    new_state = tmp_db.get_symbol_state("AAPL")
+    assert new_state["bracket_order_id"] == "bracket-001"

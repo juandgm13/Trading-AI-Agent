@@ -778,3 +778,74 @@ def test_expire_old_articles_deletes_past_expires(tmp_db):
     remaining = tmp_db.get_articles_by_scope("market")
     assert len(remaining) == 1
     assert remaining[0]["url"] == a2.url
+
+
+# ── bracket_order_id en symbol_states ─────────────────────────────────────────
+
+def test_upsert_symbol_state_stores_bracket_order_id(tmp_db):
+    """upsert_symbol_state persiste bracket_order_id correctamente."""
+    tmp_db.upsert_symbol_state("AAPL", state="OPENING", bracket_order_id="bracket-001")
+    row = tmp_db.get_symbol_state("AAPL")
+    assert row["bracket_order_id"] == "bracket-001"
+
+
+def test_upsert_symbol_state_clears_bracket_order_id(tmp_db):
+    """upsert_symbol_state permite limpiar bracket_order_id a None."""
+    tmp_db.upsert_symbol_state("AAPL", state="OPENING", bracket_order_id="bracket-001")
+    tmp_db.upsert_symbol_state("AAPL", state="WATCHING", bracket_order_id=None)
+    row = tmp_db.get_symbol_state("AAPL")
+    assert row["bracket_order_id"] is None
+
+
+def test_get_symbol_state_default_bracket_order_id_is_none(tmp_db):
+    """El estado por defecto de un símbolo nuevo tiene bracket_order_id=None."""
+    row = tmp_db.get_symbol_state("TSLA")
+    assert "bracket_order_id" in row
+    assert row["bracket_order_id"] is None
+
+
+# ── article_summary en articles ────────────────────────────────────────────────
+
+def test_save_article_with_article_summary_persists_summary(tmp_db):
+    """save_article persiste article_summary cuando está en la clasificación."""
+    article = _make_article(title="Fed hikes rates", url="https://example.com/fed-1")
+    classification = {
+        "scope": "market", "ticker": None, "exchange": None,
+        "impact": "HIGH", "reasoning": "Fed decision.",
+        "article_summary": "Fed raised rates by 25bp. Market rallied.",
+    }
+    tmp_db.save_article(article, classification)
+
+    articles = tmp_db.get_articles_by_scope("market")
+    assert len(articles) == 1
+    assert articles[0]["article_summary"] == "Fed raised rates by 25bp. Market rallied."
+
+
+def test_save_article_without_article_summary_stores_none(tmp_db):
+    """save_article guarda article_summary=None cuando la clasificación no incluye el campo."""
+    article = _make_article(title="Routine update", url="https://example.com/routine-1")
+    classification = {
+        "scope": "market", "ticker": None, "exchange": None,
+        "impact": "LOW", "reasoning": "Nothing special.",
+    }
+    tmp_db.save_article(article, classification)
+
+    articles = tmp_db.get_articles_by_scope("market")
+    assert len(articles) == 1
+    assert articles[0].get("article_summary") is None
+
+
+def test_get_articles_by_scope_returns_article_summary_field(tmp_db):
+    """get_articles_by_scope incluye el campo article_summary en los dicts retornados."""
+    article = _make_article(title="Tech sector rally", url="https://example.com/tech-1")
+    classification = {
+        "scope": "market", "ticker": None, "exchange": None,
+        "impact": "MEDIUM", "reasoning": "Tech up.",
+        "article_summary": "Tech stocks rallied on AI optimism.",
+    }
+    tmp_db.save_article(article, classification)
+
+    results = tmp_db.get_articles_by_scope("market")
+    assert len(results) == 1
+    assert "article_summary" in results[0]
+    assert results[0]["article_summary"] == "Tech stocks rallied on AI optimism."
