@@ -158,10 +158,18 @@ Logs are written to `logs/` (auto-created):
 
 | File | Content |
 |---|---|
-| `logs/agent.log` | All messages at the configured `LOG_LEVEL` (rotating) |
-| `logs/prompts.log` | Every LLM prompt + raw response (always written, regardless of level) |
+| `logs/agent.log` | All messages at the configured `LOG_LEVEL` (rotating, max 5 MB × 3) |
+| `logs/prompts.jsonl` | Every LLM prompt + raw response in JSON Lines format (always written, regardless of level, max 10 MB × 3) |
 
-Example output:
+`prompts.jsonl` stores one JSON object per line:
+
+```json
+{"timestamp": "2026-03-28T10:00:00.123", "agent": "technical", "system_prompt": "...", "prompt": "...", "response": "..."}
+```
+
+The **Prompt Logs** page in the Streamlit dashboard (`7_Prompts`) reads this file and displays each entry in a collapsible expander, with filters by agent and a limit on the number of entries shown.
+
+Example output in `agent.log`:
 
 ```
 [INFO] [monitor] Ciclo inicio — 42 símbolos a monitorizar

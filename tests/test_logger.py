@@ -4,9 +4,10 @@ Tests unitarios de AgentLogger y get_logger.
 No requieren credenciales ni red. Cubren:
   - Métodos debug/info/warning/error con y sin on_log callback
   - Prefijo [source] en mensajes
-  - log_prompt con y sin system_prompt
+  - log_prompt con y sin system_prompt (formato JSONL)
   - get_logger con y sin LOG_LEVEL en entorno
 """
+import json
 import os
 import pytest
 from unittest.mock import MagicMock
@@ -89,12 +90,12 @@ def test_log_prompt_without_system_prompt(tmp_path):
         prompt="Analyze AAPL",
         response='{"trend": "BULLISH"}',
     )
-    prompt_log = tmp_path / "prompts.log"
-    content = prompt_log.read_text(encoding="utf-8")
-    assert "TechnicalAgent" in content
-    assert "Analyze AAPL" in content
-    assert "BULLISH" in content
-    assert "SYSTEM PROMPT" not in content
+    prompt_log = tmp_path / "prompts.jsonl"
+    entry = json.loads(prompt_log.read_text(encoding="utf-8").strip())
+    assert entry["agent"] == "TechnicalAgent"
+    assert "Analyze AAPL" in entry["prompt"]
+    assert "BULLISH" in entry["response"]
+    assert entry["system_prompt"] == ""
 
 
 def test_log_prompt_with_system_prompt(tmp_path):
@@ -106,10 +107,35 @@ def test_log_prompt_with_system_prompt(tmp_path):
         response='{"decision": "HOLD"}',
         system_prompt="You are a trading assistant.",
     )
-    content = (tmp_path / "prompts.log").read_text(encoding="utf-8")
-    assert "SYSTEM PROMPT" in content
-    assert "You are a trading assistant." in content
-    assert "decision" in content
+    entry = json.loads((tmp_path / "prompts.jsonl").read_text(encoding="utf-8").strip())
+    assert entry["system_prompt"] == "You are a trading assistant."
+    assert "decision" in entry["response"]
+    assert entry["agent"] == "TradingAgent"
+
+
+def test_log_prompt_writes_valid_json(tmp_path):
+    from src.logger import AgentLogger
+    logger = AgentLogger(level="DEBUG", log_dir=str(tmp_path))
+    logger.log_prompt(
+        agent_name="technical",
+        prompt="prompt text",
+        response='{"signal": "BUY"}',
+        system_prompt="sys",
+    )
+    logger.log_prompt(
+        agent_name="trader_entry",
+        prompt="another prompt",
+        response='{"decision": "HOLD"}',
+    )
+    lines = (tmp_path / "prompts.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    for line in lines:
+        entry = json.loads(line)
+        assert "timestamp" in entry
+        assert "agent" in entry
+        assert "prompt" in entry
+        assert "response" in entry
+        assert "system_prompt" in entry
 
 
 # ── get_logger ─────────────────────────────────────────────────────────────────

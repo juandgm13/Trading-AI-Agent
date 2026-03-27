@@ -8,11 +8,13 @@ LOG_LEVEL en .env controla la verbosidad:
   ERROR   → solo errores críticos
 
 Archivos generados:
-  logs/agent.log   → todos los mensajes >= level
-  logs/prompts.log → prompts enviados al LLM + respuestas recibidas
+  logs/agent.log      → todos los mensajes >= level
+  logs/prompts.jsonl  → prompts enviados al LLM + respuestas (formato JSON Lines)
 """
+import json
 import logging
 import os
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -56,22 +58,20 @@ class AgentLogger:
         )
         self._logger.addHandler(file_handler)
 
-        # ── Logger de prompts (separado, siempre en DEBUG) ────────────────────
+        # ── Logger de prompts (separado, siempre en DEBUG, formato JSONL) ───────
         self._prompt_logger = logging.getLogger("agent.prompts")
         self._prompt_logger.setLevel(logging.DEBUG)
         self._prompt_logger.handlers.clear()
         self._prompt_logger.propagate = False
 
         prompt_handler = RotatingFileHandler(
-            log_path / "prompts.log",
+            log_path / "prompts.jsonl",
             maxBytes=10 * 1024 * 1024,
             backupCount=3,
             encoding="utf-8",
         )
         prompt_handler.setLevel(logging.DEBUG)
-        prompt_handler.setFormatter(
-            logging.Formatter("%(asctime)s\n%(message)s\n" + "─" * 80 + "\n")
-        )
+        prompt_handler.setFormatter(logging.Formatter("%(message)s"))
         self._prompt_logger.addHandler(prompt_handler)
 
     # ── Métodos de log ─────────────────────────────────────────────────────────
@@ -112,13 +112,19 @@ class AgentLogger:
         response: str,
         system_prompt: str = "",
     ):
-        """Registra el contenido completo enviado al LLM y la respuesta recibida."""
-        parts = [f"=== {agent_name} ==="]
-        if system_prompt:
-            parts.append(f"SYSTEM PROMPT:\n{system_prompt}")
-        parts.append(f"USER PROMPT:\n{prompt}")
-        parts.append(f"RESPONSE:\n{response}")
-        self._prompt_logger.debug("\n\n".join(parts))
+        """Registra el contenido completo enviado al LLM y la respuesta recibida.
+
+        Escribe una línea JSON (JSONL) en logs/prompts.jsonl con los campos:
+          timestamp, agent, system_prompt, prompt, response.
+        """
+        entry = {
+            "timestamp": datetime.now().isoformat(timespec="milliseconds"),
+            "agent": agent_name,
+            "system_prompt": system_prompt,
+            "prompt": prompt,
+            "response": response,
+        }
+        self._prompt_logger.debug(json.dumps(entry, ensure_ascii=False))
 
 
 def get_logger(on_log=None) -> AgentLogger:
