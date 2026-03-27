@@ -23,6 +23,7 @@ articles (
     impact            TEXT,             -- HIGH | MEDIUM | LOW | null (null when scope=irrelevant)
     reasoning         TEXT,             -- classifier justification
     expires_at        TEXT,             -- ISO datetime; HIGH=7d, MEDIUM=3d, LOW/null=1d
+    article_summary   TEXT,             -- 2-3 sentence summary from second-pass classification (may be NULL)
     -- Legacy columns (kept for backwards compatibility)
     company           TEXT,
     impact_level      TEXT,
@@ -104,6 +105,7 @@ symbol_states (
     chart_path          TEXT,   -- absolute path to last evidence PNG (may be NULL)
     pending_order_id    TEXT,   -- Alpaca order ID while in OPENING or CLOSING state
     position_side       TEXT DEFAULT 'long',  -- 'long' | 'short'
+    bracket_order_id    TEXT,   -- Parent bracket order ID (persists in POSITION_OPEN for auto-exit detection)
     updated_at          TEXT NOT NULL
 )
 ```
@@ -183,4 +185,8 @@ ALTER TABLE articles ADD COLUMN exchange_affected TEXT;
 ALTER TABLE articles ADD COLUMN impact TEXT;
 ALTER TABLE articles ADD COLUMN reasoning TEXT;
 ALTER TABLE articles ADD COLUMN expires_at TEXT;
+-- New columns
+ALTER TABLE agent_reports ADD COLUMN chart_path TEXT;
+ALTER TABLE symbol_states ADD COLUMN bracket_order_id TEXT;  -- bracket order ID for auto-exit detection
+ALTER TABLE articles ADD COLUMN article_summary TEXT;        -- second-pass classification summary
 ```

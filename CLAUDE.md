@@ -103,6 +103,9 @@ The monitor pre-fetches bars via Alpaca and reads pre-classified news from the D
 | **TradingEntryAgent** | Sub-agent reports in prompt | `{decision: OPEN_POSITION\|HOLD\|REJECT, symbol, qty: <int or null>, reasoning}` |
 | **AlpacaClient.get_asset()** | Symbol string | `{symbol, name, exchange, marginable, shortable}` or `None` |
 | **AlpacaClient.get_clock()** | — | `{is_open, next_open, next_close, timestamp}` |
+| **AlpacaClient.place_order()** | symbol, qty, side, [take_profit_price, stop_loss_price] | Market or bracket order; returns leg IDs if bracket |
+| **AlpacaClient.cancel_order()** | order_id | Cancels a specific order; returns True/False |
+| **AlpacaClient.get_order()** | order_id | Order status + `legs: [{id, status, type, side}]` for bracket orders |
 | **ChartGenerator** | symbol, bars, timeframe, event_label | PNG path (saved to `charts/`) |
 | **Alerting** | Trade details | Email via Gmail SMTP |
 | **Storage** | Various | SQLite persistence |
@@ -113,7 +116,8 @@ The monitor pre-fetches bars via Alpaca and reads pre-classified news from the D
 - `SimplePlanner` embeds the system prompt in the user message — framework does not separate system/user prompts.
 - All crypto symbols are filtered out from Alpaca assets and watchlist (`asset_class=us_equity`, `exchange != CRYPTO`).
 - SQLite deduplication uses `url` as unique key for articles; `content_hash` (sha256 of title+date) for cross-source dedup. `symbol` as primary key for `symbol_states`.
-- **News pipeline**: `NewsAggregator` (Alpaca News + RSS + Yahoo by symbol) → `NewsClassifierAgent` → persisted with retention (HIGH=7d, MEDIUM=3d, LOW=1d). Article scopes: `company`, `market`, `exchange`, `irrelevant`.
+- **News pipeline**: `NewsAggregator` (Alpaca News + RSS + Yahoo by symbol) → **two-pass** `NewsClassifierAgent`: (1) title+description only; (2) if scope≠`irrelevant`, fetch full article text and reclassify with `article_summary` → persisted with retention (HIGH=7d, MEDIUM=3d, LOW=1d). Article scopes: `company`, `market`, `exchange`, `irrelevant`.
+- **Bracket orders**: When `target_price` and `stop_loss` are both set, the monitor places a bracket order to Alpaca. `bracket_order_id` is stored in `symbol_states`. In `POSITION_OPEN`, the monitor first checks if a bracket leg was auto-executed by Alpaca; if not, it falls back to price-comparison logic (cancels remaining legs before manual close).
 - `AgentLogger` writes to `logs/agent.log` and `logs/prompts.log` (rotating, configurable via `LOG_LEVEL`).
 - **Position value limit**: `MAX_POSITION_VALUE` (env) overrides `max_position_value` (yaml). Agent qty is capped to `max(1, int(MAX_POSITION_VALUE / price))`; `null` falls back to the cap.
 - **Evidence charts**: PNG candlestick charts are generated via `mplfinance` at state transitions (opportunity detected, position opened) and stored in `charts/`. Path is persisted in `symbol_states.chart_path`.

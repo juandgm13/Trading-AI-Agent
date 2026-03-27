@@ -32,7 +32,7 @@ stateDiagram-v2
 | `WATCHING` | Every `analysis_interval_hours` (default 4h) or force event | **TechnicalWatchingAgent** (90-day bars) + market context from DB → **TradingOpportunityAgent** |
 | `OPPORTUNITY_FOUND` | Every poll cycle (default 60s) | **TechnicalEntryAgent** (5-day 15-min bars) + CompanyAnalysisAgent → **TradingEntryAgent** |
 | `OPENING` | Every poll cycle | `AlpacaClient.get_order()` to check buy order fill |
-| `POSITION_OPEN` | Every poll cycle | Price check only (no LLM call) |
+| `POSITION_OPEN` | Every poll cycle | 1. Check bracket order legs via `AlpacaClient.get_order()` (auto-exit by Alpaca); 2. Fallback: price check (cancel bracket legs, place market close) |
 | `CLOSING` | Every poll cycle | `AlpacaClient.get_order()` to check sell order fill → P&L calculation |
 | Global | Every `analysis_interval_hours` | MarketContextAgent (general market news → DB) |
 
@@ -218,8 +218,9 @@ The chart path is logged as `file:///absolute/path.png` and displayed in the **E
 
 | Module | Input | Output |
 |---|---|---|
-| **NewsClassifierAgent** | `Article` (title, description, content) | `{scope, ticker, exchange, impact, reasoning}` |
-| **NewsIngestionService** | `NewsAggregator` + `NewsClassifierAgent` + `StorageLayer` | `(fetched, classified)` / `list[dict]` |
+| **NewsClassifierAgent** | `Article` (title, description) | `{scope, ticker, exchange, impact, reasoning}` (first pass) |
+| **NewsClassifierAgent (full)** | `Article` (title, description, full_content) | `{scope, ticker, exchange, impact, reasoning, article_summary}` (second pass) |
+| **NewsIngestionService** | `NewsAggregator` + classifier agents + `StorageLayer` | `(fetched, classified)` / `list[dict]` |
 | **NewsAggregator** | Alpaca API key/secret | `list[Article]` (market news or symbol-specific) |
 | **TechnicalWatchingAgent** | 90 daily OHLCV bars JSON | `{trend, signal, key_supports: [float], key_resistances: [float], confidence, summary}` |
 | **TechnicalEntryAgent** | 96 × 15-min OHLCV bars JSON + optional medium-term context | `{trend, signal, target_price, stop_loss, confidence, summary}` |
@@ -229,6 +230,9 @@ The chart path is logged as `file:///absolute/path.png` and displayed in the **E
 | **TradingEntryAgent** | Technical + company reports | `{decision: OPEN_POSITION\|OPEN_SHORT\|HOLD\|REJECT, symbol, qty: <int or null>, reasoning}` |
 | **AlpacaClient.get_asset()** | Symbol string | `{symbol, name, exchange, marginable, shortable}` or `None` |
 | **AlpacaClient.get_clock()** | — | `{is_open, next_open, next_close, timestamp}` |
+| **AlpacaClient.place_order()** | symbol, qty, side, [take_profit_price, stop_loss_price] | Market or bracket order; returns `{order_id, take_profit_order_id?, stop_loss_order_id?}` |
+| **AlpacaClient.cancel_order()** | order_id | Cancels a specific order; returns True/False |
+| **AlpacaClient.get_order()** | order_id | Order status + `legs: [{id, status, type, side}]` for bracket orders |
 | **AlpacaClient** | Credentials + params | Prices, orders, assets, clock (async REST) |
 | **StorageLayer** | Various | SQLite persistence (7 tables) |
 | **TradeAlerter** | Trade details | HTML email via Gmail SMTP |
@@ -240,8 +244,9 @@ The chart path is logged as `file:///absolute/path.png` and displayed in the **E
 - `SimplePlanner` embeds the system prompt in the user message.
 - All crypto symbols are filtered out (`asset_class=us_equity`, `exchange != CRYPTO`).
 - SQLite deduplication for articles: primary key `url`; also `content_hash` (sha256 of title + date) for cross-source dedup. `symbol` as primary key for `symbol_states`.
-- **News pipeline**: `NewsAggregator` (Alpaca News API + RSS feeds + Yahoo Finance by symbol) → `NewsClassifierAgent` (scope/impact classification) → persisted in `articles` table with retention (HIGH=7d, MEDIUM=3d, LOW=1d). Agents read pre-classified articles from DB, not raw feeds.
+- **News pipeline**: `NewsAggregator` (Alpaca News API + RSS feeds + Yahoo Finance by symbol) → **two-pass** `NewsClassifierAgent`: (1) quick classification with title+description; (2) if scope ≠ `irrelevant`, fetch full article text and reclassify with `article_summary` → persisted in `articles` table with retention (HIGH=7d, MEDIUM=3d, LOW=1d). Agents read pre-classified articles from DB.
 - **Article scopes**: `company` (ticker-specific), `market` (general macro), `exchange` (NYSE/NASDAQ-level), `irrelevant` (filtered out by agents).
+- **Bracket orders**: When opening a position with both `target_price` and `stop_loss`, the monitor places a bracket order (`order_class=bracket`) with attached take-profit (limit) and stop-loss (stop) legs. `bracket_order_id` is persisted in `symbol_states`. In `POSITION_OPEN`, the monitor first checks whether Alpaca auto-executed a leg; if not, it falls back to its own price-comparison logic (cancelling bracket legs before placing a manual close order).
 - **Manual news ingestion**: the "Analyze news" button in Tkinter runs `NewsIngestionService.run_market_ingestion()` independently of the monitor loop.
 - `AgentLogger` writes to `logs/agent.log` and `logs/prompts.log` (rotating, configurable via `LOG_LEVEL`).
 - **Position sizing**: `TradingEntryAgent` recommends a qty; the monitor caps it to `max(1, int(MAX_POSITION_VALUE / price))`. Fallback to the cap if the agent returns `null`.
