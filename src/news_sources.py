@@ -7,6 +7,7 @@ import asyncio
 import json
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
 
 import aiohttp
 import feedparser
@@ -17,6 +18,57 @@ from src.ingestion import Article
 _TIMEOUT_SECONDS = 10
 _RSS_TIMEOUT_SECONDS = 5
 _MAX_LOG_CHARS = 4000
+_FULL_CONTENT_MAX_CHARS = 3000
+_FETCH_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; TradingBot/1.0)"}
+
+
+class _TextExtractor(HTMLParser):
+    """Parser HTML minimalista que extrae texto plano eliminando scripts y estilos."""
+
+    _SKIP_TAGS = {"script", "style", "nav", "header", "footer", "noscript", "svg"}
+
+    def __init__(self):
+        super().__init__()
+        self._texts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self._SKIP_TAGS:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag):
+        if tag in self._SKIP_TAGS and self._skip_depth > 0:
+            self._skip_depth -= 1
+
+    def handle_data(self, data):
+        if self._skip_depth == 0:
+            stripped = data.strip()
+            if stripped:
+                self._texts.append(stripped)
+
+    def get_text(self) -> str:
+        return " ".join(self._texts)
+
+
+async def fetch_article_content(url: str, session: aiohttp.ClientSession) -> str:
+    """
+    Intenta obtener el texto completo de un artículo a partir de su URL.
+
+    Usa aiohttp + html.parser de stdlib. Trunca a _FULL_CONTENT_MAX_CHARS.
+    Retorna cadena vacía ante cualquier error (timeout, 4xx, 5xx, parse error).
+    """
+    try:
+        timeout = aiohttp.ClientTimeout(total=_TIMEOUT_SECONDS)
+        async with session.get(url, headers=_FETCH_HEADERS, timeout=timeout) as resp:
+            if resp.status != 200:
+                return ""
+            html = await resp.text(errors="replace")
+        extractor = _TextExtractor()
+        extractor.feed(html)
+        text = extractor.get_text()
+        return text[:_FULL_CONTENT_MAX_CHARS] if text else ""
+    except Exception:
+        return ""
 
 
 class AlpacaNewsSource:

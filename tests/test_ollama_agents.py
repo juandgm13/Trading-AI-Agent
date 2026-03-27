@@ -299,6 +299,7 @@ async def test_news_classifier_company_article(agent_deps):
     assert result["scope"] in {"company", "market", "exchange", "irrelevant"}
     assert result["impact"] in {"HIGH", "MEDIUM", "LOW", None}
     assert isinstance(result["reasoning"], str)
+    assert "article_summary" in result  # campo siempre presente (None o str)
 
 
 @requires_ollama
@@ -330,3 +331,61 @@ async def test_news_classifier_market_article(agent_deps):
 
     assert result["scope"] in {"company", "market", "exchange", "irrelevant"}
     assert result["impact"] in {"HIGH", "MEDIUM", "LOW", None}
+
+
+# ── Unit tests (no Ollama) — build_news_classifier_prompt ────────────────────
+
+def test_build_news_classifier_prompt_without_full_content():
+    """build_news_classifier_prompt sin full_content no incluye el texto del artículo."""
+    from agents.economics_agent import build_news_classifier_prompt
+    from src.ingestion import Article
+    from datetime import datetime, timezone
+
+    article = Article(
+        source="Reuters", title="Apple earnings", description="Strong Q1",
+        content="", url="https://example.com/1",
+        published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        full_content="Long article body that should NOT appear.",
+    )
+    prompt = build_news_classifier_prompt(article, full_content=False)
+
+    assert "Apple earnings" in prompt
+    assert "Strong Q1" in prompt
+    assert "Long article body" not in prompt
+
+
+def test_build_news_classifier_prompt_with_full_content_includes_text():
+    """build_news_classifier_prompt con full_content incluye el texto y solicita resumen."""
+    from agents.economics_agent import build_news_classifier_prompt
+    from src.ingestion import Article
+    from datetime import datetime, timezone
+
+    article = Article(
+        source="Reuters", title="Apple earnings", description="Strong Q1",
+        content="", url="https://example.com/1",
+        published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        full_content="Apple reported record Q1 earnings beating estimates.",
+    )
+    prompt = build_news_classifier_prompt(article, full_content=True)
+
+    assert "Apple earnings" in prompt
+    assert "Strong Q1" in prompt
+    assert "Apple reported record Q1 earnings" in prompt
+    assert "summary" in prompt.lower()
+
+
+def test_build_news_classifier_prompt_full_content_empty_not_included():
+    """build_news_classifier_prompt con full_content=True pero full_content vacío → no incluye texto."""
+    from agents.economics_agent import build_news_classifier_prompt
+    from src.ingestion import Article
+    from datetime import datetime, timezone
+
+    article = Article(
+        source="Reuters", title="Apple earnings", description="Strong Q1",
+        content="", url="https://example.com/1",
+        published_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        full_content="",
+    )
+    prompt = build_news_classifier_prompt(article, full_content=True)
+
+    assert "Full article text" not in prompt

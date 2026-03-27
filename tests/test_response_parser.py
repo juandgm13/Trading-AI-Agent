@@ -379,3 +379,35 @@ def test_validate_news_classification_invalid_scope_defaults_to_irrelevant():
     result = validate_news_classification(text)
     assert result["scope"] == "irrelevant"
     assert result["impact"] is None
+
+
+def test_validate_news_classification_article_summary_present():
+    """validate_news_classification extrae article_summary cuando está presente."""
+    text = json.dumps({
+        "scope": "market", "ticker": None, "exchange": None,
+        "impact": "HIGH", "reasoning": "Fed hike.",
+        "article_summary": "Fed raised rates by 25bp. Markets reacted positively.",
+    })
+    result = validate_news_classification(text)
+    assert result["article_summary"] == "Fed raised rates by 25bp. Markets reacted positively."
+
+
+def test_validate_news_classification_article_summary_absent_defaults_to_none():
+    """validate_news_classification retorna article_summary=None cuando no está en el JSON."""
+    text = json.dumps({
+        "scope": "market", "ticker": None, "exchange": None,
+        "impact": "LOW", "reasoning": "Routine.",
+    })
+    result = validate_news_classification(text)
+    assert result["article_summary"] is None
+
+
+def test_validate_news_classification_article_summary_null_string_normalizes_to_none():
+    """validate_news_classification normaliza 'null' string a None en article_summary."""
+    text = json.dumps({
+        "scope": "company", "ticker": "TSLA", "exchange": None,
+        "impact": "MEDIUM", "reasoning": "Minor news.",
+        "article_summary": None,
+    })
+    result = validate_news_classification(text)
+    assert result["article_summary"] is None

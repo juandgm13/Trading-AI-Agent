@@ -216,25 +216,57 @@ Rules:
 - impact="LOW": routine news, small events with marginal financial relevance.\
 """
 
+NEWS_CLASSIFIER_FULL_SYSTEM_PROMPT = """\
+You are a financial news classifier and summarizer.
+
+You will receive ONE news article with its title, description, source, published date, and full text.
+Classify it and produce a concise summary. Return ONLY a valid JSON object — no markdown, no explanation outside JSON.
+
+Required JSON structure:
+{
+  "scope": "company" | "market" | "exchange" | "irrelevant",
+  "ticker": "<SYMBOL>" | null,
+  "exchange": "<EXCHANGE_NAME>" | null,
+  "impact": "HIGH" | "MEDIUM" | "LOW" | null,
+  "reasoning": "<one sentence>",
+  "article_summary": "<2-3 sentence summary of the key facts in the full article>" | null
+}
+
+Rules:
+- scope="company": news primarily affects one specific publicly-traded company → set ticker (e.g. "AAPL").
+- scope="market": news affects the broad equity market (Fed decisions, macro data, geopolitics, indices).
+- scope="exchange": news primarily affects one exchange or sector (e.g. NASDAQ tech selloff) → set exchange.
+- scope="irrelevant": sports, entertainment, non-financial content, or clearly unrelated to financial markets.
+- impact=null ONLY when scope="irrelevant".
+- impact="HIGH": major earnings surprise, acquisition, regulatory action, Fed rate decision, market crash.
+- impact="MEDIUM": analyst upgrades/downgrades, product launches, minor macro data releases.
+- impact="LOW": routine news, small events with marginal financial relevance.
+- article_summary: 2-3 sentences summarizing the key financial facts from the full text. Set null if scope="irrelevant".\
+"""
+
 
 async def build_news_classifier_agent(
     config,
     bus: EventBus,
     model_registry: ModelRegistry,
+    full_content: bool = False,
 ) -> object:
     """
     Construye el NewsClassifierAgent — clasifica artículos individuales.
 
     scope → company | market | exchange | irrelevant
     impact → HIGH | MEDIUM | LOW | null
+
+    Si full_content=True, usa el system prompt extendido que también solicita article_summary.
     """
+    system_prompt = NEWS_CLASSIFIER_FULL_SYSTEM_PROMPT if full_content else NEWS_CLASSIFIER_SYSTEM_PROMPT
     agent = (
         AgentBuilder()
-        .name("news_classifier")
+        .name("news_classifier_full" if full_content else "news_classifier")
         .planner("simple")
         .tools([])
         .model_role("news_classifier")
-        .system_prompt(NEWS_CLASSIFIER_SYSTEM_PROMPT)
+        .system_prompt(system_prompt)
         .stateless()
         .with_config(config)
         .with_event_bus(bus)
@@ -244,16 +276,26 @@ async def build_news_classifier_agent(
     return agent
 
 
-def build_news_classifier_prompt(article) -> str:
-    """Prompt para clasificar un artículo individual con el NewsClassifierAgent."""
-    return (
+def build_news_classifier_prompt(article, full_content: bool = False) -> str:
+    """
+    Prompt para clasificar un artículo individual con el NewsClassifierAgent.
+
+    Si full_content=True incluye el texto completo del artículo (article.full_content)
+    y solicita también un article_summary en el JSON de salida.
+    """
+    base = (
         "Classify the following news article:\n\n"
         f"Title: {article.title}\n"
         f"Source: {article.source}\n"
         f"Published: {article.published_at.isoformat()}\n"
-        f"Description: {article.description}\n\n"
-        "Return your classification as JSON."
+        f"Description: {article.description}\n"
     )
+    if full_content and getattr(article, "full_content", ""):
+        base += f"Full article text: {article.full_content}\n"
+        base += "\nReturn your classification and summary as JSON."
+    else:
+        base += "\nReturn your classification as JSON."
+    return base
 
 
 def build_economics_prompt(

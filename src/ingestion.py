@@ -11,3 +11,4 @@ class Article:
     url: str
     published_at: datetime
     feed_group: str = "unknown"  # "alpaca"|"<rss source name>"|"Yahoo Finance"
+    full_content: str = ""  # Texto completo del artículo (vacío si no se pudo obtener)

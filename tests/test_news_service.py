@@ -266,3 +266,138 @@ async def test_classify_article_logs_error_with_logger(tmp_db):
 
     assert result is None
     assert mock_logger.error.called
+
+
+# ── Two-pass classification ────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_classify_article_two_pass_fetches_full_content_when_not_irrelevant(tmp_db):
+    """Si scope != irrelevant y hay full_content_classifier, se fetcha y reclasifica con full content."""
+    import json
+
+    service, _, mock_classifier = _make_service(tmp_db)
+
+    mock_full_classifier = MagicMock()
+    mock_full_classifier.run = AsyncMock(return_value=json.dumps({
+        "scope": "company",
+        "ticker": "AAPL",
+        "exchange": None,
+        "impact": "HIGH",
+        "reasoning": "Full text confirms acquisition",
+        "article_summary": "Apple acquires startup for $1B. Deal expected to close Q3.",
+    }))
+    service._full_content_classifier = mock_full_classifier
+
+    article = _make_article(1, url="https://example.com/article/1")
+
+    with patch("src.news_service.NewsIngestionService._fetch_full_content", AsyncMock(return_value="Full article body text here.")):
+        result = await service._classify_article(article)
+
+    # La segunda pasada debe haberse ejecutado
+    mock_full_classifier.run.assert_called_once()
+    assert result["scope"] == "company"
+    assert result["impact"] == "HIGH"
+    assert result["article_summary"] == "Apple acquires startup for $1B. Deal expected to close Q3."
+    assert article.full_content == "Full article body text here."
+
+
+@pytest.mark.asyncio
+async def test_classify_article_skips_second_pass_when_irrelevant(tmp_db):
+    """Si la primera pasada clasifica como irrelevant, no se fetcha full content."""
+    import json
+
+    service, _, mock_classifier = _make_service(tmp_db)
+    mock_classifier.run = AsyncMock(return_value=json.dumps({
+        "scope": "irrelevant", "ticker": None, "exchange": None, "impact": None, "reasoning": "Sports news",
+    }))
+    mock_full_classifier = MagicMock()
+    mock_full_classifier.run = AsyncMock()
+    service._full_content_classifier = mock_full_classifier
+
+    with patch("src.news_service.NewsIngestionService._fetch_full_content", AsyncMock(return_value="Blah")) as mock_fetch:
+        result = await service._classify_article(_make_article(2))
+
+    mock_fetch.assert_not_called()
+    mock_full_classifier.run.assert_not_called()
+    assert result["scope"] == "irrelevant"
+
+
+@pytest.mark.asyncio
+async def test_classify_article_skips_second_pass_when_no_full_classifier(tmp_db):
+    """Si no hay full_content_classifier, se usa solo la primera clasificación."""
+    service, _, mock_classifier = _make_service(tmp_db)
+    # full_content_classifier es None (default del helper)
+    assert service._full_content_classifier is None
+
+    with patch("src.news_service.NewsIngestionService._fetch_full_content", AsyncMock(return_value="Full text")) as mock_fetch:
+        result = await service._classify_article(_make_article(3))
+
+    mock_fetch.assert_not_called()
+    assert result is not None
+    assert result["scope"] == "market"
+
+
+@pytest.mark.asyncio
+async def test_classify_article_falls_back_to_first_pass_when_fetch_returns_empty(tmp_db):
+    """Si fetch_article_content retorna vacío, se usa la clasificación de la primera pasada."""
+    import json
+
+    service, _, mock_classifier = _make_service(tmp_db)
+    mock_full_classifier = MagicMock()
+    mock_full_classifier.run = AsyncMock()
+    service._full_content_classifier = mock_full_classifier
+
+    with patch("src.news_service.NewsIngestionService._fetch_full_content", AsyncMock(return_value="")):
+        result = await service._classify_article(_make_article(4))
+
+    mock_full_classifier.run.assert_not_called()
+    assert result is not None
+    assert result["scope"] == "market"
+
+
+@pytest.mark.asyncio
+async def test_classify_article_falls_back_to_first_pass_when_second_fails(tmp_db):
+    """Si la segunda pasada falla (ParseError), se usa la primera clasificación."""
+    import json
+    from src.response_parser import ParseError
+
+    service, _, mock_classifier = _make_service(tmp_db)
+    mock_full_classifier = MagicMock()
+    mock_full_classifier.run = AsyncMock(return_value="not json at all")
+    service._full_content_classifier = mock_full_classifier
+
+    with patch("src.news_service.NewsIngestionService._fetch_full_content", AsyncMock(return_value="Full text here.")):
+        result = await service._classify_article(_make_article(5))
+
+    # La segunda pasada falló (ParseError) → usa la primera
+    assert result is not None
+    assert result["scope"] == "market"
+
+
+@pytest.mark.asyncio
+async def test_classify_article_two_pass_propagates_article_summary_to_save(tmp_db):
+    """El article_summary del second pass se persiste en BD correctamente."""
+    import json
+
+    service, _, mock_classifier = _make_service(tmp_db)
+    mock_full_classifier = MagicMock()
+    mock_full_classifier.run = AsyncMock(return_value=json.dumps({
+        "scope": "market",
+        "ticker": None,
+        "exchange": None,
+        "impact": "MEDIUM",
+        "reasoning": "Fed news",
+        "article_summary": "Fed raised rates by 25bp. Markets reacted positively.",
+    }))
+    service._full_content_classifier = mock_full_classifier
+
+    article = _make_article(6, url="https://example.com/article/6")
+    with patch("src.news_service.NewsIngestionService._fetch_full_content", AsyncMock(return_value="Full Fed article.")):
+        classification = await service._classify_article(article)
+
+    saved = tmp_db.save_article(article, classification)
+    assert saved is True
+
+    articles = tmp_db.get_articles_by_scope("market")
+    assert len(articles) == 1
+    assert articles[0].get("article_summary") == "Fed raised rates by 25bp. Markets reacted positively."

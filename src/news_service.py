@@ -28,9 +28,11 @@ class NewsIngestionService:
         storage: StorageLayer,
         logger=None,
         max_concurrent_classifications: int = 1,
+        full_content_classifier_agent=None,  # Agente con prompt extendido para second-pass
     ):
         self._aggregator = aggregator
         self._classifier = classifier_agent
+        self._full_content_classifier = full_content_classifier_agent
         self._storage = storage
         self._logger = logger
         self._max_concurrent = max_concurrent_classifications
@@ -145,9 +147,13 @@ class NewsIngestionService:
 
     async def _classify_article(self, article: Article) -> dict | None:
         """
-        Clasifica un artículo individual con el NewsClassifierAgent.
-        Reintenta hasta 2 veces ante errores de Ollama (p.ej. CUDA OOM transitorio).
-        Retorna None si el agente falla o la respuesta no es parseable.
+        Clasifica un artículo en uno o dos pasos:
+
+        1. Primera pasada (title + description): clasificación rápida.
+        2. Si scope != 'irrelevant' y hay full_content_classifier disponible:
+           - Fetcha el texto completo del artículo desde su URL.
+           - Segunda pasada (full_content): reclasifica con mayor contexto
+             y genera article_summary.
         """
         from agents.economics_agent import build_news_classifier_prompt
         from src.response_parser import validate_news_classification, ParseError
@@ -157,11 +163,46 @@ class NewsIngestionService:
                 f"Clasificando: '{article.title[:80]}'", source="news_service"
             )
 
-        prompt = build_news_classifier_prompt(article)
+        # ── Primera pasada (solo title + description) ─────────────────────────
+        classification = await self._run_classification(
+            self._classifier,
+            build_news_classifier_prompt(article, full_content=False),
+            article,
+        )
+        if classification is None:
+            return None
+
+        # ── Segunda pasada (texto completo + article_summary) ─────────────────
+        if (
+            classification.get("scope") != "irrelevant"
+            and self._full_content_classifier is not None
+            and article.url
+        ):
+            article.full_content = await self._fetch_full_content(article.url)
+            if article.full_content:
+                if self._logger:
+                    self._logger.debug(
+                        f"Reclasificando con texto completo: '{article.title[:60]}'",
+                        source="news_service",
+                    )
+                second = await self._run_classification(
+                    self._full_content_classifier,
+                    build_news_classifier_prompt(article, full_content=True),
+                    article,
+                )
+                if second is not None:
+                    classification = second
+
+        return classification
+
+    async def _run_classification(self, agent, prompt: str, article: Article) -> dict | None:
+        """Ejecuta una clasificación con reintentos. Retorna dict o None."""
+        from src.response_parser import validate_news_classification, ParseError
+
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             try:
-                response = await self._classifier.run(prompt)
+                response = await agent.run(prompt)
                 return validate_news_classification(response)
             except ParseError as exc:
                 if self._logger:
@@ -189,3 +230,14 @@ class NewsIngestionService:
                             exc_info=True,
                         )
                     return None
+
+    async def _fetch_full_content(self, url: str) -> str:
+        """Fetcha el texto completo de un artículo desde su URL."""
+        import aiohttp
+        from src.news_sources import fetch_article_content
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                return await fetch_article_content(url, session)
+        except Exception:
+            return ""

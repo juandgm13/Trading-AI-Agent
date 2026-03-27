@@ -738,3 +738,119 @@ async def test_news_aggregator_fetch_symbol_excludes_stored_urls():
 
     assert len(articles) == 1
     assert articles[0].url == fresh_url
+
+
+# ── fetch_article_content ──────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_fetch_article_content_returns_text_on_200():
+    """fetch_article_content extrae texto cuando el servidor devuelve 200."""
+    from src.news_sources import fetch_article_content
+
+    html = "<html><body><p>Hello world</p><p>More text here.</p></body></html>"
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.text = AsyncMock(return_value=html)
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_req_ctx
+
+    result = await fetch_article_content("https://example.com/article", mock_session)
+
+    assert "Hello world" in result
+    assert "More text here" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_article_content_returns_empty_on_non_200():
+    """fetch_article_content retorna '' cuando status != 200."""
+    from src.news_sources import fetch_article_content
+
+    mock_resp = MagicMock()
+    mock_resp.status = 403
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_req_ctx
+
+    result = await fetch_article_content("https://example.com/article", mock_session)
+
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_fetch_article_content_returns_empty_on_exception():
+    """fetch_article_content retorna '' ante cualquier excepción (timeout, etc.)."""
+    from src.news_sources import fetch_article_content
+    import aiohttp
+
+    mock_session = MagicMock()
+    mock_session.get.side_effect = aiohttp.ClientError("connection refused")
+
+    result = await fetch_article_content("https://example.com/article", mock_session)
+
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_fetch_article_content_strips_script_tags():
+    """fetch_article_content no incluye contenido de tags script/style."""
+    from src.news_sources import fetch_article_content
+
+    html = """
+    <html>
+    <head><script>alert('xss')</script><style>body{color:red}</style></head>
+    <body>
+        <nav>Navigation menu</nav>
+        <p>Actual article content here.</p>
+        <footer>Footer text</footer>
+    </body>
+    </html>
+    """
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.text = AsyncMock(return_value=html)
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_req_ctx
+
+    result = await fetch_article_content("https://example.com/article", mock_session)
+
+    assert "Actual article content here" in result
+    assert "alert(" not in result
+    assert "color:red" not in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_article_content_truncates_to_max_chars():
+    """fetch_article_content trunca el texto a _FULL_CONTENT_MAX_CHARS."""
+    from src.news_sources import fetch_article_content, _FULL_CONTENT_MAX_CHARS
+
+    long_text = "A" * (_FULL_CONTENT_MAX_CHARS + 500)
+    html = f"<html><body><p>{long_text}</p></body></html>"
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.text = AsyncMock(return_value=html)
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_req_ctx
+
+    result = await fetch_article_content("https://example.com/article", mock_session)
+
+    assert len(result) <= _FULL_CONTENT_MAX_CHARS

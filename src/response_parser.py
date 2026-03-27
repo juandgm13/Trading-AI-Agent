@@ -219,12 +219,16 @@ def validate_news_classification(text: str) -> dict:
     raw_exchange = data.get("exchange")
     exchange = str(raw_exchange).upper() if raw_exchange and str(raw_exchange).strip() != "null" else None
 
+    raw_summary = data.get("article_summary")
+    article_summary: str | None = str(raw_summary).strip() if raw_summary and str(raw_summary).strip() not in ("null", "None", "") else None
+
     return {
-        "scope":     scope,
-        "ticker":    ticker,
-        "exchange":  exchange,
-        "impact":    impact,
-        "reasoning": str(data.get("reasoning", "")),
+        "scope":           scope,
+        "ticker":          ticker,
+        "exchange":        exchange,
+        "impact":          impact,
+        "reasoning":       str(data.get("reasoning", "")),
+        "article_summary": article_summary,
     }
 
 
