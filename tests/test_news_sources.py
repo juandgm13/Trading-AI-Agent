@@ -854,3 +854,65 @@ async def test_fetch_article_content_truncates_to_max_chars():
     result = await fetch_article_content("https://example.com/article", mock_session)
 
     assert len(result) <= _FULL_CONTENT_MAX_CHARS
+
+
+@pytest.mark.asyncio
+async def test_fetch_article_content_new_limit_is_10000():
+    """Documenta el límite esperado para detectar regresiones."""
+    from src.news_sources import _FULL_CONTENT_MAX_CHARS
+    assert _FULL_CONTENT_MAX_CHARS == 10_000
+
+
+@pytest.mark.asyncio
+async def test_fetch_article_content_logs_warning_when_truncated():
+    """fetch_article_content emite WARNING con la URL cuando el texto se trunca."""
+    from src.news_sources import fetch_article_content, _FULL_CONTENT_MAX_CHARS
+
+    long_text = "B" * (_FULL_CONTENT_MAX_CHARS + 100)
+    html = f"<html><body><p>{long_text}</p></body></html>"
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.text = AsyncMock(return_value=html)
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_req_ctx
+
+    mock_logger = MagicMock()
+    url = "https://example.com/long-article"
+
+    await fetch_article_content(url, mock_session, logger=mock_logger)
+
+    mock_logger.warning.assert_called_once()
+    call_args = mock_logger.warning.call_args[0][0]
+    assert url in call_args
+
+
+@pytest.mark.asyncio
+async def test_fetch_article_content_no_warning_when_not_truncated():
+    """fetch_article_content NO emite WARNING cuando el texto cabe en el límite."""
+    from src.news_sources import fetch_article_content, _FULL_CONTENT_MAX_CHARS
+
+    short_text = "C" * (_FULL_CONTENT_MAX_CHARS - 100)
+    html = f"<html><body><p>{short_text}</p></body></html>"
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.text = AsyncMock(return_value=html)
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_req_ctx
+
+    mock_logger = MagicMock()
+
+    await fetch_article_content("https://example.com/short-article", mock_session, logger=mock_logger)
+
+    mock_logger.warning.assert_not_called()

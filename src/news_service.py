@@ -238,6 +238,6 @@ class NewsIngestionService:
 
         try:
             async with aiohttp.ClientSession() as session:
-                return await fetch_article_content(url, session)
+                return await fetch_article_content(url, session, logger=self._logger)
         except Exception:
             return ""

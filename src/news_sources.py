@@ -18,7 +18,7 @@ from src.ingestion import Article
 _TIMEOUT_SECONDS = 10
 _RSS_TIMEOUT_SECONDS = 5
 _MAX_LOG_CHARS = 4000
-_FULL_CONTENT_MAX_CHARS = 3000
+_FULL_CONTENT_MAX_CHARS = 10_000
 _FETCH_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; TradingBot/1.0)"}
 
 
@@ -50,11 +50,16 @@ class _TextExtractor(HTMLParser):
         return " ".join(self._texts)
 
 
-async def fetch_article_content(url: str, session: aiohttp.ClientSession) -> str:
+async def fetch_article_content(
+    url: str,
+    session: aiohttp.ClientSession,
+    logger=None,
+) -> str:
     """
     Intenta obtener el texto completo de un artículo a partir de su URL.
 
-    Usa aiohttp + html.parser de stdlib. Trunca a _FULL_CONTENT_MAX_CHARS.
+    Usa aiohttp + html.parser de stdlib. Trunca a _FULL_CONTENT_MAX_CHARS y
+    emite un WARNING si el artículo fue truncado.
     Retorna cadena vacía ante cualquier error (timeout, 4xx, 5xx, parse error).
     """
     try:
@@ -66,7 +71,16 @@ async def fetch_article_content(url: str, session: aiohttp.ClientSession) -> str
         extractor = _TextExtractor()
         extractor.feed(html)
         text = extractor.get_text()
-        return text[:_FULL_CONTENT_MAX_CHARS] if text else ""
+        if not text:
+            return ""
+        if len(text) > _FULL_CONTENT_MAX_CHARS:
+            if logger:
+                logger.warning(
+                    f"Article truncated: {url} ({len(text)} → {_FULL_CONTENT_MAX_CHARS} chars)",
+                    source="news_sources",
+                )
+            return text[:_FULL_CONTENT_MAX_CHARS]
+        return text
     except Exception:
         return ""
 
