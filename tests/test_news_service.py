@@ -401,3 +401,61 @@ async def test_classify_article_two_pass_propagates_article_summary_to_save(tmp_
     articles = tmp_db.get_articles_by_scope("market")
     assert len(articles) == 1
     assert articles[0].get("article_summary") == "Fed raised rates by 25bp. Markets reacted positively."
+
+
+# ── Segunda pasada: debug log cuando logger está presente (line 184) ──────────
+
+@pytest.mark.asyncio
+async def test_classify_article_two_pass_logs_debug_when_logger_set(tmp_db):
+    """Con logger activo, se loguea 'Reclasificando con texto completo' en segunda pasada."""
+    import json
+    from src.logger import AgentLogger
+
+    service, _, mock_classifier = _make_service(tmp_db)
+    logger = AgentLogger(level="DEBUG")
+    service._logger = logger
+
+    mock_full_classifier = MagicMock()
+    mock_full_classifier.run = AsyncMock(return_value=json.dumps({
+        "scope": "market",
+        "ticker": None,
+        "exchange": None,
+        "impact": "HIGH",
+        "reasoning": "confirmed by full text",
+        "article_summary": "Fed action confirmed.",
+    }))
+    service._full_content_classifier = mock_full_classifier
+
+    article = _make_article(10, url="https://example.com/article/10")
+
+    with patch("src.news_service.NewsIngestionService._fetch_full_content", AsyncMock(return_value="Full article body.")):
+        result = await service._classify_article(article)
+
+    assert result is not None
+    assert result["scope"] == "market"
+    mock_full_classifier.run.assert_awaited_once()
+
+
+# ── _fetch_full_content: método real (lines 236-243) ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_fetch_full_content_returns_content_on_success(tmp_db):
+    """_fetch_full_content llama a fetch_article_content con la sesión y devuelve el resultado."""
+    service, _, _ = _make_service(tmp_db)
+
+    with patch("src.news_sources.fetch_article_content", AsyncMock(return_value="article body text")):
+        result = await service._fetch_full_content("https://example.com/news/1")
+
+    assert result == "article body text"
+
+
+@pytest.mark.asyncio
+async def test_fetch_full_content_returns_empty_on_exception(tmp_db):
+    """_fetch_full_content devuelve '' cuando aiohttp.ClientSession lanza excepción."""
+    import aiohttp
+    service, _, _ = _make_service(tmp_db)
+
+    with patch("aiohttp.ClientSession", side_effect=RuntimeError("session error")):
+        result = await service._fetch_full_content("https://example.com/news/2")
+
+    assert result == ""

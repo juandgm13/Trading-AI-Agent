@@ -916,3 +916,27 @@ async def test_fetch_article_content_no_warning_when_not_truncated():
     await fetch_article_content("https://example.com/short-article", mock_session, logger=mock_logger)
 
     mock_logger.warning.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fetch_article_content_returns_empty_when_no_visible_text():
+    """fetch_article_content retorna '' cuando el HTML solo tiene contenido en tags ignorados."""
+    from src.news_sources import fetch_article_content
+
+    # HTML donde todo el contenido está en tags que _TextExtractor ignora
+    html = "<html><head><script>alert('x')</script><style>body{}</style></head><body></body></html>"
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.text = AsyncMock(return_value=html)
+
+    mock_req_ctx = MagicMock()
+    mock_req_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_req_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_req_ctx
+
+    result = await fetch_article_content("https://example.com/empty", mock_session)
+
+    assert result == ""
