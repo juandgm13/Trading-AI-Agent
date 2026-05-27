@@ -209,3 +209,5 @@ trading_agent.db
 *.db
 .vscode/
 =*
+logs/
+charts/
