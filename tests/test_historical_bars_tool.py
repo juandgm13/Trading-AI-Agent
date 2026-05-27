@@ -18,9 +18,9 @@ def _make_tool(bars=None, raise_exc=None):
 
 
 SAMPLE_BARS = [
-    {"timestamp": "2024-01-01", "open": 170.0, "high": 176.0,
+    {"timestamp": "2024-01-01T00:00:00Z", "open": 170.0, "high": 176.0,
      "low": 169.0, "close": 175.0, "volume": 50000},
-    {"timestamp": "2023-12-31", "open": 168.0, "high": 171.0,
+    {"timestamp": "2023-12-31T00:00:00Z", "open": 168.0, "high": 171.0,
      "low": 167.0, "close": 170.0, "volume": 45000},
 ]
 
@@ -33,8 +33,44 @@ async def test_execute_returns_bars():
 
     assert data["symbol"] == "AAPL"
     assert data["bars_count"] == 2
-    assert len(data["bars"]) == 2
     assert data["timeframe"] == "1Day"
+    assert "bars" in data
+
+
+@pytest.mark.asyncio
+async def test_execute_bars_format_is_csv():
+    """bars debe ser una cadena CSV con cabecera y una fila por barra."""
+    tool, _ = _make_tool(bars=SAMPLE_BARS)
+    result = await tool.execute("AAPL")
+    data = json.loads(result)
+
+    bars_csv = data["bars"]
+    assert isinstance(bars_csv, str)
+    lines = bars_csv.strip().splitlines()
+    assert lines[0] == "date,open,high,low,close,volume"
+    assert len(lines) == 3  # header + 2 data rows
+
+
+@pytest.mark.asyncio
+async def test_execute_csv_contains_close_value():
+    """El valor de cierre debe aparecer en las líneas CSV."""
+    tool, _ = _make_tool(bars=SAMPLE_BARS)
+    result = await tool.execute("AAPL")
+    data = json.loads(result)
+
+    assert "175.0" in data["bars"]
+    assert "170.0" in data["bars"]
+
+
+@pytest.mark.asyncio
+async def test_execute_csv_date_is_truncated_to_yyyy_mm_dd():
+    """El timestamp completo debe reducirse a YYYY-MM-DD para ahorrar tokens."""
+    tool, _ = _make_tool(bars=SAMPLE_BARS)
+    result = await tool.execute("AAPL")
+    data = json.loads(result)
+
+    assert "2024-01-01" in data["bars"]
+    assert "T00:00:00Z" not in data["bars"]
 
 
 @pytest.mark.asyncio
@@ -90,12 +126,3 @@ async def test_execute_returns_error_on_exception():
     data = json.loads(result)
     assert "error" in data
     assert "AAPL" in data["error"]
-
-
-@pytest.mark.asyncio
-async def test_execute_includes_bars_data_in_response():
-    tool, _ = _make_tool(bars=SAMPLE_BARS)
-    result = await tool.execute("AAPL")
-    data = json.loads(result)
-    assert data["bars"][0]["close"] == 175.0
-    assert data["bars"][1]["close"] == 170.0

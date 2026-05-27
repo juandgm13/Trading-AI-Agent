@@ -47,9 +47,24 @@ class GetHistoricalBarsTool(BaseTool):
         if not bars:
             return json.dumps({"error": f"No data available for {symbol}"})
 
+        # Compact CSV format to reduce LLM context window usage
+        # (~50 chars/bar vs ~120 chars/bar in verbose JSON)
+        csv_lines = ["date,open,high,low,close,volume"]
+        for b in bars:
+            date = (b.get("timestamp") or "")[:10]  # YYYY-MM-DD
+            csv_lines.append(
+                f"{date},"
+                f"{b.get('open', '')},"
+                f"{b.get('high', '')},"
+                f"{b.get('low', '')},"
+                f"{b.get('close', '')},"
+                f"{b.get('volume', '')}"
+            )
+
         return json.dumps({
             "symbol": symbol,
             "timeframe": timeframe,
             "bars_count": len(bars),
-            "bars": bars,
+            "format": "CSV: date,open,high,low,close,volume",
+            "bars": "\n".join(csv_lines),
         })
