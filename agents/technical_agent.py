@@ -1,10 +1,11 @@
 """
 TechnicalAnalysisAgent — analiza barras históricas para determinar tendencia y señales.
 
-El agente recibe datos OHLCV pre-inyectados en el prompt por el monitor y devuelve
-un JSON estructurado con la señal técnica.
+El agente usa ToolCallPlanner: llama a get_historical_bars para obtener sus propios datos
+y a save_agent_report para persistir el resultado. El monitor sólo le pasa el símbolo y
+el precio actual como texto.
 
-Output esperado:
+Output esperado (respuesta final del agente):
 {
   "trend": "BULLISH" | "BEARISH" | "NEUTRAL",
   "signal": "BUY" | "SELL" | "HOLD" | "WAIT",
@@ -18,13 +19,18 @@ from agent_framework.core.agent_builder import AgentBuilder
 from agent_framework.events import EventBus
 from agent_framework.models.model_registry import ModelRegistry
 
+from agents.tools.historical_bars_tool import GetHistoricalBarsTool
+from agents.tools.report_tool import SaveAgentReportTool
+
 
 TECHNICAL_WATCHING_PROMPT = """\
 You are a technical analysis expert for stock markets focused on medium-term trend detection.
 
-You will receive OHLCV (Open, High, Low, Close, Volume) daily bar data for a symbol.
-Your goal is to assess whether the symbol shows a developing trend worth monitoring more closely.
-Return ONLY a valid JSON object — no markdown, no explanation outside JSON.
+When given a symbol to analyse:
+1. Call get_historical_bars(symbol=<SYMBOL>, timeframe="1Day", limit=90) to get 90 days of daily bars.
+2. Analyse the OHLCV data: identify the developing trend, key support/resistance levels, and volume patterns.
+3. Call save_agent_report(symbol=<SYMBOL>, agent_name="technical_medium", report_json=<YOUR_JSON>) to persist the result.
+4. Return ONLY the same valid JSON object as your final response — no markdown, no extra text.
 
 Required JSON structure:
 {
@@ -38,20 +44,23 @@ Required JSON structure:
 
 Rules:
 - Focus on macro trend direction, key support/resistance levels, and volume patterns over weeks.
-- key_supports: list of 1-3 significant price levels where buyers have historically stepped in (below current price).
-- key_resistances: list of 1-3 significant price levels where sellers have historically emerged (above current price).
+- key_supports: 1-3 significant price levels where buyers have historically stepped in (below current price).
+- key_resistances: 1-3 significant price levels where sellers have historically emerged (above current price).
 - Both lists may be empty [] if no clear levels are identifiable.
-- Use HOLD if the trend is developing but entry timing is unclear — this is valid and preferred over forcing a signal.
+- Use HOLD if the trend is developing but entry timing is unclear — preferred over forcing a signal.
 - Use WAIT if data is insufficient or the setup is ambiguous.\
 """
 
 TECHNICAL_ENTRY_PROMPT = """\
 You are a technical analysis expert for stock markets focused on precise entry timing.
 
-You will receive OHLCV (Open, High, Low, Close, Volume) short-term bar data (15-minute intervals).
-An opportunity was previously identified in this symbol. Your goal is to determine if NOW is the
-optimal entry point with specific, actionable targets.
-Return ONLY a valid JSON object — no markdown, no explanation outside JSON.
+When given a symbol to analyse:
+1. Call get_historical_bars(symbol=<SYMBOL>, timeframe="15Min", limit=96) to get ~5 days of 15-minute bars.
+2. Analyse the short-term OHLCV data: momentum, intraday patterns, and precise entry timing.
+3. Call save_agent_report(symbol=<SYMBOL>, agent_name="technical_short", report_json=<YOUR_JSON>) to persist.
+4. Return ONLY the same valid JSON object as your final response — no markdown, no extra text.
+
+An opportunity was previously identified in this symbol. Determine if NOW is the optimal entry point.
 
 Required JSON structure:
 {
@@ -77,19 +86,27 @@ async def build_technical_watching_agent(
     config,
     bus: EventBus,
     model_registry: ModelRegistry,
+    alpaca_client,
+    storage,
 ) -> object:
     """
-    Construye el TechnicalAnalysisAgent para análisis de medio plazo (WATCHING).
+    Construye el TechnicalWatchingAgent para análisis de medio plazo (WATCHING).
 
-    El monitor pre-inyecta datos OHLCV diarios en el prompt antes de llamar a run().
+    Usa ToolCallPlanner: el agente obtiene sus propios datos OHLCV vía get_historical_bars
+    y persiste el resultado vía save_agent_report. El monitor solo pasa símbolo + precio.
     """
+    tools = [
+        GetHistoricalBarsTool(alpaca_client),
+        SaveAgentReportTool(storage),
+    ]
     agent = (
         AgentBuilder()
         .name("technical_watching")
-        .planner("simple")
-        .tools([])
+        .planner("toolcall")
+        .with_tools(tools)
         .model_role("technical")
         .system_prompt(TECHNICAL_WATCHING_PROMPT)
+        .max_iterations(5)
         .stateless()
         .with_config(config)
         .with_event_bus(bus)
@@ -103,19 +120,27 @@ async def build_technical_entry_agent(
     config,
     bus: EventBus,
     model_registry: ModelRegistry,
+    alpaca_client,
+    storage,
 ) -> object:
     """
-    Construye el TechnicalAnalysisAgent para timing de entrada (OPPORTUNITY_FOUND).
+    Construye el TechnicalEntryAgent para timing de entrada (OPPORTUNITY_FOUND).
 
-    El monitor pre-inyecta datos OHLCV de 15min en el prompt antes de llamar a run().
+    Usa ToolCallPlanner: el agente obtiene sus propios datos de 15min vía get_historical_bars
+    y persiste el resultado vía save_agent_report. El monitor solo pasa símbolo + precio.
     """
+    tools = [
+        GetHistoricalBarsTool(alpaca_client),
+        SaveAgentReportTool(storage),
+    ]
     agent = (
         AgentBuilder()
         .name("technical_entry")
-        .planner("simple")
-        .tools([])
+        .planner("toolcall")
+        .with_tools(tools)
         .model_role("technical_entry")
         .system_prompt(TECHNICAL_ENTRY_PROMPT)
+        .max_iterations(5)
         .stateless()
         .with_config(config)
         .with_event_bus(bus)
@@ -125,8 +150,12 @@ async def build_technical_entry_agent(
     return agent
 
 
+# ── Funciones de prompt legacy ────────────────────────────────────────────────
+# Mantenidas para compatibilidad durante la transición.
+# Se eliminarán en la Fase 5 cuando el monitor sea simplificado.
+
 def build_medium_term_prompt(symbol: str, current_price: float, bars: list[dict]) -> str:
-    """Construye el prompt para análisis de medio plazo (90 días diarios)."""
+    """[LEGACY] Construye el prompt para análisis de medio plazo (90 días diarios)."""
     import json
     return (
         f"Analyze {symbol} for medium-term trend assessment.\n"
@@ -144,10 +173,7 @@ def build_short_term_prompt(
     bars: list[dict],
     medium_term_context: dict | None = None,
 ) -> str:
-    """Construye el prompt para análisis de corto plazo (15min bars).
-
-    medium_term_context: informe previo del TechnicalWatchingAgent con key_supports/key_resistances.
-    """
+    """[LEGACY] Construye el prompt para análisis de corto plazo (15min bars)."""
     import json
     context_section = ""
     if medium_term_context:

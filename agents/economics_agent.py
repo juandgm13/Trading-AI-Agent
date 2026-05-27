@@ -1,74 +1,30 @@
 """
 EconomicsAgent — analiza noticias de mercado global y noticias específicas de empresa.
 
-Dos agentes con prompts separados:
-- MarketContextAgent: holistic macro view → { market_sentiment, risk_appetite, dominant_themes, macro_risks, confidence, summary }
-- CompanyAnalysisAgent: company-specific risk → { sentiment, key_events, entry_risk, confidence, summary }
+Tres agentes:
+- MarketContextAgent: usa ToolCallPlanner + FetchMarketNewsTool → { market_sentiment, risk_appetite, ... }
+- CompanyAnalysisAgent: usa ToolCallPlanner + FetchCompanyNewsTool → { sentiment, key_events, entry_risk, ... }
+- NewsClassifierAgent: mantiene SimplePlanner — clasifica artículos individuales en bucle ajustado.
 
-El agente recibe noticias pre-fetched por el monitor e inyectadas en el prompt.
+El NewsClassifierAgent NO cambia: es llamado por NewsIngestionService en bucle por artículo.
 """
 from agent_framework.core.agent_builder import AgentBuilder
 from agent_framework.events import EventBus
 from agent_framework.models.model_registry import ModelRegistry
 
-
-ECONOMICS_SYSTEM_PROMPT = """\
-You are an economics and financial news analyst.
-
-You will receive recent news articles about a specific stock and general market news.
-Analyze the sentiment, identify key events, and assess market context.
-Return ONLY a valid JSON object — no markdown, no explanation outside JSON.
-
-Required JSON structure:
-{
-  "sentiment": "POSITIVE" | "NEGATIVE" | "NEUTRAL",
-  "market_context": "RISK_ON" | "RISK_OFF" | "NEUTRAL",
-  "key_events": ["<brief description of key event>", ...],
-  "confidence": <integer 0-100>,
-  "summary": "<one paragraph explaining the overall assessment>"
-}
-
-Rules:
-- sentiment reflects the company-specific news outlook.
-- market_context reflects the broader market environment (RISK_ON = investors buying, RISK_OFF = selling).
-- key_events: list of 1-5 most important events that could affect the stock price.
-- confidence: how certain you are given the available information (low if news is sparse or mixed).
-- Return NEUTRAL if news is absent or contradictory.\
-"""
-
-
-async def build_economics_agent(
-    config,
-    bus: EventBus,
-    model_registry: ModelRegistry,
-) -> object:
-    """
-    Construye el EconomicsAgent (SimplePlanner, sin tools).
-
-    El monitor pre-fetches las noticias e inyecta los datos en el prompt.
-    """
-    agent = (
-        AgentBuilder()
-        .name("economics_analysis")
-        .planner("simple")
-        .tools([])
-        .model_role("economics")
-        .system_prompt(ECONOMICS_SYSTEM_PROMPT)
-        .with_config(config)
-        .with_event_bus(bus)
-        .with_model_registry(model_registry)
-        .build()
-    )
-    return agent
+from agents.tools.news_tool import FetchCompanyNewsTool, FetchMarketNewsTool
+from agents.tools.report_tool import SaveAgentReportTool, SaveMarketContextTool
 
 
 MARKET_CONTEXT_SYSTEM_PROMPT = """\
 You are a macroeconomic analyst specializing in global market conditions.
 
-You will receive recent general market and financial news articles.
-Synthesize them into a holistic assessment of the current market environment.
-Do NOT analyze each article individually — focus on the overall picture.
-Return ONLY a valid JSON object — no markdown, no explanation outside JSON.
+When asked to update market context:
+1. Call fetch_market_news(min_impact="MEDIUM") to retrieve recent market and financial news.
+2. Synthesize the articles into a holistic assessment of the current market environment.
+   Do NOT analyse each article individually — focus on the overall picture.
+3. Call save_market_context(report_json=<YOUR_JSON>, news_count=<number of articles used>) to persist.
+4. Return ONLY the same valid JSON object as your final response — no markdown, no extra text.
 
 Required JSON structure:
 {
@@ -91,9 +47,12 @@ Rules:
 COMPANY_ANALYSIS_SYSTEM_PROMPT = """\
 You are a financial news analyst specializing in company-specific news.
 
-You will receive recent news articles about a specific stock.
-Analyze the company-specific news to assess the risk of opening a position now.
-Return ONLY a valid JSON object — no markdown, no explanation outside JSON.
+When asked to analyse a company's news:
+1. Call fetch_company_news(symbol=<SYMBOL>) to retrieve recent news for the company.
+   If an exchange was provided, pass it too: fetch_company_news(symbol=<SYMBOL>, exchange=<EXCHANGE>).
+2. Analyse the company-specific articles to assess the risk of opening a position now.
+3. Call save_agent_report(symbol=<SYMBOL>, agent_name="company_analysis", report_json=<YOUR_JSON>) to persist.
+4. Return ONLY the same valid JSON object as your final response — no markdown, no extra text.
 
 Required JSON structure:
 {
@@ -116,18 +75,27 @@ async def build_market_context_agent(
     config,
     bus: EventBus,
     model_registry: ModelRegistry,
+    news_service,
+    storage,
 ) -> object:
     """
-    Construye el agente para el informe holístico de mercado global.
-    Usa el mismo modelo role 'economics' con un system prompt especializado.
+    Construye el MarketContextAgent para el informe holístico de mercado global.
+
+    Usa ToolCallPlanner: el agente obtiene noticias vía fetch_market_news
+    y persiste el resultado vía save_market_context.
     """
+    tools = [
+        FetchMarketNewsTool(news_service, storage),
+        SaveMarketContextTool(storage),
+    ]
     agent = (
         AgentBuilder()
         .name("market_context_analysis")
-        .planner("simple")
-        .tools([])
+        .planner("toolcall")
+        .with_tools(tools)
         .model_role("economics")
         .system_prompt(MARKET_CONTEXT_SYSTEM_PROMPT)
+        .max_iterations(4)
         .stateless()
         .with_config(config)
         .with_event_bus(bus)
@@ -141,18 +109,27 @@ async def build_company_analysis_agent(
     config,
     bus: EventBus,
     model_registry: ModelRegistry,
+    news_service,
+    storage,
 ) -> object:
     """
-    Construye el agente para el informe breve de empresa al momento de entrada.
-    Usa el mismo modelo role 'economics' con un system prompt especializado.
+    Construye el CompanyAnalysisAgent para el informe de empresa en el momento de entrada.
+
+    Usa ToolCallPlanner: el agente obtiene noticias de empresa vía fetch_company_news
+    y persiste el resultado vía save_agent_report.
     """
+    tools = [
+        FetchCompanyNewsTool(news_service, storage),
+        SaveAgentReportTool(storage),
+    ]
     agent = (
         AgentBuilder()
         .name("company_analysis")
-        .planner("simple")
-        .tools([])
+        .planner("toolcall")
+        .with_tools(tools)
         .model_role("economics")
         .system_prompt(COMPANY_ANALYSIS_SYSTEM_PROMPT)
+        .max_iterations(4)
         .stateless()
         .with_config(config)
         .with_event_bus(bus)
@@ -162,49 +139,9 @@ async def build_company_analysis_agent(
     return agent
 
 
-_ARTICLE_PROMPT_FIELDS = frozenset([
-    "title", "source", "published_at", "scope", "ticker",
-    "impact", "article_summary", "reasoning",
-])
-
-
-def _clean_articles(articles: list[dict]) -> list[dict]:
-    """Filtra cada artículo a solo los campos relevantes para el prompt."""
-    return [
-        {k: v for k, v in a.items() if k in _ARTICLE_PROMPT_FIELDS and v is not None}
-        for a in articles
-    ]
-
-
-def build_market_context_prompt(market_news: list[dict]) -> str:
-    """Prompt para el informe holístico de contexto global de mercado."""
-    import json
-    clean = _clean_articles(market_news)
-    market_section = (
-        json.dumps(clean, indent=2) if clean else "No market news available."
-    )
-    return (
-        "Analyze the following general market and financial news articles "
-        "to produce a holistic assessment of the current global market context.\n\n"
-        f"--- General market news ---\n{market_section}\n\n"
-        "Provide your macroeconomic context assessment."
-    )
-
-
-def build_company_analysis_prompt(symbol: str, company_news: list[dict]) -> str:
-    """Prompt para el informe breve de empresa en el momento de intento de entrada."""
-    import json
-    clean = _clean_articles(company_news)
-    company_section = (
-        json.dumps(clean, indent=2) if clean else "No company news available."
-    )
-    return (
-        f"Analyze the following company-specific news for {symbol} "
-        f"to assess the risk of opening a position right now.\n\n"
-        f"--- Company news for {symbol} ---\n{company_section}\n\n"
-        "Provide your company-specific sentiment and entry risk assessment."
-    )
-
+# ── NewsClassifierAgent — sin cambios (SimplePlanner) ────────────────────────
+# Es invocado por NewsIngestionService en un bucle ajustado: un artículo → una llamada LLM.
+# El loop de tools no aporta valor aquí; la clasificación directa es más eficiente.
 
 NEWS_CLASSIFIER_SYSTEM_PROMPT = """\
 You are a financial news classifier.
@@ -268,7 +205,7 @@ async def build_news_classifier_agent(
     full_content: bool = False,
 ) -> object:
     """
-    Construye el NewsClassifierAgent — clasifica artículos individuales.
+    Construye el NewsClassifierAgent — clasifica artículos individuales (SimplePlanner).
 
     scope → company | market | exchange | irrelevant
     impact → HIGH | MEDIUM | LOW | null
@@ -295,9 +232,7 @@ async def build_news_classifier_agent(
 def build_news_classifier_prompt(article, full_content: bool = False) -> str:
     """
     Prompt para clasificar un artículo individual con el NewsClassifierAgent.
-
-    Si full_content=True incluye el texto completo del artículo (article.full_content)
-    y solicita también un article_summary en el JSON de salida.
+    Usado por NewsIngestionService — no se elimina.
     """
     base = (
         "Classify the following news article:\n\n"
@@ -314,12 +249,60 @@ def build_news_classifier_prompt(article, full_content: bool = False) -> str:
     return base
 
 
+# ── Funciones de prompt legacy ────────────────────────────────────────────────
+# Mantenidas para compatibilidad durante la transición.
+# Se eliminarán en la Fase 5 cuando el monitor sea simplificado.
+
+_ARTICLE_PROMPT_FIELDS = frozenset([
+    "title", "source", "published_at", "scope", "ticker",
+    "impact", "article_summary", "reasoning",
+])
+
+
+def _clean_articles(articles: list[dict]) -> list[dict]:
+    """Filtra cada artículo a solo los campos relevantes para el prompt."""
+    return [
+        {k: v for k, v in a.items() if k in _ARTICLE_PROMPT_FIELDS and v is not None}
+        for a in articles
+    ]
+
+
+def build_market_context_prompt(market_news: list[dict]) -> str:
+    """[LEGACY] Prompt para el informe holístico de contexto global de mercado."""
+    import json
+    clean = _clean_articles(market_news)
+    market_section = (
+        json.dumps(clean, indent=2) if clean else "No market news available."
+    )
+    return (
+        "Analyze the following general market and financial news articles "
+        "to produce a holistic assessment of the current global market context.\n\n"
+        f"--- General market news ---\n{market_section}\n\n"
+        "Provide your macroeconomic context assessment."
+    )
+
+
+def build_company_analysis_prompt(symbol: str, company_news: list[dict]) -> str:
+    """[LEGACY] Prompt para el informe breve de empresa en el momento de intento de entrada."""
+    import json
+    clean = _clean_articles(company_news)
+    company_section = (
+        json.dumps(clean, indent=2) if clean else "No company news available."
+    )
+    return (
+        f"Analyze the following company-specific news for {symbol} "
+        f"to assess the risk of opening a position right now.\n\n"
+        f"--- Company news for {symbol} ---\n{company_section}\n\n"
+        "Provide your company-specific sentiment and entry risk assessment."
+    )
+
+
 def build_economics_prompt(
     symbol: str,
     company_news: list[dict],
     market_news: list[dict],
 ) -> str:
-    """Construye el prompt para el EconomicsAgent."""
+    """[LEGACY] Construye el prompt para el EconomicsAgent."""
     import json
 
     company_section = (

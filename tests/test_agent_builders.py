@@ -3,11 +3,11 @@ Tests de las funciones build_* y prompt builders de los agentes.
 
 Cubren:
   - build_technical_watching_agent, build_technical_entry_agent
-  - build_market_context_agent, build_company_analysis_agent, build_economics_agent
-  - build_trading_opportunity_agent, build_trading_entry_agent  (AgentBuilder mockeado)
-  - build_medium_term_prompt, build_short_term_prompt
-  - build_market_context_prompt, build_company_analysis_prompt, build_economics_prompt
-  - build_opportunity_prompt, build_entry_prompt
+  - build_market_context_agent, build_company_analysis_agent
+  - build_trading_opportunity_agent, build_trading_entry_agent
+  - Prompt builders legacy: build_medium_term_prompt, build_short_term_prompt,
+    build_market_context_prompt, build_company_analysis_prompt,
+    build_economics_prompt, build_opportunity_prompt, build_entry_prompt
 """
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -23,8 +23,9 @@ def _make_builder_mock():
     mock_agent = MagicMock()
     mock_builder = MagicMock()
     for method in [
-        "name", "planner", "tools", "model_role", "system_prompt",
-        "stateless", "with_config", "with_event_bus", "with_model_registry",
+        "name", "planner", "tools", "with_tools", "model_role", "system_prompt",
+        "stateless", "max_iterations", "with_config", "with_event_bus",
+        "with_model_registry",
     ]:
         getattr(mock_builder, method).return_value = mock_builder
     mock_builder.build.return_value = mock_agent
@@ -36,6 +37,11 @@ def _make_deps():
     return MagicMock(), MagicMock(), MagicMock()
 
 
+def _make_extra_deps():
+    """Devuelve (alpaca_client, storage, news_service) como MagicMocks."""
+    return MagicMock(), MagicMock(), MagicMock()
+
+
 # ── build_technical_watching_agent ────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -44,11 +50,26 @@ async def test_build_technical_agent_returns_agent():
 
     mock_builder, mock_agent = _make_builder_mock()
     config, bus, registry = _make_deps()
+    alpaca, storage, _ = _make_extra_deps()
 
     with patch("agents.technical_agent.AgentBuilder", return_value=mock_builder):
-        agent = await build_technical_watching_agent(config, bus, registry)
+        agent = await build_technical_watching_agent(config, bus, registry, alpaca, storage)
 
     assert agent is mock_agent
+
+
+@pytest.mark.asyncio
+async def test_build_technical_agent_uses_toolcall_planner():
+    from agents.technical_agent import build_technical_watching_agent
+
+    mock_builder, _ = _make_builder_mock()
+    config, bus, registry = _make_deps()
+    alpaca, storage, _ = _make_extra_deps()
+
+    with patch("agents.technical_agent.AgentBuilder", return_value=mock_builder):
+        await build_technical_watching_agent(config, bus, registry, alpaca, storage)
+
+    mock_builder.planner.assert_called_once_with("toolcall")
 
 
 @pytest.mark.asyncio
@@ -57,12 +78,31 @@ async def test_build_technical_agent_uses_correct_role():
 
     mock_builder, _ = _make_builder_mock()
     config, bus, registry = _make_deps()
+    alpaca, storage, _ = _make_extra_deps()
 
     with patch("agents.technical_agent.AgentBuilder", return_value=mock_builder):
-        await build_technical_watching_agent(config, bus, registry)
+        await build_technical_watching_agent(config, bus, registry, alpaca, storage)
 
     mock_builder.model_role.assert_called_once_with("technical")
     mock_builder.stateless.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_build_technical_agent_registers_tools():
+    from agents.technical_agent import build_technical_watching_agent
+
+    mock_builder, _ = _make_builder_mock()
+    config, bus, registry = _make_deps()
+    alpaca, storage, _ = _make_extra_deps()
+
+    with patch("agents.technical_agent.AgentBuilder", return_value=mock_builder):
+        await build_technical_watching_agent(config, bus, registry, alpaca, storage)
+
+    mock_builder.with_tools.assert_called_once()
+    tools_arg = mock_builder.with_tools.call_args[0][0]
+    tool_names = [t.name for t in tools_arg]
+    assert "get_historical_bars" in tool_names
+    assert "save_agent_report" in tool_names
 
 
 # ── build_technical_entry_agent ───────────────────────────────────────────────
@@ -73,11 +113,26 @@ async def test_build_technical_entry_agent_returns_agent():
 
     mock_builder, mock_agent = _make_builder_mock()
     config, bus, registry = _make_deps()
+    alpaca, storage, _ = _make_extra_deps()
 
     with patch("agents.technical_agent.AgentBuilder", return_value=mock_builder):
-        agent = await build_technical_entry_agent(config, bus, registry)
+        agent = await build_technical_entry_agent(config, bus, registry, alpaca, storage)
 
     assert agent is mock_agent
+
+
+@pytest.mark.asyncio
+async def test_build_technical_entry_agent_uses_toolcall_planner():
+    from agents.technical_agent import build_technical_entry_agent
+
+    mock_builder, _ = _make_builder_mock()
+    config, bus, registry = _make_deps()
+    alpaca, storage, _ = _make_extra_deps()
+
+    with patch("agents.technical_agent.AgentBuilder", return_value=mock_builder):
+        await build_technical_entry_agent(config, bus, registry, alpaca, storage)
+
+    mock_builder.planner.assert_called_once_with("toolcall")
 
 
 @pytest.mark.asyncio
@@ -86,9 +141,10 @@ async def test_build_technical_entry_agent_uses_correct_role():
 
     mock_builder, _ = _make_builder_mock()
     config, bus, registry = _make_deps()
+    alpaca, storage, _ = _make_extra_deps()
 
     with patch("agents.technical_agent.AgentBuilder", return_value=mock_builder):
-        await build_technical_entry_agent(config, bus, registry)
+        await build_technical_entry_agent(config, bus, registry, alpaca, storage)
 
     mock_builder.model_role.assert_called_once_with("technical_entry")
     mock_builder.stateless.assert_called_once()
@@ -102,11 +158,26 @@ async def test_build_market_context_agent_returns_agent():
 
     mock_builder, mock_agent = _make_builder_mock()
     config, bus, registry = _make_deps()
+    _, storage, news_service = _make_extra_deps()
 
     with patch("agents.economics_agent.AgentBuilder", return_value=mock_builder):
-        agent = await build_market_context_agent(config, bus, registry)
+        agent = await build_market_context_agent(config, bus, registry, news_service, storage)
 
     assert agent is mock_agent
+
+
+@pytest.mark.asyncio
+async def test_build_market_context_agent_uses_toolcall_planner():
+    from agents.economics_agent import build_market_context_agent
+
+    mock_builder, _ = _make_builder_mock()
+    config, bus, registry = _make_deps()
+    _, storage, news_service = _make_extra_deps()
+
+    with patch("agents.economics_agent.AgentBuilder", return_value=mock_builder):
+        await build_market_context_agent(config, bus, registry, news_service, storage)
+
+    mock_builder.planner.assert_called_once_with("toolcall")
 
 
 @pytest.mark.asyncio
@@ -115,12 +186,31 @@ async def test_build_market_context_agent_uses_economics_role():
 
     mock_builder, _ = _make_builder_mock()
     config, bus, registry = _make_deps()
+    _, storage, news_service = _make_extra_deps()
 
     with patch("agents.economics_agent.AgentBuilder", return_value=mock_builder):
-        await build_market_context_agent(config, bus, registry)
+        await build_market_context_agent(config, bus, registry, news_service, storage)
 
     mock_builder.model_role.assert_called_once_with("economics")
     mock_builder.stateless.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_build_market_context_agent_registers_tools():
+    from agents.economics_agent import build_market_context_agent
+
+    mock_builder, _ = _make_builder_mock()
+    config, bus, registry = _make_deps()
+    _, storage, news_service = _make_extra_deps()
+
+    with patch("agents.economics_agent.AgentBuilder", return_value=mock_builder):
+        await build_market_context_agent(config, bus, registry, news_service, storage)
+
+    mock_builder.with_tools.assert_called_once()
+    tools_arg = mock_builder.with_tools.call_args[0][0]
+    tool_names = [t.name for t in tools_arg]
+    assert "fetch_market_news" in tool_names
+    assert "save_market_context" in tool_names
 
 
 # ── build_company_analysis_agent ──────────────────────────────────────────────
@@ -131,11 +221,26 @@ async def test_build_company_analysis_agent_returns_agent():
 
     mock_builder, mock_agent = _make_builder_mock()
     config, bus, registry = _make_deps()
+    _, storage, news_service = _make_extra_deps()
 
     with patch("agents.economics_agent.AgentBuilder", return_value=mock_builder):
-        agent = await build_company_analysis_agent(config, bus, registry)
+        agent = await build_company_analysis_agent(config, bus, registry, news_service, storage)
 
     assert agent is mock_agent
+
+
+@pytest.mark.asyncio
+async def test_build_company_analysis_agent_uses_toolcall_planner():
+    from agents.economics_agent import build_company_analysis_agent
+
+    mock_builder, _ = _make_builder_mock()
+    config, bus, registry = _make_deps()
+    _, storage, news_service = _make_extra_deps()
+
+    with patch("agents.economics_agent.AgentBuilder", return_value=mock_builder):
+        await build_company_analysis_agent(config, bus, registry, news_service, storage)
+
+    mock_builder.planner.assert_called_once_with("toolcall")
 
 
 @pytest.mark.asyncio
@@ -144,26 +249,12 @@ async def test_build_company_analysis_agent_uses_economics_role():
 
     mock_builder, _ = _make_builder_mock()
     config, bus, registry = _make_deps()
+    _, storage, news_service = _make_extra_deps()
 
     with patch("agents.economics_agent.AgentBuilder", return_value=mock_builder):
-        await build_company_analysis_agent(config, bus, registry)
+        await build_company_analysis_agent(config, bus, registry, news_service, storage)
 
     mock_builder.model_role.assert_called_once_with("economics")
-
-
-# ── build_economics_agent ─────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_build_economics_agent_returns_agent():
-    from agents.economics_agent import build_economics_agent
-
-    mock_builder, mock_agent = _make_builder_mock()
-    config, bus, registry = _make_deps()
-
-    with patch("agents.economics_agent.AgentBuilder", return_value=mock_builder):
-        agent = await build_economics_agent(config, bus, registry)
-
-    assert agent is mock_agent
 
 
 # ── build_trading_opportunity_agent ───────────────────────────────────────────
@@ -174,11 +265,26 @@ async def test_build_trading_orchestrator_returns_agent():
 
     mock_builder, mock_agent = _make_builder_mock()
     config, bus, registry = _make_deps()
+    _, storage, _ = _make_extra_deps()
 
     with patch("agents.trading_agent.AgentBuilder", return_value=mock_builder):
-        agent = await build_trading_opportunity_agent(config, bus, registry)
+        agent = await build_trading_opportunity_agent(config, bus, registry, storage)
 
     assert agent is mock_agent
+
+
+@pytest.mark.asyncio
+async def test_build_trading_orchestrator_uses_toolcall_planner():
+    from agents.trading_agent import build_trading_opportunity_agent
+
+    mock_builder, _ = _make_builder_mock()
+    config, bus, registry = _make_deps()
+    _, storage, _ = _make_extra_deps()
+
+    with patch("agents.trading_agent.AgentBuilder", return_value=mock_builder):
+        await build_trading_opportunity_agent(config, bus, registry, storage)
+
+    mock_builder.planner.assert_called_once_with("toolcall")
 
 
 @pytest.mark.asyncio
@@ -187,11 +293,31 @@ async def test_build_trading_orchestrator_uses_trader_role():
 
     mock_builder, _ = _make_builder_mock()
     config, bus, registry = _make_deps()
+    _, storage, _ = _make_extra_deps()
 
     with patch("agents.trading_agent.AgentBuilder", return_value=mock_builder):
-        await build_trading_opportunity_agent(config, bus, registry)
+        await build_trading_opportunity_agent(config, bus, registry, storage)
 
     mock_builder.model_role.assert_called_once_with("trader_opportunity")
+
+
+@pytest.mark.asyncio
+async def test_build_trading_orchestrator_registers_tools():
+    from agents.trading_agent import build_trading_opportunity_agent
+
+    mock_builder, _ = _make_builder_mock()
+    config, bus, registry = _make_deps()
+    _, storage, _ = _make_extra_deps()
+
+    with patch("agents.trading_agent.AgentBuilder", return_value=mock_builder):
+        await build_trading_opportunity_agent(config, bus, registry, storage)
+
+    mock_builder.with_tools.assert_called_once()
+    tools_arg = mock_builder.with_tools.call_args[0][0]
+    tool_names = [t.name for t in tools_arg]
+    assert "get_last_report" in tool_names
+    assert "get_market_context" in tool_names
+    assert "save_agent_report" in tool_names
 
 
 # ── build_trading_entry_agent ─────────────────────────────────────────────────
@@ -202,11 +328,26 @@ async def test_build_trading_entry_agent_returns_agent():
 
     mock_builder, mock_agent = _make_builder_mock()
     config, bus, registry = _make_deps()
+    alpaca, storage, _ = _make_extra_deps()
 
     with patch("agents.trading_agent.AgentBuilder", return_value=mock_builder):
-        agent = await build_trading_entry_agent(config, bus, registry)
+        agent = await build_trading_entry_agent(config, bus, registry, alpaca, storage)
 
     assert agent is mock_agent
+
+
+@pytest.mark.asyncio
+async def test_build_trading_entry_agent_uses_toolcall_planner():
+    from agents.trading_agent import build_trading_entry_agent
+
+    mock_builder, _ = _make_builder_mock()
+    config, bus, registry = _make_deps()
+    alpaca, storage, _ = _make_extra_deps()
+
+    with patch("agents.trading_agent.AgentBuilder", return_value=mock_builder):
+        await build_trading_entry_agent(config, bus, registry, alpaca, storage)
+
+    mock_builder.planner.assert_called_once_with("toolcall")
 
 
 @pytest.mark.asyncio
@@ -215,15 +356,35 @@ async def test_build_trading_entry_agent_uses_trader_entry_role():
 
     mock_builder, _ = _make_builder_mock()
     config, bus, registry = _make_deps()
+    alpaca, storage, _ = _make_extra_deps()
 
     with patch("agents.trading_agent.AgentBuilder", return_value=mock_builder):
-        await build_trading_entry_agent(config, bus, registry)
+        await build_trading_entry_agent(config, bus, registry, alpaca, storage)
 
     mock_builder.model_role.assert_called_once_with("trader_entry")
     mock_builder.stateless.assert_called_once()
 
 
-# ── Prompt builders: technical_agent ─────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_build_trading_entry_agent_registers_tools():
+    from agents.trading_agent import build_trading_entry_agent
+
+    mock_builder, _ = _make_builder_mock()
+    config, bus, registry = _make_deps()
+    alpaca, storage, _ = _make_extra_deps()
+
+    with patch("agents.trading_agent.AgentBuilder", return_value=mock_builder):
+        await build_trading_entry_agent(config, bus, registry, alpaca, storage)
+
+    mock_builder.with_tools.assert_called_once()
+    tools_arg = mock_builder.with_tools.call_args[0][0]
+    tool_names = [t.name for t in tools_arg]
+    assert "get_last_report" in tool_names
+    assert "get_market_clock" in tool_names
+    assert "save_agent_report" in tool_names
+
+
+# ── Prompt builders legacy: technical_agent ───────────────────────────────────
 
 def test_build_medium_term_prompt_contains_symbol_and_price():
     from agents.technical_agent import build_medium_term_prompt
@@ -238,7 +399,6 @@ def test_build_medium_term_prompt_contains_symbol_and_price():
 
 def test_build_medium_term_prompt_includes_bars_json():
     from agents.technical_agent import build_medium_term_prompt
-    import json
 
     bars = [{"timestamp": "2024-01-01", "close": 175.0}]
     prompt = build_medium_term_prompt("AAPL", 175.0, bars)
@@ -296,7 +456,7 @@ def test_build_short_term_prompt_with_empty_medium_context_no_injection():
     assert "Medium-term context" not in prompt
 
 
-# ── Prompt builders: economics_agent ─────────────────────────────────────────
+# ── Prompt builders legacy: economics_agent ───────────────────────────────────
 
 def test_build_market_context_prompt_with_news():
     from agents.economics_agent import build_market_context_prompt
@@ -356,7 +516,7 @@ def test_build_economics_prompt_with_empty_news():
     assert "No market news available" in prompt
 
 
-# ── Prompt builders: trading_agent ───────────────────────────────────────────
+# ── Prompt builders legacy: trading_agent ────────────────────────────────────
 
 def test_build_opportunity_prompt_with_market_context():
     from agents.trading_agent import build_opportunity_prompt

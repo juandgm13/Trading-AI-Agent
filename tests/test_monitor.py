@@ -527,9 +527,16 @@ async def test_full_analysis_saves_chart_path_to_opportunity_report(tmp_db):
     })
     monitor._generate_chart = MagicMock(return_value="/charts/AAPL_opportunity_test.png")
 
+    # Pre-seed: en producción el agente guarda el informe via SaveAgentReportTool;
+    # en tests el agente está mockeado, así que sembramos el informe manualmente.
+    import json as _json
+    tmp_db.save_agent_report("AAPL", "trading_opportunity", _json.dumps({
+        "decision": "OPPORTUNITY_FOUND", "symbol": "AAPL", "reasoning": "Strong signal",
+    }))
+
     await monitor._full_analysis("AAPL", 175.0)
 
-    report = tmp_db.get_last_agent_report("AAPL", "trading_opportunity_eval")
+    report = tmp_db.get_last_agent_report("AAPL", "trading_opportunity")
     assert report is not None
     assert report.get("chart_path") == "/charts/AAPL_opportunity_test.png"
 
@@ -604,10 +611,17 @@ async def test_look_for_entry_saves_chart_path_to_entry_report(tmp_db):
     })
     monitor._generate_chart = MagicMock(return_value="/charts/AAPL_entry_test.png")
 
+    # Pre-seed: en producción el agente guarda el informe via SaveAgentReportTool;
+    # en tests el agente está mockeado, así que sembramos el informe manualmente.
+    import json as _json
+    tmp_db.save_agent_report("AAPL", "trading_entry", _json.dumps({
+        "decision": "OPEN_POSITION", "symbol": "AAPL", "qty": 2, "reasoning": "Entry now",
+    }))
+
     state_row = tmp_db.get_symbol_state("AAPL")
     await monitor._look_for_entry("AAPL", 175.0, state_row)
 
-    report = tmp_db.get_last_agent_report("AAPL", "trading_entry_eval")
+    report = tmp_db.get_last_agent_report("AAPL", "trading_entry")
     assert report is not None
     assert report.get("chart_path") == "/charts/AAPL_entry_test.png"
 
@@ -692,9 +706,9 @@ async def test_run_technical_medium_handles_parse_error(tmp_db):
 
 @pytest.mark.asyncio
 async def test_run_technical_medium_handles_exception(tmp_db):
-    """Excepción en TechnicalAgent (medium) → devuelve (None, [])."""
-    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
-    mock_alpaca.get_bars = AsyncMock(side_effect=RuntimeError("bars error"))
+    """Excepción en TechnicalWatchingAgent.run() → devuelve (None, [])."""
+    monitor, _, mock_tech, _, _ = _make_monitor(tmp_db)
+    mock_tech.run = AsyncMock(side_effect=RuntimeError("agent error"))
 
     report, bars = await monitor._run_technical_medium("AAPL", 175.0)
     assert report is None
@@ -712,9 +726,9 @@ async def test_run_technical_short_handles_parse_error(tmp_db):
 
 @pytest.mark.asyncio
 async def test_run_technical_short_handles_exception(tmp_db):
-    """Excepción general en TechnicalAgent (short) → devuelve (None, [])."""
-    monitor, mock_alpaca, _, _, _ = _make_monitor(tmp_db)
-    mock_alpaca.get_bars = AsyncMock(side_effect=ConnectionError("timeout"))
+    """Excepción general en TechnicalEntryAgent.run() → devuelve (None, [])."""
+    monitor, _, mock_tech, _, _ = _make_monitor(tmp_db)
+    mock_tech.run = AsyncMock(side_effect=ConnectionError("timeout"))
 
     report, bars = await monitor._run_technical_short("AAPL", 175.0)
     assert report is None

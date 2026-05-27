@@ -39,20 +39,14 @@ from src.response_parser import (
 from .technical_agent import (
     build_technical_watching_agent,
     build_technical_entry_agent,
-    build_medium_term_prompt,
-    build_short_term_prompt,
 )
 from .economics_agent import (
     build_market_context_agent,
     build_company_analysis_agent,
-    build_market_context_prompt,
-    build_company_analysis_prompt,
 )
 from .trading_agent import (
     build_trading_opportunity_agent,
     build_trading_entry_agent,
-    build_opportunity_prompt,
-    build_entry_prompt,
 )
 
 # Máximo de símbolos por llamada a snapshots (límite de la API de Alpaca)
@@ -355,20 +349,15 @@ class PriceMonitor:
             self._logger.warning(f"{symbol}: análisis técnico falló — saltando", source="monitor")
             return None
 
-        # 2. Market context global — leer el último informe de la BD
-        market_context = self._load_market_context()
-        self._logger.debug(
-            f"{symbol}: market context — sentiment: {market_context.get('market_sentiment', 'N/A') if market_context else 'sin datos'}",
-            source="monitor",
+        # 2. TradingOpportunityAgent — lee el informe técnico y contexto de mercado vía tools
+        task = (
+            f"Evaluate if {symbol} is worth monitoring for a trade entry. "
+            f"Current price: ${price:.2f}. Max position: ${self._max_position_value:.0f} USD."
         )
-
-        # 3. TradingAgent — decide si hay oportunidad
-        prompt = build_opportunity_prompt(symbol, price, tech_report, market_context, self._max_position_value)
-        decision = await self._run_trading_decision(symbol, "opportunity_eval", prompt, self._trading_opportunity_agent)
+        decision = await self._run_trading_decision(symbol, "opportunity_eval", task, self._trading_opportunity_agent)
 
         now = datetime.now(timezone.utc).isoformat()
-        market_sentiment = market_context.get("market_sentiment", "N/A") if market_context else "N/A"
-        summary = f"Tech: {tech_report.get('trend')} | Market: {market_sentiment}"
+        summary = f"Tech: {tech_report.get('trend')} (confidence: {tech_report.get('confidence', '?')})"
 
         self._storage.upsert_symbol_state(
             symbol,
@@ -380,7 +369,7 @@ class PriceMonitor:
             # F5: generar gráfico de evidencia al detectar oportunidad
             chart_path = self._generate_chart(symbol, bars, "1Day", "opportunity")
             if chart_path:
-                report_id = self._storage.get_last_agent_report_id(symbol, "trading_opportunity_eval")
+                report_id = self._storage.get_last_agent_report_id(symbol, "trading_opportunity")
                 if report_id:
                     self._storage.update_agent_report_chart_path(report_id, chart_path)
             self._logger.info(f"{symbol}: oportunidad detectada → OPPORTUNITY_FOUND", source="monitor")
@@ -416,8 +405,13 @@ class PriceMonitor:
             self._logger.warning(f"{symbol}: company analysis falló — continuando sin él", source="monitor")
 
         can_short = self._allow_short_selling and bool(state_row.get("shortable"))
-        prompt = build_entry_prompt(symbol, price, tech_report, company_report, self._max_position_value, allow_short=can_short)
-        decision = await self._run_trading_decision(symbol, "entry_eval", prompt, self._trading_entry_agent)
+        max_shares = max(1, int(self._max_position_value / price))
+        short_hint = " Short selling is allowed (OPEN_SHORT is valid)." if can_short else ""
+        task = (
+            f"Decide entry for {symbol}. Current price: ${price:.2f}. "
+            f"Max position: ${self._max_position_value:.0f} USD (max {max_shares} shares at current price).{short_hint}"
+        )
+        decision = await self._run_trading_decision(symbol, "entry_eval", task, self._trading_entry_agent)
 
         if not decision:
             return None
@@ -455,7 +449,7 @@ class PriceMonitor:
             # Generar gráfico de evidencia al abrir posición
             chart_path = self._generate_chart(symbol, bars, "15Min", "entry")
             if chart_path:
-                report_id = self._storage.get_last_agent_report_id(symbol, "trading_entry_eval")
+                report_id = self._storage.get_last_agent_report_id(symbol, "trading_entry")
                 if report_id:
                     self._storage.update_agent_report_chart_path(report_id, chart_path)
 
@@ -837,14 +831,19 @@ class PriceMonitor:
     # ── Helpers de sub-agentes ────────────────────────────────────────────────
 
     async def _run_technical_medium(self, symbol: str, price: float) -> tuple[dict | None, list[dict]]:
-        """Ejecuta TechnicalWatchingAgent en modo medio plazo (90 días diarios)."""
+        """Ejecuta TechnicalWatchingAgent — el agente obtiene sus propios datos vía tools."""
         bars = []
         try:
-            bars = await self._alpaca.get_bars(symbol, timeframe="1Day", limit=90)
-            prompt = build_medium_term_prompt(symbol, price, bars)
-            response = await self._technical_watching_agent.run(prompt)
+            # El agente obtiene los datos y guarda el informe vía tools internas
+            response = await self._technical_watching_agent.run(
+                f"Analyze {symbol} for medium-term trend. Current price: ${price:.2f}."
+            )
             report = validate_technical_watching_report(response)
-            self._storage.save_agent_report(symbol, "technical_medium", json.dumps(report))
+            # Obtener barras por separado para la generación del gráfico de evidencia
+            try:
+                bars = await self._alpaca.get_bars(symbol, timeframe="1Day", limit=90)
+            except Exception:
+                pass
             return report, bars
         except ParseError as e:
             self._logger.error(f"{symbol}: TechnicalWatchingAgent respuesta inválida: {e}", source="monitor")
@@ -854,22 +853,19 @@ class PriceMonitor:
             return None, bars
 
     async def _run_technical_short(self, symbol: str, price: float) -> tuple[dict | None, list[dict]]:
-        """Ejecuta TechnicalEntryAgent en modo corto plazo (5 días de barras de 15min)."""
+        """Ejecuta TechnicalEntryAgent — el agente obtiene sus propios datos vía tools."""
         bars = []
         try:
-            bars = await self._alpaca.get_bars(symbol, timeframe="15Min", limit=96)  # ~5 días
-            # Cargar contexto de medio plazo (soportes/resistencias) si existe
-            medium_report = None
-            row = self._storage.get_last_agent_report(symbol, "technical_medium")
-            if row:
-                try:
-                    medium_report = json.loads(row["report"])
-                except Exception:
-                    pass
-            prompt = build_short_term_prompt(symbol, price, bars, medium_term_context=medium_report)
-            response = await self._technical_entry_agent.run(prompt)
+            # El agente obtiene los datos, lee el contexto de medio plazo y guarda el informe vía tools
+            response = await self._technical_entry_agent.run(
+                f"Analyze {symbol} for short-term entry timing. Current price: ${price:.2f}."
+            )
             report = validate_technical_report(response)
-            self._storage.save_agent_report(symbol, "technical_short", json.dumps(report))
+            # Obtener barras por separado para la generación del gráfico de evidencia
+            try:
+                bars = await self._alpaca.get_bars(symbol, timeframe="15Min", limit=96)
+            except Exception:
+                pass
             return report, bars
         except ParseError as e:
             self._logger.error(f"{symbol}: TechnicalEntryAgent respuesta inválida: {e}", source="monitor")
@@ -896,29 +892,12 @@ class PriceMonitor:
         await self._run_market_context()
 
     async def _run_market_context(self) -> None:
-        """Ingesta noticias de mercado, las clasifica y genera el informe holístico de contexto global."""
+        """Actualiza el contexto global de mercado — el agente obtiene y clasifica noticias vía tools."""
         self._logger.info("Actualizando contexto global de mercado...", source="monitor")
         try:
-            fetched, classified = await self._news_service.run_market_ingestion()
-            self._logger.info(
-                f"News ingestion: {fetched} artículos únicos fetched, {classified} clasificados",
-                source="monitor",
-            )
-
-            # Noticias macro (MEDIUM+HIGH) + noticias de empresa (MEDIUM+HIGH)
-            market_articles = self._storage.get_articles_by_scope(
-                "market", limit=20, min_impact="MEDIUM"
-            )
-            company_articles = self._storage.get_articles_by_scope(
-                "company", limit=10, min_impact="MEDIUM"
-            )
-            all_context_news = market_articles + company_articles
-
-            prompt = build_market_context_prompt(all_context_news)
-            response = await self._market_context_agent.run(prompt)
+            # El agente fetcha noticias vía FetchMarketNewsTool y guarda el informe vía SaveMarketContextTool
+            response = await self._market_context_agent.run("Update global market context.")
             report = validate_market_context(response)
-
-            self._storage.save_market_context(json.dumps(report), len(all_context_news))
             self._logger.info(
                 f"Contexto global actualizado — sentiment: {report.get('market_sentiment', '?')} | "
                 f"risk: {report.get('risk_appetite', '?')}",
@@ -940,16 +919,13 @@ class PriceMonitor:
             return None
 
     async def _run_company_analysis(self, symbol: str, exchange: str | None = None) -> dict | None:
-        """Obtiene noticias clasificadas de BD + Yahoo fresco y genera informe de riesgo de entrada."""
+        """Analiza noticias de empresa — el agente fetcha y clasifica noticias vía tools."""
         try:
-            # Artículos de BD (company + exchange) + fetch fresco de Yahoo RSS por símbolo
-            company_news = await self._news_service.run_symbol_ingestion(symbol, exchange)
-
-            prompt = build_company_analysis_prompt(symbol, company_news)
-            response = await self._company_analysis_agent.run(prompt)
+            exchange_hint = f" Exchange: {exchange}." if exchange else ""
+            response = await self._company_analysis_agent.run(
+                f"Analyze company news for {symbol}.{exchange_hint}"
+            )
             report = validate_company_analysis(response)
-
-            self._storage.save_agent_report(symbol, "company_analysis", json.dumps(report))
             return report
         except ParseError as e:
             self._logger.error(f"{symbol}: CompanyAnalysisAgent respuesta inválida: {e}", source="monitor")
@@ -959,13 +935,16 @@ class PriceMonitor:
             return None
 
     async def _run_trading_decision(
-        self, symbol: str, stage: str, prompt: str, agent
+        self, symbol: str, stage: str, task: str, agent
     ) -> dict | None:
-        """Ejecuta un TradingAgent y devuelve la decisión parseada."""
+        """Ejecuta un TradingAgent con una tarea simple y devuelve la decisión parseada.
+
+        El agente lee sus propios informes vía tools (GetLastReportTool, GetMarketContextTool)
+        y guarda el resultado vía SaveAgentReportTool. El monitor solo valida la respuesta.
+        """
         try:
-            response = await agent.run(prompt)
+            response = await agent.run(task)
             decision = validate_trading_decision(response)
-            self._storage.save_agent_report(symbol, f"trading_{stage}", json.dumps(decision))
             return decision
         except ParseError as e:
             self._logger.error(f"{symbol}: TradingAgent ({stage}) respuesta inválida: {e}", source="monitor")
@@ -1188,15 +1167,7 @@ async def run_monitor(
 
     bus.subscribe("*", on_event)
 
-    # Construir sub-agentes
-    technical_watching_agent = await build_technical_watching_agent(config, bus, model_registry)
-    technical_entry_agent = await build_technical_entry_agent(config, bus, model_registry)
-    market_context_agent = await build_market_context_agent(config, bus, model_registry)
-    company_analysis_agent = await build_company_analysis_agent(config, bus, model_registry)
-    trading_opportunity_agent = await build_trading_opportunity_agent(config, bus, model_registry)
-    trading_entry_agent = await build_trading_entry_agent(config, bus, model_registry)
-
-    # Construir NewsIngestionService (reemplaza GNews)
+    # Construir NewsIngestionService primero (necesario para los agentes de economía)
     from src.news_sources import AlpacaNewsSource, RSSNewsSource, YahooSymbolSource, NewsAggregator
     from src.news_service import NewsIngestionService
     from .economics_agent import build_news_classifier_agent
@@ -1215,6 +1186,26 @@ async def run_monitor(
         storage,
         logger=logger,
         full_content_classifier_agent=news_classifier_full_agent,
+    )
+
+    # Construir sub-agentes (pasan alpaca/storage/news_service para sus tools)
+    technical_watching_agent = await build_technical_watching_agent(
+        config, bus, model_registry, alpaca_client=alpaca, storage=storage
+    )
+    technical_entry_agent = await build_technical_entry_agent(
+        config, bus, model_registry, alpaca_client=alpaca, storage=storage
+    )
+    market_context_agent = await build_market_context_agent(
+        config, bus, model_registry, news_service=news_service, storage=storage
+    )
+    company_analysis_agent = await build_company_analysis_agent(
+        config, bus, model_registry, news_service=news_service, storage=storage
+    )
+    trading_opportunity_agent = await build_trading_opportunity_agent(
+        config, bus, model_registry, storage=storage
+    )
+    trading_entry_agent = await build_trading_entry_agent(
+        config, bus, model_registry, alpaca_client=alpaca, storage=storage
     )
 
     # Arrancar monitor
