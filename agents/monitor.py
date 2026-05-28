@@ -1,7 +1,12 @@
 """
-PriceMonitor — loop de monitorización con máquina de estados por símbolo.
+PriceMonitor — loop de monitorización con OrchestratorAgent.
 
-Estados por símbolo:
+El OrchestratorAgent (TaskListPlanner) gestiona la state machine completa
+de cada símbolo usando tool calls: análisis técnico, económico, decisiones
+de trading y ejecución de órdenes. El monitor solo se ocupa del poll loop,
+precios en batch, standby de mercado cerrado y lifecycle del agente.
+
+Estados por símbolo (gestionados por el OrchestratorAgent):
   WATCHING         → análisis completo cada analysis_interval_hours
   OPPORTUNITY_FOUND → análisis de corto plazo cada ciclo
   OPENING          → orden de compra enviada, esperando confirmación de fill
@@ -13,7 +18,6 @@ negociables de Alpaca (US equities activos). Los precios se consultan en
 batch (snapshots) para minimizar llamadas a la API.
 """
 import asyncio
-import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,14 +31,7 @@ from src.alpaca import AlpacaClient
 from src.alerting import TradeAlerter
 from src.logger import get_logger, AgentLogger
 from src.storage import StorageLayer
-from src.response_parser import (
-    ParseError,
-    validate_technical_watching_report,
-    validate_technical_report,
-    validate_market_context,
-    validate_company_analysis,
-    validate_trading_decision,
-)
+from src.chart_generator import generate_candlestick_chart
 
 from .technical_agent import (
     build_technical_watching_agent,
@@ -48,6 +45,7 @@ from .trading_agent import (
     build_trading_opportunity_agent,
     build_trading_entry_agent,
 )
+from .orchestrator_agent import build_orchestrator_agent
 
 # Máximo de símbolos por llamada a snapshots (límite de la API de Alpaca)
 _SNAPSHOT_BATCH = 100
@@ -60,14 +58,9 @@ class PriceMonitor:
         self,
         alpaca: AlpacaClient,
         storage: StorageLayer,
-        technical_watching_agent,
-        technical_entry_agent,
-        market_context_agent,
-        company_analysis_agent,
-        trading_opportunity_agent,
-        trading_entry_agent,
+        orchestrator_agent,        # OrchestratorAgent (TaskListPlanner)
+        task_manager,              # TaskListManager — reset antes de cada run()
         logger: AgentLogger,
-        news_service,  # NewsIngestionService
         max_position_value: float = 500.0,
         analysis_interval_hours: float = 4.0,
         alerter=None,
@@ -76,14 +69,9 @@ class PriceMonitor:
     ):
         self._alpaca = alpaca
         self._storage = storage
-        self._technical_watching_agent = technical_watching_agent
-        self._technical_entry_agent = technical_entry_agent
-        self._market_context_agent = market_context_agent
-        self._company_analysis_agent = company_analysis_agent
-        self._trading_opportunity_agent = trading_opportunity_agent
-        self._trading_entry_agent = trading_entry_agent
+        self._orchestrator_agent = orchestrator_agent
+        self._task_manager = task_manager
         self._logger = logger
-        self._news_service = news_service
         self._max_position_value = max_position_value
         self._analysis_interval_hours = analysis_interval_hours
         self._alerter = alerter
@@ -203,9 +191,6 @@ class PriceMonitor:
                 except Exception:
                     pass
 
-        # Actualizar contexto global de mercado si corresponde (siempre, incluso con mercado cerrado)
-        await self._maybe_update_market_context()
-
         symbols = [item["symbol"] for item in watchlist]
 
         # Consultar precios en lotes de _SNAPSHOT_BATCH
@@ -218,740 +203,87 @@ class PriceMonitor:
             except Exception as e:
                 self._logger.error(f"Error en batch {batch[:3]}...: {e}", source="monitor", exc_info=True)
 
-        alerts_triggered = []
         self._logger.info(f"Ciclo inicio — {len(symbols)} símbolos a monitorizar", source="monitor")
 
-        # Lookup de shortable por símbolo para inyectar en state_row
-        wl_lookup = {item["symbol"]: item for item in watchlist}
-
+        # Determinar qué símbolos procesar (excluir los que no tienen precio o son omitidos por cierre)
+        symbols_to_process = []
         for symbol in symbols:
-            # F3: verificar stop_event al inicio de cada símbolo
-            if stop_event and stop_event.is_set():
-                self._logger.info("Parada solicitada — finalizando ciclo actual", source="monitor")
-                break
-
-            if not self._running:
-                break
-
             snap = snapshots.get(symbol)
             if not snap or snap.get("close") is None:
                 self._logger.debug(f"{symbol}: sin datos de precio en este ciclo", source="monitor")
                 continue
+            if close_imminent:
+                state_row = self._storage.get_symbol_state(symbol)
+                state = state_row.get("state", "WATCHING")
+                if state not in ("POSITION_OPEN", "OPENING", "CLOSING"):
+                    self._logger.debug(
+                        f"{symbol}: análisis omitido — cierre de mercado en < 5 min",
+                        source="monitor",
+                    )
+                    continue
+            symbols_to_process.append(symbol)
 
-            state_row = self._storage.get_symbol_state(symbol)
-            # Enriquecer state_row con shortable del watchlist (no está en symbol_states)
-            state_row["shortable"] = wl_lookup.get(symbol, {}).get("shortable", 0)
-
-            # Si cierre inminente, solo gestionar posiciones abiertas u órdenes en vuelo
-            if close_imminent and state_row.get("state", "WATCHING") not in ("POSITION_OPEN", "OPENING", "CLOSING"):
-                self._logger.debug(
-                    f"{symbol}: análisis omitido — cierre de mercado en < 5 min",
-                    source="monitor",
+        # Delegar a OrchestratorAgent si hay símbolos a procesar y no se solicitó parada
+        if symbols_to_process and (not stop_event or not stop_event.is_set()) and self._running:
+            self._task_manager.reset(symbols_to_process)
+            task = self._build_orchestrator_task(
+                symbols_to_process, snapshots, market_is_open, close_imminent
+            )
+            try:
+                await self._orchestrator_agent.run(task)
+            except Exception as e:
+                self._logger.error(
+                    f"Error en OrchestratorAgent: {e}", source="monitor", exc_info=True
                 )
-            else:
-                triggered = await self._process_symbol(symbol, snap, state_row, market_is_open=market_is_open)
-                if triggered:
-                    alerts_triggered.append(triggered)
+        elif stop_event and stop_event.is_set():
+            self._logger.info("Parada solicitada — ciclo de orquestación omitido", source="monitor")
 
-            # Guardar snapshot de precio siempre (independientemente del skip)
-            self._storage.save_price_snapshot(
-                symbol,
-                snap["close"],
-                snap.get("volume"),
-                snap.get("timestamp") or "",
-            )
+        # Guardar snapshots de precio para todos los símbolos con precio disponible
+        for symbol in symbols:
+            snap = snapshots.get(symbol)
+            if snap and snap.get("close") is not None:
+                self._storage.save_price_snapshot(
+                    symbol,
+                    snap["close"],
+                    snap.get("volume"),
+                    snap.get("timestamp") or "",
+                )
 
-        if alerts_triggered:
-            self._logger.info(
-                f"Ciclo fin — {len(alerts_triggered)} alertas: {', '.join(alerts_triggered)}",
-                source="monitor",
-            )
-        else:
-            self._logger.info("Ciclo fin — sin alertas", source="monitor")
+        self._logger.info("Ciclo fin", source="monitor")
 
-        # Con mercado cerrado: dormir hasta apertura tras haber ejecutado análisis WATCHING y contexto
+        # Con mercado cerrado: dormir hasta apertura tras haber ejecutado el orquestador
         if not market_is_open and wait_secs is not None:
             await _interruptible_sleep(wait_secs, stop_event, self._force_event)
 
-    # ── Máquina de estados ────────────────────────────────────────────────────
+    # ── Orchestrator task builder ─────────────────────────────────────────────
 
-    async def _process_symbol(
-        self, symbol: str, snap: dict, state_row: dict, market_is_open: bool = True
-    ) -> str | None:
+    def _build_orchestrator_task(
+        self,
+        symbols: list[str],
+        snapshots: dict,
+        market_is_open: bool,
+        close_imminent: bool = False,
+    ) -> str:
         """
-        Procesa un símbolo según su estado actual.
-
-        Returns:
-            Descripción del trigger si se disparó alguna acción, None si no.
+        Construye el string de tarea para el OrchestratorAgent.
+        Incluye precios actuales y flags de contexto.
         """
-        current_price = snap["close"]
-        state = state_row.get("state", "WATCHING")
-
-        self._logger.debug(
-            f"{symbol}: ${current_price:.2f} | estado: {state}",
-            source="monitor",
-        )
-
-        # Con mercado cerrado solo se ejecuta el análisis a largo plazo (WATCHING)
-        if not market_is_open and state != "WATCHING":
-            self._logger.debug(
-                f"{symbol}: estado {state} omitido — mercado cerrado",
-                source="monitor",
-            )
-            return None
-
-        if state == "CLOSING":
-            triggered = await self._check_closing(symbol, state_row)
-            return triggered
-
-        elif state == "POSITION_OPEN":
-            triggered = await self._manage_position(symbol, current_price, state_row)
-            return triggered
-
-        elif state == "OPENING":
-            triggered = await self._check_opening(symbol, state_row)
-            return triggered
-
-        elif state == "OPPORTUNITY_FOUND":
-            triggered = await self._look_for_entry(symbol, current_price, state_row)
-            return triggered
-
-        elif state == "WATCHING":
-            if self._analysis_due(state_row) or self._force_analysis:
-                triggered = await self._full_analysis(symbol, current_price)
-                return triggered
-
-        return None
-
-    def _analysis_due(self, state_row: dict) -> bool:
-        """Comprueba si ha pasado suficiente tiempo desde el último análisis completo."""
-        last_analysis = state_row.get("last_analysis_at")
-        if not last_analysis:
-            return True
-        try:
-            last_dt = datetime.fromisoformat(last_analysis)
-            if last_dt.tzinfo is None:
-                last_dt = last_dt.replace(tzinfo=timezone.utc)
-            elapsed_hours = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
-            return elapsed_hours >= self._analysis_interval_hours
-        except Exception:
-            return True
-
-    # ── Estado: WATCHING ──────────────────────────────────────────────────────
-
-    async def _full_analysis(self, symbol: str, price: float) -> str | None:
-        """Análisis completo: TechnicalAgent (medio plazo) + market context global → TradingAgent."""
-        self._logger.info(f"{symbol}: iniciando análisis completo", source="monitor")
-
-        # 1. TechnicalAgent — medio plazo (90 días diarios)
-        tech_report, bars = await self._run_technical_medium(symbol, price)
-        if tech_report is None:
-            self._logger.warning(f"{symbol}: análisis técnico falló — saltando", source="monitor")
-            return None
-
-        # 2. TradingOpportunityAgent — lee el informe técnico y contexto de mercado vía tools
-        task = (
-            f"Evaluate if {symbol} is worth monitoring for a trade entry. "
-            f"Current price: ${price:.2f}. Max position: ${self._max_position_value:.0f} USD."
-        )
-        decision = await self._run_trading_decision(symbol, "opportunity_eval", task, self._trading_opportunity_agent)
-
-        now = datetime.now(timezone.utc).isoformat()
-        summary = f"Tech: {tech_report.get('trend')} (confidence: {tech_report.get('confidence', '?')})"
-
-        self._storage.upsert_symbol_state(
-            symbol,
-            last_analysis_at=now,
-            analysis_summary=summary,
-        )
-
-        if decision and decision.get("decision") == "OPPORTUNITY_FOUND":
-            # F5: generar gráfico de evidencia al detectar oportunidad
-            chart_path = self._generate_chart(symbol, bars, "1Day", "opportunity")
-            if chart_path:
-                report_id = self._storage.get_last_agent_report_id(symbol, "trading_opportunity")
-                if report_id:
-                    self._storage.update_agent_report_chart_path(report_id, chart_path)
-            self._logger.info(f"{symbol}: oportunidad detectada → OPPORTUNITY_FOUND", source="monitor")
-            self._storage.upsert_symbol_state(
-                symbol,
-                state="OPPORTUNITY_FOUND",
-                entry_signal_at=now,
-                chart_path=chart_path,
-            )
-            return f"{symbol} → OPPORTUNITY_FOUND"
-
-        self._logger.info(
-            f"{symbol}: análisis completo → {decision.get('decision', 'HOLD') if decision else 'error'}",
-            source="monitor",
-        )
-        return None
-
-    # ── Estado: OPPORTUNITY_FOUND ─────────────────────────────────────────────
-
-    async def _look_for_entry(self, symbol: str, price: float, state_row: dict) -> str | None:
-        """Análisis de corto plazo para decidir si es el momento de entrar."""
-        self._logger.info(f"{symbol}: buscando punto de entrada (corto plazo)", source="monitor")
-
-        tech_report, bars = await self._run_technical_short(symbol, price)
-        if tech_report is None:
-            self._logger.warning(f"{symbol}: análisis técnico corto falló", source="monitor")
-            return None
-
-        # Company analysis — noticias recientes de la empresa para evaluar riesgo de entrada
-        exchange = state_row.get("exchange") if state_row else None
-        company_report = await self._run_company_analysis(symbol, exchange)
-        if company_report is None:
-            self._logger.warning(f"{symbol}: company analysis falló — continuando sin él", source="monitor")
-
-        can_short = self._allow_short_selling and bool(state_row.get("shortable"))
-        max_shares = max(1, int(self._max_position_value / price))
-        short_hint = " Short selling is allowed (OPEN_SHORT is valid)." if can_short else ""
-        task = (
-            f"Decide entry for {symbol}. Current price: ${price:.2f}. "
-            f"Max position: ${self._max_position_value:.0f} USD (max {max_shares} shares at current price).{short_hint}"
-        )
-        decision = await self._run_trading_decision(symbol, "entry_eval", task, self._trading_entry_agent)
-
-        if not decision:
-            return None
-
-        if decision.get("decision") in ("OPEN_POSITION", "OPEN_SHORT"):
-            is_short = decision.get("decision") == "OPEN_SHORT"
-            if is_short and not can_short:
-                self._logger.info(f"{symbol}: OPEN_SHORT ignorado — short selling deshabilitado o símbolo no shortable", source="monitor")
-                return None
-            side = "sell" if is_short else "buy"
-            position_side = "short" if is_short else "long"
-
-            # Calcular qty máxima por valor máximo en dólares
-            max_qty = max(1, int(self._max_position_value / price))
-            agent_qty = decision.get("qty")
-            if isinstance(agent_qty, (int, float)) and agent_qty >= 1:
-                qty = min(int(agent_qty), max_qty)
-                if int(agent_qty) > max_qty:
-                    self._logger.info(
-                        f"{symbol}: qty del agente ({int(agent_qty)}) excede límite — usando {qty}",
-                        source="monitor",
-                    )
-            else:
-                qty = max_qty  # fallback si el agente devuelve null
-            target = tech_report.get("target_price")
-            stop = tech_report.get("stop_loss")
-
-            direction = "SHORT" if is_short else "LONG"
-            self._logger.info(
-                f"{symbol}: abriendo posición {direction} — qty={qty} (${price:.2f}×{qty}=${price*qty:.0f}) "
-                f"target=${target} stop=${stop}",
-                source="monitor",
-            )
-
-            # Generar gráfico de evidencia al abrir posición
-            chart_path = self._generate_chart(symbol, bars, "15Min", "entry")
-            if chart_path:
-                report_id = self._storage.get_last_agent_report_id(symbol, "trading_entry")
-                if report_id:
-                    self._storage.update_agent_report_chart_path(report_id, chart_path)
-
-            try:
-                result = await self._alpaca.place_order(
-                    symbol, qty, side,
-                    take_profit_price=target if (target and stop) else None,
-                    stop_loss_price=stop if (target and stop) else None,
-                )
-                bracket_id = result.get("order_id") if (target and stop) else None
-                self._storage.upsert_symbol_state(
-                    symbol,
-                    state="OPENING",
-                    target_price=target,
-                    stop_loss=stop,
-                    position_qty=float(qty),
-                    position_side=position_side,
-                    pending_order_id=result.get("order_id"),
-                    bracket_order_id=bracket_id,
-                    chart_path=chart_path,
-                )
-                bracket_info = " [bracket]" if bracket_id else ""
-                self._logger.info(
-                    f"{symbol}: orden {side.upper()}×{qty} enviada{bracket_info} (order_id={result.get('order_id')}) → OPENING",
-                    source="monitor",
-                )
-                return f"{symbol} {side.upper()}×{qty} enviada (OPENING)"
-            except Exception as e:
-                self._logger.error(f"{symbol}: error al abrir posición: {e}", source="monitor", exc_info=True)
-
-        elif decision.get("decision") == "REJECT":
-            self._logger.info(f"{symbol}: señal rechazada → volviendo a WATCHING", source="monitor")
-            self._storage.upsert_symbol_state(symbol, state="WATCHING", entry_signal_at=None)
-
-        return None
-
-    # ── Estado: POSITION_OPEN ─────────────────────────────────────────────────
-
-    async def _manage_position(self, symbol: str, price: float, state_row: dict) -> str | None:
-        """
-        Gestiona una posición abierta.
-
-        Orden de verificación:
-        1. Si existe bracket_order_id, comprueba si alguna leg fue ejecutada por Alpaca.
-        2. Fallback: compara precio actual contra target/stop del monitor.
-           Si se activa, cancela las legs activas del bracket antes de colocar la orden de cierre.
-        """
-        target = state_row.get("target_price")
-        stop = state_row.get("stop_loss")
-        qty = state_row.get("position_qty") or 0
-        position_side = state_row.get("position_side", "long")
-        bracket_order_id = state_row.get("bracket_order_id")
-
-        if not qty:
-            self._logger.warning(f"{symbol}: POSITION_OPEN sin qty registrada → WATCHING", source="monitor")
-            self._storage.upsert_symbol_state(symbol, state="WATCHING")
-            return None
-
-        close_side = "buy" if position_side == "short" else "sell"
-
-        # ── 1. Verificar si Alpaca ejecutó una leg del bracket automáticamente ─
-        if bracket_order_id:
-            try:
-                bracket_order = await self._alpaca.get_order(bracket_order_id)
-                if bracket_order:
-                    for leg in (bracket_order.get("legs") or []):
-                        if leg.get("status") == "filled":
-                            leg_id = leg.get("id")
-                            leg_order = await self._alpaca.get_order(leg_id) if leg_id else None
-                            fill_price = (leg_order.get("filled_avg_price") if leg_order else None) or price
-                            fill_qty = (leg_order.get("filled_qty") if leg_order else None) or qty
-                            fees = (leg_order.get("commission") if leg_order else 0.0) or 0.0
-
-                            leg_type = leg.get("type", "")
-                            if leg_type == "limit":
-                                trigger = f"Take-profit ${target:.2f} ejecutado automáticamente por Alpaca"
-                            else:
-                                trigger = f"Stop-loss ${stop:.2f} ejecutado automáticamente por Alpaca"
-
-                            if position_side == "short":
-                                entry_trade = self._storage.get_last_sell_trade(symbol)
-                                entry_price = entry_trade.get("price") if entry_trade else None
-                                pnl = (entry_price - fill_price) * fill_qty if (fill_price and entry_price) else None
-                                alert_buy, alert_sell = fill_price, entry_price
-                            else:
-                                entry_trade = self._storage.get_last_buy_trade(symbol)
-                                entry_price = entry_trade.get("price") if entry_trade else None
-                                pnl = (fill_price - entry_price) * fill_qty if (fill_price and entry_price) else None
-                                alert_buy, alert_sell = entry_price, fill_price
-
-                            self._storage.save_trade(
-                                symbol=symbol,
-                                side=close_side,
-                                qty=fill_qty,
-                                price=fill_price,
-                                order_id=leg_id,
-                                status="filled",
-                                trigger=trigger,
-                                reason=trigger,
-                                pnl=pnl,
-                                fees=fees,
-                            )
-                            self._storage.upsert_symbol_state(
-                                symbol,
-                                state="WATCHING",
-                                target_price=None,
-                                stop_loss=None,
-                                position_qty=None,
-                                position_open_at=None,
-                                chart_path=None,
-                                pending_order_id=None,
-                                analysis_summary=None,
-                                position_side="long",
-                                bracket_order_id=None,
-                            )
-                            pnl_str = f" | P&L: ${pnl:+.2f}" if pnl is not None else ""
-                            price_str = f"${fill_price:.2f}" if fill_price else "precio de mercado"
-                            self._logger.info(
-                                f"{symbol}: posición {position_side} cerrada por bracket Alpaca — "
-                                f"{fill_qty:.0f} acc. @ {price_str}{pnl_str} → WATCHING",
-                                source="monitor",
-                            )
-                            if self._alerter and fill_price and entry_price and pnl is not None:
-                                try:
-                                    self._alerter.send_close_alert(
-                                        symbol=symbol,
-                                        qty=fill_qty,
-                                        buy_price=alert_buy,
-                                        sell_price=alert_sell,
-                                        pnl=pnl,
-                                        fees=fees,
-                                        trigger=trigger,
-                                    )
-                                except Exception:
-                                    pass
-                            return f"{symbol} {close_side.upper()} FILLED @ {price_str}{pnl_str} (bracket)"
-            except Exception as e:
-                self._logger.error(
-                    f"{symbol}: error verificando bracket order {bracket_order_id}: {e}",
-                    source="monitor",
-                    exc_info=True,
-                )
-
-        # ── 2. Fallback: lógica de precio ──────────────────────────────────────
-        reason = None
-        if position_side == "short":
-            if target and price <= target:
-                reason = f"Short target ${target:.2f} alcanzado (precio actual: ${price:.2f})"
-            elif stop and price >= stop:
-                reason = f"Short stop-loss ${stop:.2f} activado (precio actual: ${price:.2f})"
-        else:
-            if target and price >= target:
-                reason = f"Target ${target:.2f} alcanzado (precio actual: ${price:.2f})"
-            elif stop and price <= stop:
-                reason = f"Stop-loss ${stop:.2f} activado (precio actual: ${price:.2f})"
-
-        if not reason:
-            self._logger.debug(
-                f"{symbol}: posición {position_side} abierta — precio ${price:.2f} | target ${target} | stop ${stop}",
-                source="monitor",
-            )
-            return None
-
-        # Cancelar legs activas del bracket antes de colocar orden de cierre manual
-        if bracket_order_id:
-            try:
-                bracket_order = await self._alpaca.get_order(bracket_order_id)
-                if bracket_order:
-                    for leg in (bracket_order.get("legs") or []):
-                        if leg.get("status") not in ("filled", "cancelled", "expired", "rejected"):
-                            leg_id = leg.get("id")
-                            if leg_id:
-                                await self._alpaca.cancel_order(leg_id)
-                                self._logger.debug(
-                                    f"{symbol}: leg bracket {leg_id} cancelada (fallback precio)",
-                                    source="monitor",
-                                )
-            except Exception as e:
-                self._logger.error(
-                    f"{symbol}: error cancelando legs del bracket: {e}",
-                    source="monitor",
-                    exc_info=True,
-                )
-
-        self._logger.info(f"{symbol}: cerrando posición {position_side} — {reason}", source="monitor")
-        try:
-            result = await self._alpaca.place_order(symbol, qty, close_side)
-            self._storage.upsert_symbol_state(
-                symbol,
-                state="CLOSING",
-                pending_order_id=result.get("order_id"),
-                analysis_summary=reason,
-                bracket_order_id=None,
-            )
-            self._logger.info(
-                f"{symbol}: orden {close_side.upper()}×{qty} enviada (order_id={result.get('order_id')}) → CLOSING",
-                source="monitor",
-            )
-            return f"{symbol} {close_side.upper()}×{qty} enviada (CLOSING)"
-        except Exception as e:
-            self._logger.error(f"{symbol}: error al cerrar posición: {e}", source="monitor", exc_info=True)
-        return None
-
-    # ── Estado: OPENING ───────────────────────────────────────────────────────
-
-    async def _check_opening(self, symbol: str, state_row: dict) -> str | None:
-        """Verifica el estado de la orden de compra pendiente."""
-        order_id = state_row.get("pending_order_id")
-        if not order_id:
-            self._logger.warning(f"{symbol}: OPENING sin pending_order_id → WATCHING", source="monitor")
-            self._storage.upsert_symbol_state(symbol, state="WATCHING", pending_order_id=None)
-            return None
-
-        try:
-            order = await self._alpaca.get_order(order_id)
-        except Exception as e:
-            self._logger.error(f"{symbol}: error consultando orden {order_id}: {e}", source="monitor", exc_info=True)
-            return None
-
-        if order is None:
-            self._logger.warning(f"{symbol}: orden {order_id} no encontrada → WATCHING", source="monitor")
-            self._storage.upsert_symbol_state(symbol, state="WATCHING", pending_order_id=None)
-            return None
-
-        status = order.get("status", "")
-        if status == "filled":
-            fill_price = order.get("filled_avg_price")
-            fill_qty = order.get("filled_qty") or state_row.get("position_qty", 0)
-            now = datetime.now(timezone.utc).isoformat()
-
-            self._storage.save_trade(
-                symbol=symbol,
-                side="buy",
-                qty=fill_qty,
-                price=fill_price,
-                order_id=order_id,
-                status="filled",
-                trigger="entry_signal",
-                reason="",
-            )
-            self._storage.upsert_symbol_state(
-                symbol,
-                state="POSITION_OPEN",
-                position_open_at=now,
-                pending_order_id=None,
-            )
-            price_str = f"${fill_price:.2f}" if fill_price else "precio de mercado"
-            self._logger.info(
-                f"{symbol}: orden de compra ejecutada — {fill_qty:.0f} acc. @ {price_str} → POSITION_OPEN",
-                source="monitor",
-            )
-            if self._alerter:
-                try:
-                    self._alerter.send_trade_alert(
-                        symbol=symbol,
-                        side="buy",
-                        qty=fill_qty,
-                        price=fill_price,
-                        order_id=order_id,
-                        reason=f"Orden ejecutada @ {price_str}",
-                    )
-                except Exception:
-                    pass
-            return f"{symbol} BUY FILLED @ {price_str}"
-
-        elif status in ("cancelled", "expired", "rejected"):
-            self._logger.info(
-                f"{symbol}: orden de compra {status} → WATCHING",
-                source="monitor",
-            )
-            self._storage.upsert_symbol_state(
-                symbol, state="WATCHING", pending_order_id=None, entry_signal_at=None
-            )
-        else:
-            self._logger.debug(f"{symbol}: orden de compra pendiente (status: {status})", source="monitor")
-        return None
-
-    # ── Estado: CLOSING ───────────────────────────────────────────────────────
-
-    async def _check_closing(self, symbol: str, state_row: dict) -> str | None:
-        """Verifica el estado de la orden de venta pendiente y calcula P&L al fill."""
-        order_id = state_row.get("pending_order_id")
-        if not order_id:
-            self._logger.warning(f"{symbol}: CLOSING sin pending_order_id → POSITION_OPEN", source="monitor")
-            self._storage.upsert_symbol_state(symbol, state="POSITION_OPEN", pending_order_id=None)
-            return None
-
-        try:
-            order = await self._alpaca.get_order(order_id)
-        except Exception as e:
-            self._logger.error(f"{symbol}: error consultando orden de cierre {order_id}: {e}", source="monitor", exc_info=True)
-            return None
-
-        if order is None:
-            self._logger.warning(f"{symbol}: orden de cierre {order_id} no encontrada → POSITION_OPEN", source="monitor")
-            self._storage.upsert_symbol_state(symbol, state="POSITION_OPEN", pending_order_id=None)
-            return None
-
-        status = order.get("status", "")
-        if status == "filled":
-            fill_price = order.get("filled_avg_price")
-            fill_qty = order.get("filled_qty") or state_row.get("position_qty", 0)
-            trigger = state_row.get("analysis_summary") or "cierre de posición"
-            position_side = state_row.get("position_side", "long")
-
-            fees = order.get("commission", 0.0)
-
-            if position_side == "short":
-                # Cierre de short: la entrada fue un SELL, la salida es un BUY
-                entry_trade = self._storage.get_last_sell_trade(symbol)
-                entry_price = entry_trade.get("price") if entry_trade else None
-                pnl = (entry_price - fill_price) * fill_qty if (fill_price and entry_price) else None
-                close_side = "buy"
-                buy_price = entry_price  # para la alerta
-            else:
-                entry_trade = self._storage.get_last_buy_trade(symbol)
-                entry_price = entry_trade.get("price") if entry_trade else None
-                pnl = (fill_price - entry_price) * fill_qty if (fill_price and entry_price) else None
-                close_side = "sell"
-                buy_price = entry_price
-
-            self._storage.save_trade(
-                symbol=symbol,
-                side=close_side,
-                qty=fill_qty,
-                price=fill_price,
-                order_id=order_id,
-                status="filled",
-                trigger=trigger,
-                reason=trigger,
-                pnl=pnl,
-                fees=fees,
-            )
-            self._storage.upsert_symbol_state(
-                symbol,
-                state="WATCHING",
-                target_price=None,
-                stop_loss=None,
-                position_qty=None,
-                position_open_at=None,
-                chart_path=None,
-                pending_order_id=None,
-                analysis_summary=None,
-                position_side="long",
-                bracket_order_id=None,
-            )
-            pnl_str = f" | P&L: ${pnl:+.2f}" if pnl is not None else ""
-            price_str = f"${fill_price:.2f}" if fill_price else "precio de mercado"
-            self._logger.info(
-                f"{symbol}: posición {position_side} cerrada — {fill_qty:.0f} acc. @ {price_str}{pnl_str} → WATCHING",
-                source="monitor",
-            )
-            if self._alerter and fill_price and buy_price and pnl is not None:
-                try:
-                    self._alerter.send_close_alert(
-                        symbol=symbol,
-                        qty=fill_qty,
-                        buy_price=buy_price,
-                        sell_price=fill_price,
-                        pnl=pnl,
-                        fees=fees,
-                        trigger=trigger,
-                    )
-                except Exception:
-                    pass
-            return f"{symbol} {close_side.upper()} FILLED @ {price_str}{pnl_str}"
-
-        elif status in ("cancelled", "expired", "rejected"):
-            # Orden cancelada — volver a POSITION_OPEN para reintentar en próximo ciclo
-            self._logger.info(
-                f"{symbol}: orden de venta {status} → POSITION_OPEN (reintentará)",
-                source="monitor",
-            )
-            self._storage.upsert_symbol_state(symbol, state="POSITION_OPEN", pending_order_id=None)
-        else:
-            self._logger.debug(f"{symbol}: orden de venta pendiente (status: {status})", source="monitor")
-        return None
-
-    # ── Helpers de sub-agentes ────────────────────────────────────────────────
-
-    async def _run_technical_medium(self, symbol: str, price: float) -> tuple[dict | None, list[dict]]:
-        """Ejecuta TechnicalWatchingAgent — el agente obtiene sus propios datos vía tools."""
-        bars = []
-        try:
-            # El agente obtiene los datos y guarda el informe vía tools internas
-            response = await self._technical_watching_agent.run(
-                f"Analyze {symbol} for medium-term trend. Current price: ${price:.2f}."
-            )
-            report = validate_technical_watching_report(response)
-            # Obtener barras por separado para la generación del gráfico de evidencia
-            try:
-                bars = await self._alpaca.get_bars(symbol, timeframe="1Day", limit=90)
-            except Exception:
-                pass
-            return report, bars
-        except ParseError as e:
-            self._logger.error(f"{symbol}: TechnicalWatchingAgent respuesta inválida: {e}", source="monitor")
-            return None, bars
-        except Exception as e:
-            self._logger.error(f"{symbol}: error en TechnicalWatchingAgent: {e}", source="monitor", exc_info=True)
-            return None, bars
-
-    async def _run_technical_short(self, symbol: str, price: float) -> tuple[dict | None, list[dict]]:
-        """Ejecuta TechnicalEntryAgent — el agente obtiene sus propios datos vía tools."""
-        bars = []
-        try:
-            # El agente obtiene los datos, lee el contexto de medio plazo y guarda el informe vía tools
-            response = await self._technical_entry_agent.run(
-                f"Analyze {symbol} for short-term entry timing. Current price: ${price:.2f}."
-            )
-            report = validate_technical_report(response)
-            # Obtener barras por separado para la generación del gráfico de evidencia
-            try:
-                bars = await self._alpaca.get_bars(symbol, timeframe="15Min", limit=96)
-            except Exception:
-                pass
-            return report, bars
-        except ParseError as e:
-            self._logger.error(f"{symbol}: TechnicalEntryAgent respuesta inválida: {e}", source="monitor")
-            return None, bars
-        except Exception as e:
-            self._logger.error(f"{symbol}: error en TechnicalEntryAgent: {e}", source="monitor", exc_info=True)
-            return None, bars
-
-    # ── Market context global ──────────────────────────────────────────────────
-
-    async def _maybe_update_market_context(self) -> None:
-        """Actualiza el informe de contexto global de mercado si ha pasado el intervalo."""
-        ctx = self._storage.get_latest_market_context()
-        if ctx and not self._force_analysis:
-            try:
-                last_dt = datetime.fromisoformat(ctx["created_at"])
-                if last_dt.tzinfo is None:
-                    last_dt = last_dt.replace(tzinfo=timezone.utc)
-                elapsed_hours = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
-                if elapsed_hours < self._analysis_interval_hours:
-                    return
-            except Exception:
-                pass
-        await self._run_market_context()
-
-    async def _run_market_context(self) -> None:
-        """Actualiza el contexto global de mercado — el agente obtiene y clasifica noticias vía tools."""
-        self._logger.info("Actualizando contexto global de mercado...", source="monitor")
-        try:
-            # El agente fetcha noticias vía FetchMarketNewsTool y guarda el informe vía SaveMarketContextTool
-            response = await self._market_context_agent.run("Update global market context.")
-            report = validate_market_context(response)
-            self._logger.info(
-                f"Contexto global actualizado — sentiment: {report.get('market_sentiment', '?')} | "
-                f"risk: {report.get('risk_appetite', '?')}",
-                source="monitor",
-            )
-        except ParseError as e:
-            self._logger.error(f"MarketContextAgent respuesta inválida: {e}", source="monitor")
-        except Exception as e:
-            self._logger.error(f"Error actualizando contexto global: {e}", source="monitor", exc_info=True)
-
-    def _load_market_context(self) -> dict | None:
-        """Lee el último informe de contexto global de la BD y lo deserializa."""
-        ctx_row = self._storage.get_latest_market_context()
-        if not ctx_row:
-            return None
-        try:
-            return json.loads(ctx_row["report"])
-        except Exception:
-            return None
-
-    async def _run_company_analysis(self, symbol: str, exchange: str | None = None) -> dict | None:
-        """Analiza noticias de empresa — el agente fetcha y clasifica noticias vía tools."""
-        try:
-            exchange_hint = f" Exchange: {exchange}." if exchange else ""
-            response = await self._company_analysis_agent.run(
-                f"Analyze company news for {symbol}.{exchange_hint}"
-            )
-            report = validate_company_analysis(response)
-            return report
-        except ParseError as e:
-            self._logger.error(f"{symbol}: CompanyAnalysisAgent respuesta inválida: {e}", source="monitor")
-            return None
-        except Exception as e:
-            self._logger.error(f"{symbol}: error en company analysis: {e}", source="monitor", exc_info=True)
-            return None
-
-    async def _run_trading_decision(
-        self, symbol: str, stage: str, task: str, agent
-    ) -> dict | None:
-        """Ejecuta un TradingAgent con una tarea simple y devuelve la decisión parseada.
-
-        El agente lee sus propios informes vía tools (GetLastReportTool, GetMarketContextTool)
-        y guarda el resultado vía SaveAgentReportTool. El monitor solo valida la respuesta.
-        """
-        try:
-            response = await agent.run(task)
-            decision = validate_trading_decision(response)
-            return decision
-        except ParseError as e:
-            self._logger.error(f"{symbol}: TradingAgent ({stage}) respuesta inválida: {e}", source="monitor")
-            return None
-        except Exception as e:
-            self._logger.error(f"{symbol}: error en TradingAgent ({stage}): {e}", source="monitor", exc_info=True)
-            return None
+        lines = [
+            f"Process the following {len(symbols)} symbol(s): {', '.join(symbols)}.",
+            f"Market is currently: {'OPEN' if market_is_open else 'CLOSED'}.",
+            f"Close imminent (< 5 min to close): {'YES — only manage POSITION_OPEN/OPENING/CLOSING' if close_imminent else 'NO'}.",
+            f"Force analysis: {'YES — run analysis even if interval not elapsed' if self._force_analysis else 'NO'}.",
+            f"Max position value: ${self._max_position_value:.0f} USD.",
+            f"Allow short selling: {'YES' if self._allow_short_selling else 'NO'}.",
+            "",
+            "Current prices:",
+        ]
+        for sym in symbols:
+            snap = snapshots.get(sym, {})
+            price = snap.get("close")
+            price_str = f"${price:.2f}" if price is not None else "unavailable"
+            lines.append(f"  {sym}: {price_str}")
+        return "\n".join(lines)
 
     def _generate_chart(self, symbol: str, bars: list[dict], timeframe: str, event_label: str) -> str | None:
         """Genera un gráfico de velas y retorna la ruta, o None si falla."""
@@ -1147,6 +479,7 @@ async def run_monitor(
     _register("news_classifier")
     _register("trader_opportunity")
     _register("trader_entry")
+    _register("orchestrator")
 
     # EventBus con logging de prompts
     bus = EventBus()
@@ -1167,7 +500,7 @@ async def run_monitor(
 
     bus.subscribe("*", on_event)
 
-    # Construir NewsIngestionService primero (necesario para los agentes de economía)
+    # Construir NewsIngestionService primero (necesario para los sub-agentes de economía)
     from src.news_sources import AlpacaNewsSource, RSSNewsSource, YahooSymbolSource, NewsAggregator
     from src.news_service import NewsIngestionService
     from .economics_agent import build_news_classifier_agent
@@ -1188,7 +521,7 @@ async def run_monitor(
         full_content_classifier_agent=news_classifier_full_agent,
     )
 
-    # Construir sub-agentes (pasan alpaca/storage/news_service para sus tools)
+    # Construir sub-agentes especializados (usados por el OrchestratorAgent via RunSubAgentTool)
     technical_watching_agent = await build_technical_watching_agent(
         config, bus, model_registry, alpaca_client=alpaca, storage=storage
     )
@@ -1208,18 +541,33 @@ async def run_monitor(
         config, bus, model_registry, alpaca_client=alpaca, storage=storage
     )
 
+    # Construir OrchestratorAgent (TaskListPlanner) con todos los sub-agentes
+    sub_agents = {
+        "technical_watching":  technical_watching_agent,
+        "technical_entry":     technical_entry_agent,
+        "market_context":      market_context_agent,
+        "company_analysis":    company_analysis_agent,
+        "trading_opportunity": trading_opportunity_agent,
+        "trading_entry":       trading_entry_agent,
+    }
+    orchestrator_agent, task_manager = await build_orchestrator_agent(
+        config=config,
+        bus=bus,
+        model_registry=model_registry,
+        sub_agents=sub_agents,
+        alpaca_client=alpaca,
+        storage=storage,
+        news_service=news_service,
+        max_position_value=effective_max_position,
+    )
+
     # Arrancar monitor
     monitor = PriceMonitor(
         alpaca=alpaca,
         storage=storage,
-        technical_watching_agent=technical_watching_agent,
-        technical_entry_agent=technical_entry_agent,
-        market_context_agent=market_context_agent,
-        company_analysis_agent=company_analysis_agent,
-        trading_opportunity_agent=trading_opportunity_agent,
-        trading_entry_agent=trading_entry_agent,
+        orchestrator_agent=orchestrator_agent,
+        task_manager=task_manager,
         logger=logger,
-        news_service=news_service,
         max_position_value=effective_max_position,
         analysis_interval_hours=analysis_interval,
         alerter=alerter,
