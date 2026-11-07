@@ -8,6 +8,7 @@
 | `test_monitor.py` | 72 | None (fully mocked) |
 | `test_news_sources.py` | 35 | None (aiohttp + feedparser mocked) |
 | `claude_agent/test_claude_fetch_news.py` | 15 | None (sources mocked) |
+| `claude_agent/test_claude_fetch_prices.py` | 28 | None (HTTP mocked; one real mplfinance PNG to tmp) |
 | `test_news_service.py` | 14 | None (aggregator + classifier mocked) |
 | `test_response_parser.py` | ~22 | None |
 | `test_alerting.py` | 5 | None (mock SMTP) |
@@ -69,6 +70,13 @@ Covers `claude_agent/fetch_news.py` (daily Claude report collector):
 - `RSSNewsSource(feeds=...)` custom feeds filtered by group; default feeds unchanged
 - `collect()`: grouping by feed, `feed_status` (`ok`/`sin_noticias_recientes`/`fallo`), per-symbol limits, Yahoo failures, full text (truncation, skipped domains, too-short pages), RSS failure
 - `main()`: explicit and default output path, console summary
+
+### `claude_agent/test_claude_fetch_prices.py`
+Covers `claude_agent/fetch_prices.py`:
+- `parse_yahoo_chart`: null closes dropped, volume filled, Yahoo error / empty / no valid closes
+- Indicators: RSI (only-up = 100, only-down = 0, warm-up NaN), MACD, `pct_change`, `classify_trend`, `rsi_zone`, `swing_levels`, golden/death cross detection, full vs short history in `compute_indicators`
+- `recent_bars`, `safe_name`, `make_chart` (real PNG), `fetch_history` (params, HTTP error)
+- `collect()`: charts only for requested symbols, chart failures, symbols not in watchlist, default charts dir; `main()` output and console summary
 
 Run without the global coverage threshold: `pytest tests/claude_agent -q --no-cov`.
 

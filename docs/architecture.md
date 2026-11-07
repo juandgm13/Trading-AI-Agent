@@ -269,13 +269,19 @@ Scheduled task (Mon–Fri 07:47 Europe/Madrid, fresh session)
                          → filter by lookback (24h, 72h on Mondays) + dedup URL/title
                          → optional full text (fetch_article_content, skip blocked domains)
                          → claude_agent/data/news_YYYY-MM-DD.json
+       fetch_prices.py ─► Yahoo /v8/finance/chart (2y daily) per watchlist symbol
+                         → compute_indicators() (pandas) → claude_agent/data/prices_YYYY-MM-DD.json
        web fetch / web search from sources.md + files in inputs/
+       Claude picks 3–5 ideas (news + technicals) → fetch_prices.py --charts … → reports/charts/DATE/*.png
+       Claude picks the lesson of the day (learning_log.md, appends a row)
        Claude writes claude_agent/reports/YYYY-MM-DD.md (report_template.md) → commit + push
 ```
 
 | Module | Input | Output |
 |---|---|---|
 | `fetch_news.collect(cfg, now, full_content)` | `config.yaml` dict | `{generated_at, lookback_hours, counts, feed_status[], issues[], market{espana,europa,eeuu,macro}, symbols{SYM: {name, group, articles[]}}}` |
+| `fetch_prices.collect(cfg, now, chart_symbols, charts_dir)` | `config.yaml` dict | `{generated_at, source, symbols{SYM: {name, group, last_date, price, change_pct{1d,1w,1m,3m,1y}, sma{20,50,200}, price_vs_sma_pct, trend, sma_cross_last_20d, rsi14, rsi_zone, macd{line,signal,histogram,momentum}, volatility_20d_annual_pct, high_52w, low_52w, dist_from_*_52w_pct, supports[], resistances[], volume_vs_avg20, recent_bars[60], chart?}}, issues[]}` |
+| `fetch_prices.compute_indicators(df)` | OHLCV DataFrame | Indicator dict (deterministic; trend = alcista if price > SMA50 > SMA200 and SMA50 rising, bajista if inverse, else lateral) |
 | `RSSNewsSource(logger, feeds)` | optional `[(source, url, group)]` | when `feeds` is given it replaces the default feeds; `fetch(feed_groups)` keeps feeds whose group matches |
 
 `feed_status` values: `ok`, `sin_noticias_recientes` (feed responded, nothing in window), `fallo` (no entries / blocked).

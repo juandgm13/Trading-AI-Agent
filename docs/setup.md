@@ -193,8 +193,10 @@ To switch to live trading, change `ALPACA_BASE_URL=https://api.alpaca.markets` i
 Runs as a Claude Code scheduled task in the cloud — **no `.env` needed** (no Alpaca, Gmail or Ollama).
 
 ```bash
-pip install -r claude_agent/requirements.txt   # aiohttp, feedparser, PyYAML (+ pytest)
+pip install -r claude_agent/requirements.txt   # aiohttp, feedparser, PyYAML, pandas, mplfinance (+ pytest)
 python claude_agent/fetch_news.py               # → claude_agent/data/news_YYYY-MM-DD.json
+python claude_agent/fetch_prices.py             # → claude_agent/data/prices_YYYY-MM-DD.json
+python claude_agent/fetch_prices.py --charts SAN.MC,AAPL   # + PNG in claude_agent/reports/charts/YYYY-MM-DD/
 ```
 
 `claude_agent/config.yaml` options:
@@ -208,7 +210,7 @@ python claude_agent/fetch_news.py               # → claude_agent/data/news_YYY
 | `full_content_top_n` / `full_content_max_chars` | `6` / `2500` | Full text for the newest Spain + US articles |
 | `full_content_skip_domains` | `[investing.com]` | Domains whose article pages block automated fetch |
 | `feeds.{espana,europa,eeuu,macro}` | see file | `{name, url}` RSS feeds |
-| `watchlist.<group>` | see file | `{symbol, name}` for Yahoo Finance RSS (`.MC` = Madrid) |
+| `watchlist.<group>` | see file | `{symbol, name}` for Yahoo Finance RSS news **and** price history/indicators (`.MC` = Madrid) |
 
 Editable inputs for Claude: `claude_agent/sources.md` (pages to web-fetch, daily searches, interests) and
-`claude_agent/inputs/` (any personal context files). Schedule: `CRON_TZ=Europe/Madrid 47 7 * * 1-5`.
+`claude_agent/inputs/` (any personal context files), `claude_agent/learning_log.md` (didactic syllabus). Schedule: `CRON_TZ=Europe/Madrid 47 7 * * 1-5`.

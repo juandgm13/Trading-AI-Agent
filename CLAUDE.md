@@ -186,12 +186,14 @@ ui/
     6_Estados.py     Symbol states + agent reports + evidence charts
 claude_agent/   Daily pre-market news report run by a Claude Code scheduled task (cloud, public sources only)
   fetch_news.py      Public RSS + Yahoo-by-symbol collection → data/news_YYYY-MM-DD.json (reuses src/news_sources.py)
+  fetch_prices.py    Yahoo daily bars (2y) → technical indicators JSON + mplfinance charts (reports/charts/DATE/)
+  learning_log.md    Didactic syllabus + concepts already explained (updated by each run)
   config.yaml        Feeds (espana/europa/eeuu/macro) + watchlist + lookback window
   sources.md         Editable list of pages to web-fetch, daily web searches, user interests
   inputs/            User-provided context files read on each run
   daily_prompt.md    Instructions Claude follows on each scheduled run
   report_template.md Fixed structure of the Spanish report
-  reports/           Generated reports (YYYY-MM-DD.md, committed)
+  reports/           Generated reports (YYYY-MM-DD.md + charts/YYYY-MM-DD/*.png, committed)
 main.py      Tkinter UI + thread management (Monitor ON/OFF, Analyze now, Analyze news)
 tests/       pytest suite (~427 tests, 100% coverage)
 charts/      Evidence PNG charts (auto-created, gitignored)
