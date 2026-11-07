@@ -27,4 +27,4 @@ Puedes editar el temario o añadir temas que te interesen.
 
 | Fecha | Concepto | Ejemplo usado |
 |---|---|---|
-| 2026-11-07 | Tipos de interés y bancos centrales (BCE, Fed) | Lagarde y probabilidad de subida de la Fed en diciembre |
+| 2026-11-07 | Inflación (IPC) | IPC de EE. UU. del martes 10 (último dato 3,7 %) y subida de tipos de la Fed |
