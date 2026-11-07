@@ -173,6 +173,12 @@ def test_compute_indicators_crypto_calendar_uses_365_days():
         fp.compute_indicators(_df(closes), calendar="otro")
 
 
+def test_round_keeps_significant_digits_below_one():
+    assert fp._r(0.0000034567) == 0.000003457
+    assert fp._r(0.5) == 0.5 and fp._r(-0.012345, 3) == -0.01235
+    assert fp._r(123.456) == 123.46 and fp._r(0) == 0 and fp._r(None) is None
+
+
 def test_safe_name_keeps_crypto_symbol():
     assert fp.safe_name("BTC-EUR") == "BTC-EUR"
 

@@ -13,8 +13,9 @@ Anthropic) que cada día laborable, antes de que abran la bolsa española (9:00)
   ("Aprende con el informe de hoy") que progresa según `learning_log.md`.
 - **Recomendaciones directas**: para cada idea, qué haría un experto (Comprar / Comprar más / Mantener /
   Reducir / Vender / Esperar / Evitar), por qué, cuánto, horizonte y qué le haría cambiar de opinión.
-- **Criptomonedas**: sección propia con precios en EUR, sentimiento (Fear & Greed), capitalización y
-  noticias; solo se recomiendan monedas que se pueden comprar en **Coinbase**, con un tope del 25 % de la cartera.
+- **Criptomonedas**: el universo son **todas las monedas de Coinbase** (~400, cualquier par). Radar diario
+  (mayores por capitalización, más suben/bajan en el top 100, cuántas suben y bajan), análisis técnico
+  detallado del núcleo + top 15 + tus monedas, sentimiento (Fear & Greed) y noticias. Tope del 25 % de la cartera.
 - **Tu cartera**: si apuntas tus movimientos en `inputs/cartera.csv`, el informe valora tus posiciones y
   te dice qué hacer con cada una.
 - **Entrega**: el informe se guarda en `claude_agent/reports/AAAA-MM-DD.md` (commit + push).
@@ -26,11 +27,11 @@ Tarea programada (L–V ~7:47 Madrid)
   └─ Claude sigue claude_agent/daily_prompt.md
        1. python claude_agent/fetch_news.py      → data/news_FECHA.json (RSS ES/EU/US + watchlist)
        2. python claude_agent/fetch_prices.py    → data/prices_FECHA.json (indicadores técnicos)
-       3. python claude_agent/fetch_crypto.py    → data/crypto_FECHA.json (cripto en EUR, Coinbase, Fear & Greed)
+       3. python claude_agent/fetch_crypto.py    → data/crypto_FECHA.json (universo Coinbase, radar, técnico, Fear & Greed)
        4. python claude_agent/portfolio.py       → data/portfolio_FECHA.json (tu cartera desde inputs/cartera.csv)
        5. web fetch de sources.md + búsquedas     → cierre anterior, futuros, agenda, bancos centrales, cripto
           + lee inputs/                           → tus notas, empresas de interés
-       6. decide 3–5 ideas de bolsa + 1–2 de cripto con acción directa → --charts … → reports/charts/FECHA/*.png
+       6. decide 3–5 ideas de bolsa + 1–3 de cripto con acción directa → --charts … → reports/charts/FECHA/*.png
        7. elige la lección del día (learning_log.md)
        8. redacta reports/FECHA.md con report_template.md
        9. git commit + push (informe + gráficos + learning_log.md)
@@ -40,12 +41,12 @@ Tarea programada (L–V ~7:47 Madrid)
 
 | Archivo | Para qué |
 |---|---|
-| `config.yaml` | Feeds RSS (España, Europa, EE. UU., macro, cripto), watchlist por símbolo, bloque `crypto` (Coinbase, tope 25 %, monedas), `portfolio`, ventana horaria, límites |
+| `config.yaml` | Feeds RSS (España, Europa, EE. UU., macro, cripto), watchlist por símbolo, bloque `crypto` (Coinbase, tope 25 %, núcleo, `auto_top_n`), `portfolio`, ventana horaria, límites |
 | `sources.md` | **Editable**: páginas para web fetch, búsquedas del día y tus intereses |
 | `inputs/` | **Editable**: deja aquí archivos propios (notas, PDFs, listas de enlaces) |
 | `inputs/cartera.csv` | **Editable como tabla**: tus movimientos (compras, ventas, dividendos). Formato en `inputs/README.md` |
 | `fetch_news.py` | Recoge noticias públicas → JSON compacto (sin LLM) |
-| `fetch_crypto.py` | Cripto: monedas comprables en Coinbase (EUR), índice Fear & Greed, capitalización/dominancia (Coinpaprika) e indicadores con velas diarias en EUR (calendario de 365 días) + gráficos |
+| `fetch_crypto.py` | Cripto: universo = todas las monedas de Coinbase cruzadas con Coinpaprika, radar (top por capitalización, más suben/bajan, amplitud), Fear & Greed, capitalización/dominancia e indicadores con velas diarias de Coinbase (par EUR o USD, 365 días) + gráficos |
 | `portfolio.py` | Lee `inputs/cartera.csv` → posiciones (precio medio), valor y G/P en EUR, peso de cripto frente al tope |
 | `fetch_prices.py` | Velas diarias (Yahoo, 2 años) → indicadores (MM20/50/200, RSI, MACD, volatilidad, 52 semanas, soportes/resistencias) + gráficos PNG |
 | `learning_log.md` | Temario didáctico y registro de conceptos ya explicados (lo actualiza Claude) |
@@ -63,7 +64,7 @@ python claude_agent/fetch_news.py --no-full-content --output /tmp/news.json
 python claude_agent/fetch_prices.py                # → claude_agent/data/prices_AAAA-MM-DD.json
 python claude_agent/fetch_prices.py --charts SAN.MC,^IBEX   # + gráficos en reports/charts/AAAA-MM-DD/
 python claude_agent/fetch_crypto.py                # → claude_agent/data/crypto_AAAA-MM-DD.json
-python claude_agent/fetch_crypto.py --charts BTC-EUR,ETH-EUR
+python claude_agent/fetch_crypto.py --charts BTC,PEPE      # cualquier moneda de Coinbase
 python claude_agent/portfolio.py                   # → claude_agent/data/portfolio_AAAA-MM-DD.json
 ```
 
@@ -78,9 +79,11 @@ Luego, en una sesión de Claude Code: *"Sigue claude_agent/daily_prompt.md"*.
   No se intenta saltar esas protecciones anti-bot (se probó Scrapling y se descartó por ese motivo).
 - **Más valores** → añade `{symbol, name}` a `watchlist` (Yahoo Finance; `.MC` = Bolsa de Madrid).
   Se usan tanto para noticias como para el análisis técnico; solo los valores de la watchlist pueden tener gráfico.
-- **Más criptomonedas** → añade `{symbol, name}` a `crypto.watchlist` (símbolo de Yahoo en EUR, p. ej. `AAVE-EUR`).
-  Cada día se comprueba si se puede comprar en Coinbase; si no, el informe no la recomendará.
-  Comprobado desde la nube: Bitcoin Magazine bloquea el RSS y CoinGecko limita las peticiones sin clave.
+- **Criptomonedas** → el universo (todas las de Coinbase) se actualiza solo cada día. Para fijar una moneda en
+  el análisis detallado añade `{symbol, name}` (código, p. ej. `AAVE`) a `crypto.watchlist`; `crypto.auto_top_n`
+  controla cuántas de las mayores por capitalización se analizan a fondo (15).
+  Comprobado desde la nube: Bitcoin Magazine bloquea el RSS, CoinGecko limita las peticiones sin clave y Yahoo
+  no tiene muchas monedas pequeñas (por eso las velas cripto vienen de Coinbase).
 - **Tope de cripto** → `crypto.max_portfolio_pct` (25 % por decisión del usuario).
 - **Lecciones** → edita el temario de `learning_log.md` o añade temas que quieras aprender.
 - **Páginas concretas o búsquedas** → edita `sources.md`.

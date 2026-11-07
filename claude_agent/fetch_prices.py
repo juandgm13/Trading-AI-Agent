@@ -149,9 +149,13 @@ def rsi_zone(value: float | None) -> str | None:
 
 
 def _r(value, nd: int = 2):
+    """Redondea a `nd` decimales; por debajo de 1 conserva 4 cifras significativas (cripto como PEPE ≈ 0,0000035)."""
     if value is None or pd.isna(value):
         return None
-    return round(float(value), nd)
+    value = float(value)
+    if value != 0 and abs(value) < 1:
+        return float(f"{value:.{max(nd, 4)}g}")
+    return round(value, nd)
 
 
 def compute_indicators(df: pd.DataFrame, calendar: str = "bolsa") -> dict:

@@ -63,24 +63,20 @@ watchlist:
     - {symbol: "SPY", name: "ETF S&P 500 (SPDR)"}
     - {symbol: "QQQ", name: "ETF Nasdaq 100 (Invesco)"}
 
-# Criptomonedas (claude_agent/fetch_crypto.py). Precios en EUR vía Yahoo Finance (velas diarias, 365 días/año).
-# Solo se recomiendan monedas que se puedan comprar en el exchange del usuario (Coinbase, par en EUR);
-# la lista se comprueba cada día contra la API pública de Coinbase.
+# Criptomonedas (claude_agent/fetch_crypto.py). Universo = TODAS las monedas que se pueden comprar en
+# Coinbase (cualquier par: USD, EUR, USDC…), comprobado cada día con su API pública y cruzado con Coinpaprika.
+# Análisis técnico detallado (velas diarias de Coinbase, par EUR si existe y si no USD) para:
+# watchlist (núcleo) + top `auto_top_n` por capitalización + monedas de la cartera + las pedidas con --charts.
 crypto:
   exchange: coinbase
-  quote_currency: EUR
   max_portfolio_pct: 25       # Tope de cripto sobre el valor total de la cartera (decisión del usuario)
-  watchlist:
-    - {symbol: "BTC-EUR", name: "Bitcoin"}
-    - {symbol: "ETH-EUR", name: "Ethereum"}
-    - {symbol: "SOL-EUR", name: "Solana"}
-    - {symbol: "XRP-EUR", name: "XRP"}
-    - {symbol: "ADA-EUR", name: "Cardano"}
-    - {symbol: "LINK-EUR", name: "Chainlink"}
-    - {symbol: "AVAX-EUR", name: "Avalanche"}
-    - {symbol: "DOT-EUR", name: "Polkadot"}
-    - {symbol: "LTC-EUR", name: "Litecoin"}
-    - {symbol: "DOGE-EUR", name: "Dogecoin"}
+  auto_top_n: 15              # Mayores monedas de Coinbase por capitalización con análisis detallado
+  screener_top: 20            # Filas del radar "mayores por capitalización"
+  watchlist:                  # Núcleo fijo (códigos de moneda); también se buscan sus noticias en Yahoo
+    - {symbol: "BTC", name: "Bitcoin"}
+    - {symbol: "ETH", name: "Ethereum"}
+    - {symbol: "SOL", name: "Solana"}
+    - {symbol: "XRP", name: "XRP"}
 
 # Cartera del usuario (claude_agent/portfolio.py): movimientos en CSV, editable como tabla.
 portfolio:

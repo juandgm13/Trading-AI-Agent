@@ -42,7 +42,7 @@ CFG = {
         "cripto": [{"name": "CoinDesk", "url": "https://c/rss"}],
     },
     "watchlist": {"espana": [{"symbol": "SAN.MC", "name": "Santander"}], "eeuu": [{"symbol": "AAPL"}]},
-    "crypto": {"watchlist": [{"symbol": "BTC-EUR", "name": "Bitcoin"}]},
+    "crypto": {"watchlist": [{"symbol": "BTC", "name": "Bitcoin"}]},
 }
 
 
@@ -59,11 +59,12 @@ def test_load_config_has_crypto_block():
     cfg = fn.load_config()
     assert cfg["feeds"]["cripto"]
     assert cfg["crypto"]["max_portfolio_pct"] == 25
-    assert all(e["symbol"].endswith("-EUR") for e in cfg["crypto"]["watchlist"])
+    assert cfg["crypto"]["auto_top_n"] > 0
+    assert all("-" not in e["symbol"] for e in cfg["crypto"]["watchlist"])  # códigos de moneda (BTC, ETH…)
 
 
 def test_crypto_watchlist_from_config():
-    assert fn._crypto_watchlist_from_config(CFG) == [("BTC-EUR", "Bitcoin", "cripto")]
+    assert fn._crypto_watchlist_from_config(CFG) == [("BTC", "Bitcoin", "cripto")]
     assert fn._crypto_watchlist_from_config({"crypto": {"watchlist": [{"symbol": "ETH-EUR"}]}}) == [
         ("ETH-EUR", "ETH-EUR", "cripto")]
     assert fn._crypto_watchlist_from_config({}) == []
@@ -173,7 +174,10 @@ async def test_collect_builds_report_data():
         _art(5, source="CoinDesk"),
     ]
 
+    fetched = []
+
     async def yahoo_fetch(symbol, max_articles=20):
+        fetched.append(symbol)
         if symbol == "AAPL":
             raise RuntimeError("yahoo caído")
         return [_art(f"s{i}", source="Yahoo Finance", url=f"https://y/{i}") for i in range(4)]
@@ -193,8 +197,9 @@ async def test_collect_builds_report_data():
     assert status == {"Expansión Mercados": "ok", "MarketWatch": "ok", "Fed": "sin_noticias_recientes",
                       "CoinDesk": "ok"}
     assert data["market"]["cripto"][0]["group"] == "cripto"
-    assert data["symbols"]["BTC-EUR"]["group"] == "cripto"
-    assert data["symbols"]["BTC-EUR"]["name"] == "Bitcoin"
+    assert data["symbols"]["BTC"]["group"] == "cripto"
+    assert data["symbols"]["BTC"]["name"] == "Bitcoin"
+    assert "BTC-USD" in fetched  # en Yahoo las cripto se buscan como BTC-USD
     assert len(data["symbols"]["SAN.MC"]["articles"]) == 2
     assert data["symbols"]["SAN.MC"]["name"] == "Santander"
     assert data["symbols"]["AAPL"] == {"name": "AAPL", "group": "eeuu", "articles": []}

@@ -1,7 +1,7 @@
 """Tests de claude_agent/portfolio.py (cartera del usuario a partir de cartera.csv)."""
 import json
 from datetime import date, datetime, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -186,18 +186,59 @@ def _hist(close):
 
 
 @pytest.mark.asyncio
-async def test_fetch_prices_ok_errors_and_empty():
+async def test_fetch_prices_yahoo_coinbase_fallback_errors_and_empty():
     async def hist(session, sym, range_="2y", interval="1d"):
         assert range_ == "5d"
-        if sym == "BAD":
+        if sym in ("BAD", "PEPE-USD", "ZZZ-USD"):
             raise ValueError("HTTP 404")
-        return _hist(10.0)
+        return _hist(0.0000035 if sym == "TINY-EUR" else 10.0)
+
+    async def coinbase(session, product):
+        if product == "ZZZ-USD":
+            raise ValueError("HTTP 404")
+        return 0.0000041
 
     with patch.object(pf, "fetch_history", side_effect=hist), \
+         patch.object(pf, "_coinbase_price", side_effect=coinbase) as cb, \
          patch.object(pf.aiohttp, "ClientSession", return_value=_FakeSession()):
-        prices, issues = await pf.fetch_prices(["SPY", "BAD"])
-    assert prices == {"SPY": 10.0} and "HTTP 404" in issues[0]["message"]
+        prices, issues = await pf.fetch_prices(["SPY", "BAD", "PEPE-USD", "ZZZ-USD", "TINY-EUR"])
+    assert prices == {"SPY": 10.0, "PEPE-USD": 0.0000041, "TINY-EUR": 0.0000035}  # sin perder precisión
+    assert {c.args[1] for c in cb.call_args_list} == {"PEPE-USD", "ZZZ-USD"}     # "BAD" no es par cripto
+    msgs = {i["activo"]: i["message"] for i in issues}
+    assert "HTTP 404" in msgs["BAD"] and "Coinbase: HTTP 404" in msgs["ZZZ-USD"]
     assert await pf.fetch_prices([]) == ({}, [])
+
+
+class _TickerResp:
+    def __init__(self, status, payload):
+        self.status, self._payload = status, payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def json(self, content_type=None):
+        return self._payload
+
+
+@pytest.mark.asyncio
+async def test_coinbase_price_ok_and_error():
+    session = MagicMock()
+    session.get.return_value = _TickerResp(200, {"price": "0.0000041"})
+    assert await pf._coinbase_price(session, "PEPE-USD") == 0.0000041
+    assert "PEPE-USD" in session.get.call_args.args[0]
+    session.get.return_value = _TickerResp(404, {})
+    with pytest.raises(ValueError, match="HTTP 404"):
+        await pf._coinbase_price(session, "XXX-USD")
+
+
+@pytest.mark.parametrize("symbol, expected", [
+    ("BTC-EUR", True), ("PEPE-USD", True), ("ETH-USDC", True), ("SAN.MC", False), ("EURUSD=X", False), ("SPY", False),
+])
+def test_is_crypto_pair(symbol, expected):
+    assert pf._is_crypto_pair(symbol) is expected
 
 
 @pytest.mark.asyncio

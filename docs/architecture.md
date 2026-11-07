@@ -271,15 +271,18 @@ Scheduled task (Mon–Fri 07:47 Europe/Madrid, fresh session)
                          → claude_agent/data/news_YYYY-MM-DD.json
        fetch_prices.py ─► Yahoo /v8/finance/chart (2y daily) per watchlist symbol
                          → compute_indicators() (pandas) → claude_agent/data/prices_YYYY-MM-DD.json
-       fetch_crypto.py ─► Coinbase /products (EUR pairs tradable) + alternative.me Fear & Greed
-                         + Coinpaprika global + Yahoo 2y daily in EUR per crypto.watchlist symbol
-                         → compute_indicators(calendar="cripto") → claude_agent/data/crypto_YYYY-MM-DD.json
+       fetch_crypto.py ─► Coinbase /products (every online, tradable pair, any quote → universe ~400 coins)
+                         × Coinpaprika /v1/tickers (rank, price, market cap, 24h/7d/30d/1y) → universe + screener
+                         + Coinbase /v2/exchange-rates (USD→EUR) + alternative.me Fear & Greed + Coinpaprika /v1/global
+                         + Coinbase daily candles (2×300, EUR pair else USD, ≤5 concurrent) for core watchlist
+                           + top auto_top_n + portfolio coins + --charts → compute_indicators(calendar="cripto")
+                         → claude_agent/data/crypto_YYYY-MM-DD.json
        portfolio.py ───► inputs/cartera.csv (user movements) → weighted average cost positions
                          + Yahoo last price + EURxxx=X FX → claude_agent/data/portfolio_YYYY-MM-DD.json
        web fetch / web search from sources.md + files in inputs/
        Claude decides 3–5 stock ideas + 1–2 crypto ideas, each with a direct action
          (Comprar / Comprar más / Mantener / Reducir / Vender / Esperar / Evitar) + why, size, horizon,
-         invalidation level and confidence; crypto only if coinbase_available, within crypto.max_portfolio_pct (25 %)
+         invalidation level and confidence; crypto: any Coinbase coin, size by market-cap rank, within crypto.max_portfolio_pct (25 %)
          → fetch_prices.py / fetch_crypto.py --charts … → reports/charts/DATE/*.png
        Claude picks the lesson of the day (learning_log.md, appends a row)
        Claude writes claude_agent/reports/YYYY-MM-DD.md (report_template.md) → commit + push
@@ -289,13 +292,15 @@ Scheduled task (Mon–Fri 07:47 Europe/Madrid, fresh session)
 |---|---|---|
 | `fetch_news.collect(cfg, now, full_content)` | `config.yaml` dict | `{generated_at, lookback_hours, counts, feed_status[], issues[], market{espana,europa,eeuu,macro}, symbols{SYM: {name, group, articles[]}}}` |
 | `fetch_prices.collect(cfg, now, chart_symbols, charts_dir)` | `config.yaml` dict | `{generated_at, source, symbols{SYM: {name, group, last_date, price, change_pct{1d,1w,1m,3m,1y}, sma{20,50,200}, price_vs_sma_pct, trend, sma_cross_last_20d, rsi14, rsi_zone, macd{line,signal,histogram,momentum}, volatility_20d_annual_pct, high_52w, low_52w, dist_from_*_52w_pct, supports[], resistances[], volume_vs_avg20, recent_bars[60], chart?}}, issues[]}` |
-| `fetch_crypto.collect(cfg, now, chart_symbols, charts_dir)` | `config.yaml` dict | `{generated_at, exchange, quote_currency, max_portfolio_pct, coinbase_available[] \| null, fear_greed{value, classification, clasificacion, date, yesterday, week_ago} \| null, market{market_cap_usd, market_cap_change_24h_pct, volume_24h_usd, bitcoin_dominance_pct, market_cap_ath_usd, market_cap_ath_date, dist_from_ath_pct} \| null, symbols{SYM: {name, currency, coinbase_available, …same indicators as fetch_prices…, recent_bars[60], chart?}}, issues[]}` |
+| `fetch_crypto.collect(cfg, now, chart_symbols, charts_dir)` | `config.yaml` dict | `{generated_at, exchange, max_portfolio_pct, usd_eur, coinbase_count \| null, fear_greed{value, classification, clasificacion, date, yesterday, week_ago} \| null, market{market_cap_usd, market_cap_change_24h_pct, volume_24h_usd, bitcoin_dominance_pct, market_cap_ath_usd, market_cap_ath_date, dist_from_ath_pct} \| null, screener{top_market_cap[], gainers_7d[], losers_7d[], gainers_30d[], losers_30d[] (top 100, no stablecoins), breadth_24h, breadth_7d} \| null, symbols{CODE: {name, rank, reasons[], product, currency, coinbase_quotes, coinbase_available, price_eur, …same indicators as fetch_prices…, recent_bars[60], chart?}}, universe[{symbol, name, rank, coinbase_quotes, price_usd, price_eur, market_cap_usd, volume_24h_usd, change_pct{24h,7d,30d,1y}, dist_from_ath_pct, stablecoin}], universe_without_data[], issues[]}` |
 | `portfolio.collect(cfg, csv_path, now)` | `config.yaml` dict + CSV path | `{exists, movements, last_movement, base_currency, totals{valor_eur, coste_eur, pnl_no_realizado_eur, pnl_no_realizado_pct, pnl_realizado_eur}, por_tipo_pct, crypto{valor_eur, peso_pct, tope_pct, excede_tope, margen_hasta_tope_eur}, positions[{activo, nombre, tipo, broker, moneda, cantidad, precio_medio, precio_actual, valor, coste, pnl, pnl_pct, valor_eur, coste_eur, pnl_eur, realizado, dividendos, desde, peso_pct}], closed_positions[], fx, issues[]}` (`{exists: false}` without CSV) |
 | `fetch_prices.compute_indicators(df, calendar="bolsa")` | OHLCV DataFrame | Indicator dict (`calendar="cripto"` uses 7/30/90/365-bar periods and √365 volatility; deterministic; trend = alcista if price > SMA50 > SMA200 and SMA50 rising, bajista if inverse, else lateral) |
 | `RSSNewsSource(logger, feeds)` | optional `[(source, url, group)]` | when `feeds` is given it replaces the default feeds; `fetch(feed_groups)` keeps feeds whose group matches |
 
-Crypto/portfolio constraints: recommendations may only *buy* coins with `coinbase_available: true`; crypto price is
+Crypto/portfolio constraints: recommendations may only *buy* coins in the Coinbase universe (any quote); duplicated
+Coinpaprika symbols resolve to the best rank; prices < 1 keep 4–6 significant digits; crypto price is
 the current (unclosed) daily candle; `cartera.csv` is user-maintained and never modified by the run; P&L of
-foreign-currency positions uses today's FX (no historical FX per purchase).
+foreign-currency positions uses today's FX (no historical FX per purchase); crypto pairs Yahoo lacks are priced
+from the Coinbase ticker.
 
 `feed_status` values: `ok`, `sin_noticias_recientes` (feed responded, nothing in window), `fallo` (no entries / blocked).

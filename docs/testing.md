@@ -8,9 +8,9 @@
 | `test_monitor.py` | 72 | None (fully mocked) |
 | `test_news_sources.py` | 35 | None (aiohttp + feedparser mocked) |
 | `claude_agent/test_claude_fetch_news.py` | 17 | None (sources mocked) |
-| `claude_agent/test_claude_fetch_prices.py` | 30 | None (HTTP mocked; one real mplfinance PNG to tmp) |
-| `claude_agent/test_claude_fetch_crypto.py` | 14 | None (Coinbase / Fear & Greed / Coinpaprika / Yahoo mocked) |
-| `claude_agent/test_claude_portfolio.py` | 28 | None (prices mocked; reads the real `inputs/cartera.csv` template) |
+| `claude_agent/test_claude_fetch_prices.py` | 31 | None (HTTP mocked; one real mplfinance PNG to tmp) |
+| `claude_agent/test_claude_fetch_crypto.py` | 24 | None (Coinbase / Coinpaprika / Fear & Greed mocked) |
+| `claude_agent/test_claude_portfolio.py` | 35 | None (prices mocked; reads the real `inputs/cartera.csv` template) |
 | `test_news_service.py` | 14 | None (aggregator + classifier mocked) |
 | `test_response_parser.py` | ~22 | None |
 | `test_alerting.py` | 5 | None (mock SMTP) |
@@ -76,17 +76,20 @@ Covers `claude_agent/fetch_news.py` (daily Claude report collector):
 ### `claude_agent/test_claude_fetch_prices.py`
 Covers `claude_agent/fetch_prices.py`:
 - `parse_yahoo_chart`: null closes dropped, volume filled, Yahoo error / empty / no valid closes
-- Indicators: crypto calendar (`calendar="cripto"`: 7/30/90/365 bars, √365 volatility), RSI (only-up = 100, only-down = 0, warm-up NaN), MACD, `pct_change`, `classify_trend`, `rsi_zone`, `swing_levels`, golden/death cross detection, full vs short history in `compute_indicators`
+- `_r` keeps 4 significant digits below 1; indicators: crypto calendar (`calendar="cripto"`: 7/30/90/365 bars, √365 volatility), RSI (only-up = 100, only-down = 0, warm-up NaN), MACD, `pct_change`, `classify_trend`, `rsi_zone`, `swing_levels`, golden/death cross detection, full vs short history in `compute_indicators`
 - `recent_bars`, `safe_name`, `make_chart` (real PNG), `fetch_history` (params, HTTP error)
 - `collect()`: charts only for requested symbols, chart failures, symbols not in watchlist, default charts dir; `main()` output and console summary
 
 ### `claude_agent/test_claude_fetch_crypto.py`
 Covers `claude_agent/fetch_crypto.py`:
-- `parse_coinbase_products` (only online, tradable, non cancel-only pairs in the quote currency), `base_currency`
-- `parse_fear_greed` (Spanish label, yesterday / week-ago history, empty payloads), `parse_global` (distance to ATH)
-- `_get_json` (params, HTTP error)
-- `collect()`: `coinbase_available` per coin, crypto calendar indicators, charts and chart failures, symbols outside the
-  watchlist, each external source failing independently (Coinbase down / no EUR pairs → `null`), default charts dir
+- `parse_coinbase_products` (all quotes; only online, tradable, non cancel-only), `pick_quote` (EUR > USD > USDC), `coin_code`
+- `parse_coinbase_candles` (order, overlap dedup, empty), `fetch_coinbase_history` (pages backwards), `parse_usd_eur`
+- `parse_tickers` (duplicated symbols → best rank, rank 0 = none), `is_stablecoin`, `build_universe` (rank order,
+  EUR price, unmatched coins, small-price precision), `build_screener` (no stablecoins, movers only in top N, breadth)
+- `parse_fear_greed`, `parse_global`, `_get_json`, `portfolio_crypto_codes` (open crypto positions from the CSV),
+  `select_detailed` (core → portfolio → top N → requested, dedup with reasons)
+- `collect()`: EUR vs USD product, `price_eur`, charts and chart failures, coins not on Coinbase, every source failing
+  independently (no Coinbase list → tries EUR then USD), empty Coinbase list, default charts dir
 - `main()`: output file and console summary
 
 ### `claude_agent/test_claude_portfolio.py`
@@ -96,7 +99,8 @@ Covers `claude_agent/portfolio.py`:
 - `build_positions`: weighted average cost incl. fees, partial sales (realized P&L), dividends, overselling, currency mismatch
 - `summarize`: EUR conversion via FX, valuation at cost without price, missing FX, weights, closed positions,
   crypto weight vs cap, `margen_hasta_tope_eur`, over-cap detection, empty portfolio
-- `fetch_prices`, `collect()` (FX symbols requested, missing / empty CSV), `main()` (default path from config)
+- `fetch_prices` (Yahoo, Coinbase ticker fallback for crypto pairs, precision of tiny prices), `_coinbase_price`,
+  `_is_crypto_pair`, `collect()` (FX symbols requested, missing / empty CSV), `main()` (default path from config)
 
 Run without the global coverage threshold: `pytest tests/claude_agent -q --no-cov`.
 

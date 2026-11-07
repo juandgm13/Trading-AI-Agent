@@ -197,8 +197,8 @@ pip install -r claude_agent/requirements.txt   # aiohttp, feedparser, PyYAML, pa
 python claude_agent/fetch_news.py               # → claude_agent/data/news_YYYY-MM-DD.json
 python claude_agent/fetch_prices.py             # → claude_agent/data/prices_YYYY-MM-DD.json
 python claude_agent/fetch_prices.py --charts SAN.MC,AAPL   # + PNG in claude_agent/reports/charts/YYYY-MM-DD/
-python claude_agent/fetch_crypto.py             # → claude_agent/data/crypto_YYYY-MM-DD.json (Coinbase EUR pairs, Fear & Greed)
-python claude_agent/fetch_crypto.py --charts BTC-EUR,ETH-EUR
+python claude_agent/fetch_crypto.py             # → claude_agent/data/crypto_YYYY-MM-DD.json (all Coinbase coins, screener, Fear & Greed)
+python claude_agent/fetch_crypto.py --charts BTC,PEPE   # any Coinbase coin
 python claude_agent/portfolio.py                # → claude_agent/data/portfolio_YYYY-MM-DD.json (from inputs/cartera.csv)
 ```
 
@@ -217,9 +217,10 @@ python claude_agent/portfolio.py                # → claude_agent/data/portfoli
 | `full_content_skip_domains` | `[investing.com]` | Domains whose article pages block automated fetch |
 | `feeds.{espana,europa,eeuu,macro,cripto}` | see file | `{name, url}` RSS feeds (`cripto`: CoinDesk, Cointelegraph, Decrypt) |
 | `watchlist.<group>` | see file | `{symbol, name}` for Yahoo Finance RSS news **and** price history/indicators (`.MC` = Madrid) |
-| `crypto.exchange` / `crypto.quote_currency` | `coinbase` / `EUR` | Coins are flagged `coinbase_available` if Coinbase has an online, tradable pair in this currency |
+| `crypto.exchange` | `coinbase` | Universe = every coin with an online, tradable Coinbase pair (any quote: USD, EUR, USDC…) |
 | `crypto.max_portfolio_pct` | `25` | Max crypto weight of the total portfolio (user decision); the report recommends reducing above it |
-| `crypto.watchlist` | BTC, ETH, SOL, XRP, ADA, LINK, AVAX, DOT, LTC, DOGE (`-EUR`) | Yahoo symbols for crypto prices/indicators (365-day calendar) and news |
+| `crypto.watchlist` | BTC, ETH, SOL, XRP | Core coin codes: always get detailed technicals (Coinbase candles, 365-day calendar) and Yahoo news (`CODE-USD`) |
+| `crypto.auto_top_n` / `crypto.screener_top` | `15` / `20` | Largest Coinbase coins (no stablecoins) with detailed technicals / rows of the market-cap radar |
 | `portfolio.file` / `portfolio.base_currency` | `inputs/cartera.csv` / `EUR` | User movements CSV (relative to `claude_agent/`) and valuation currency |
 
 `inputs/cartera.csv` columns: `fecha,activo,nombre,tipo,operacion,cantidad,precio,moneda,comision,broker,notas`

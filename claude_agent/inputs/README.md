@@ -18,7 +18,7 @@ tope del 25 % en criptomonedas.
 | Columna | Qué poner | Ejemplo |
 |---|---|---|
 | `fecha` | Fecha de la operación (`AAAA-MM-DD`; también vale `DD/MM/AAAA`) | `2026-11-09` |
-| `activo` | Ticker de Yahoo Finance | `SAN.MC`, `AAPL`, `SPY`, `BTC-EUR` |
+| `activo` | Ticker de Yahoo Finance; en cripto, el par de Coinbase que usaste | `SAN.MC`, `AAPL`, `SPY`, `BTC-EUR`, `PEPE-USD` |
 | `nombre` | Nombre legible (opcional) | `Banco Santander` |
 | `tipo` | `accion`, `etf`, `fondo`, `cripto` u `otro` | `cripto` |
 | `operacion` | `compra`, `venta` o `dividendo` | `compra` |
@@ -42,6 +42,8 @@ Notas:
 - Se aceptan `,` o `;` como separador y decimales con punto o coma (Excel en español usa `;`).
 - Las posiciones se calculan con **precio medio ponderado**; las comisiones suben el coste.
 - Las ganancias en EUR de activos en dólares usan el tipo de cambio de hoy (aproximación).
+- Cripto: sirve cualquier moneda de Coinbase. Si Yahoo no tiene su precio, se toma de Coinbase;
+  las monedas cripto que tengas reciben además análisis técnico detallado cada día.
 - Si una fila tiene un error, se ignora y aparece avisada en el informe.
 
 > Aviso: el repositorio puede ser visible para otras personas; no pongas aquí datos sensibles

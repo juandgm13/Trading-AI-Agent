@@ -36,19 +36,31 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
 - **Usa solo las cifras del JSON.** No calcules ni estimes indicadores por tu cuenta.
 - Ojo: `price` es el **último cierre**, no el precio de hoy (el mercado aún no ha abierto).
 
-## Paso 3 — Criptomonedas vía Python
+## Paso 3 — Criptomonedas vía Python (todo Coinbase)
 `python claude_agent/fetch_crypto.py`
-- Genera `claude_agent/data/crypto_FECHA.json` con:
-  - `symbols`: los mismos indicadores que el Paso 2 para cada moneda de `crypto.watchlist`, con precios
-    en **EUR** y calendario de 365 días (1w = 7 días, 1m = 30, 1y = 365).
-    `coinbase_available` indica si se puede comprar en **Coinbase** con euros (el exchange del usuario).
-  - `fear_greed`: índice de miedo/codicia (0–100) de hoy, ayer y hace una semana.
-  - `market`: capitalización total, variación 24 h, dominancia de Bitcoin y distancia al máximo histórico.
-  - `max_portfolio_pct`: tope de cripto sobre la cartera total fijado por el usuario (25 %).
-- Ojo: las criptomonedas cotizan 24/7, así que `price` es el **precio de esta mañana** (vela del día
-  en curso, aún sin cerrar) y `volume_vs_avg20` del día es parcial: no lo interpretes como volumen bajo.
-- **Solo puedes recomendar comprar monedas con `coinbase_available: true`.** Si es `null` (no se pudo
-  comprobar), dilo y no recomiendes compras nuevas en cripto ese día.
+- Genera `claude_agent/data/crypto_FECHA.json`. El universo son **todas las monedas que se pueden comprar
+  en Coinbase** (cualquier par: USD, EUR, USDC…; ~400), el exchange del usuario:
+  - `universe`: cada moneda de Coinbase con datos de mercado (Coinpaprika): `rank` (posición por
+    capitalización), `price_usd` / `price_eur`, `market_cap_usd`, `volume_24h_usd`, `change_pct`
+    (24h/7d/30d/1y), `dist_from_ath_pct`, `coinbase_quotes` (en qué monedas se puede comprar) y `stablecoin`.
+    `universe_without_data`: monedas de Coinbase sin datos de mercado (normalmente muy pequeñas).
+  - `screener` (radar ya calculado): `top_market_cap`, mayores subidas/bajadas a 7 y 30 días **dentro del
+    top 100** (`gainers_7d`, `losers_7d`, `gainers_30d`, `losers_30d`) y amplitud (`breadth_24h`/`breadth_7d`:
+    cuántas monedas suben y cuántas bajan).
+  - `symbols`: análisis técnico detallado (mismos indicadores que el Paso 2, calendario de 365 días:
+    1w = 7 días, 1m = 30, 1y = 365) con velas diarias de Coinbase para el núcleo (`crypto.watchlist`), el top
+    `auto_top_n` por capitalización, las monedas de tu cartera y las pedidas con `--charts`. `reasons` dice
+    por qué está; `product` es el par usado (EUR si existe; si no, USD) y `price_eur` el precio en euros.
+  - `fear_greed` (miedo/codicia 0–100: hoy, ayer, hace una semana), `market` (capitalización total,
+    variación 24 h, dominancia de Bitcoin, distancia al máximo histórico), `usd_eur` y `max_portfolio_pct` (25 %).
+- Ojo: las criptomonedas cotizan 24/7, así que `price` es el **precio de esta mañana** (vela del día en curso,
+  aún sin cerrar) y `volume_vs_avg20` del día es parcial: no lo interpretes como volumen bajo.
+- **Solo puedes recomendar comprar monedas del universo de Coinbase.** Si `coinbase_count` es `null`
+  (no se pudo comprobar), dilo y no recomiendes compras nuevas en cripto ese día.
+- Para analizar a fondo una moneda del radar que no esté en `symbols`, genera su técnico y gráfico con
+  `python claude_agent/fetch_crypto.py --charts CODIGO` (p. ej. `--charts INJ`).
+- Cuidado con lo que parece cripto pero no lo es: stablecoins (`stablecoin: true`, valen ~1 $) y tokens
+  respaldados por activos (p. ej. PAXG = oro). No los presentes como oportunidades de revalorización.
 
 ## Paso 4 — Cartera del usuario vía Python
 `python claude_agent/portfolio.py`
@@ -78,7 +90,8 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
 ## Paso 6 — Decidir las recomendaciones y generar sus gráficos
 1. Cruza **noticias + análisis técnico + cartera del usuario** para elegir **3–5 ideas de bolsa**
    (mezcla España y EE. UU., e incluye al menos una opción tranquila: ETF indexado o gran empresa
-   estable) y **1–2 ideas de cripto** (solo monedas comprables en Coinbase). Prioriza los activos que
+   estable) y **1–3 ideas de cripto**, que pueden ser **cualquier moneda de Coinbase**: núcleo (BTC/ETH)
+   y, si el radar y el técnico lo justifican, alguna del top 100 con un motivo claro (noticia + técnico). Prioriza los activos que
    el usuario ya tiene en cartera: para cada uno debe quedar claro qué hacer.
 2. Para cada idea decide **una acción con verbo directo**:
    - **Comprar** (entrada nueva) · **Comprar más** (ampliar posición) · **Mantener** · **Reducir**
@@ -90,7 +103,7 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
      cambiar de opinión, p. ej. "si cierra por debajo de 729, la tesis falla") y **confianza** (baja/media/alta).
 3. Genera los gráficos (velas diarias + MM50 + MM200 + volumen):
    - Bolsa: `python claude_agent/fetch_prices.py --charts SIMBOLO1,SIMBOLO2,...`
-   - Cripto: `python claude_agent/fetch_crypto.py --charts BTC-EUR,ETH-EUR,...`
+   - Cripto: `python claude_agent/fetch_crypto.py --charts BTC,ETH,...` (cualquier moneda de Coinbase)
    (usa los símbolos tal y como aparecen en `config.yaml`; se guardan en
    `claude_agent/reports/charts/FECHA/` con `^` sustituido por `IDX_`, p. ej. `IDX_IBEX.png`).
    Solo pueden tener gráfico los valores de las watchlists.
@@ -119,9 +132,12 @@ Reglas de las recomendaciones:
   cuando la volatilidad es alta. Nada de apalancamiento, derivados, opciones, ventas en corto ni "pelotazos".
 - **Criptomonedas**: el usuario ha fijado un **tope del 25 % de su cartera**. Recuérdale siempre que es
   un porcentaje alto para un perfil moderado (las criptomonedas han tenido caídas del 50–80 %).
-  Dentro de ese tope: Bitcoin y Ether como núcleo (la mayor parte), el resto de monedas solo con importes
-  pequeños; nada de memecoins como apuesta principal, staking/préstamos con riesgo de contraparte,
-  ni productos apalancados. Si la cartera **supera el 25 %**, la recomendación es **Reducir** hasta el
+  Dentro de ese tope, tamaño según el ranking por capitalización:
+  Bitcoin y Ether como núcleo (la mayor parte); top 20, importes moderados; puestos 21–100, importes
+  pequeños; **fuera del top 100 o sin datos de mercado, solo importes muy pequeños o Evitar** (poca
+  liquidez, manipulación, riesgo de que la moneda desaparezca). Nada de memecoins como apuesta principal,
+  staking/préstamos con riesgo de contraparte, ni productos apalancados. Una subida fuerte del radar
+  no es motivo suficiente para Comprar: explica también el riesgo de llegar tarde. Si la cartera **supera el 25 %**, la recomendación es **Reducir** hasta el
   tope; si está por debajo, puedes usar `margen_hasta_tope_eur` para dimensionar compras.
   Recomienda comprar en tramos (aportaciones periódicas) y no mover todo de golpe.
 - Menciona riesgos siempre junto a cualquier oportunidad, y separa **hechos** (con fuente y enlace) de

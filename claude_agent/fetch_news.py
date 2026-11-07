@@ -137,7 +137,7 @@ def _watchlist_from_config(cfg: dict) -> list[tuple[str, str, str]]:
 
 
 def _crypto_watchlist_from_config(cfg: dict) -> list[tuple[str, str, str]]:
-    """Watchlist de criptomonedas (bloque `crypto` de config.yaml): (símbolo, nombre, "cripto")."""
+    """Núcleo cripto (bloque `crypto` de config.yaml): (código, nombre, "cripto"), p. ej. ("BTC", "Bitcoin", …)."""
     return [
         (entry["symbol"], entry.get("name", entry["symbol"]), "cripto")
         for entry in ((cfg.get("crypto") or {}).get("watchlist") or [])
@@ -165,7 +165,11 @@ async def collect(cfg: dict, now: datetime | None = None, full_content: bool = T
         max_articles_per_feed=int(cfg.get("max_articles_per_feed", 15)),
     )
     per_symbol = int(cfg.get("max_articles_per_symbol", 5))
-    symbol_tasks = [yahoo.fetch(sym, max_articles=per_symbol * 3) for sym, _, _ in watchlist]
+    # Las criptomonedas se buscan en Yahoo como BTC-USD
+    symbol_tasks = [
+        yahoo.fetch(f"{sym}-USD" if group == "cripto" and "-" not in sym else sym, max_articles=per_symbol * 3)
+        for sym, _, group in watchlist
+    ]
     results = await asyncio.gather(rss_task, *symbol_tasks, return_exceptions=True)
 
     seen: set[str] = set()

@@ -8,7 +8,7 @@ y la exposición a criptomonedas frente al tope de `config.yaml` (`crypto.max_po
 
 Columnas del CSV (cabecera obligatoria, separador `,` o `;`, decimales con `.` o `,`):
     fecha,activo,nombre,tipo,operacion,cantidad,precio,moneda,comision,broker,notas
-- activo:    ticker de Yahoo Finance (SAN.MC, AAPL, SPY, BTC-EUR…)
+- activo:    ticker de Yahoo Finance (SAN.MC, AAPL, SPY) o par de Coinbase para cripto (BTC-EUR, PEPE-USD…)
 - tipo:      accion | etf | fondo | cripto | otro
 - operacion: compra | venta | dividendo   (dividendo: `precio` = importe neto cobrado; `cantidad` se ignora)
 - precio:    precio por unidad en `moneda`; comision: gastos totales de la operación en `moneda`
@@ -26,6 +26,7 @@ import asyncio
 import csv
 import io
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -42,6 +43,7 @@ from claude_agent.fetch_news import DEFAULT_CONFIG, load_config  # noqa: E402
 from claude_agent.fetch_prices import fetch_history  # noqa: E402
 
 DEFAULT_DATA_DIR = _HERE / "data"
+COINBASE_TICKER_URL = "https://api.exchange.coinbase.com/products/{product}/ticker"
 COLUMNS = ["fecha", "activo", "nombre", "tipo", "operacion", "cantidad", "precio", "moneda",
            "comision", "broker", "notas"]
 REQUIRED = ("fecha", "activo", "operacion", "precio")
@@ -139,7 +141,7 @@ def read_movements(text: str) -> tuple[list[Movement], list[dict]]:
             precio = _num(row.get("precio"))
             if precio is None or precio < 0:
                 raise ValueError("precio no válido")
-            tipo = (row.get("tipo") or "").lower() or ("cripto" if activo.endswith(("-EUR", "-USD")) else "otro")
+            tipo = (row.get("tipo") or "").lower() or ("cripto" if _is_crypto_pair(activo) else "otro")
             movements.append(Movement(
                 fecha=_date(row.get("fecha", "")),
                 activo=activo,
@@ -296,8 +298,22 @@ def summarize(positions: dict[str, Position], prices: dict[str, float], fx: dict
 
 # ── Orquestación ─────────────────────────────────────────────────────────────
 
+def _is_crypto_pair(symbol: str) -> bool:
+    """BTC-EUR, PEPE-USD, ETH-USDC… (par de Coinbase)."""
+    return re.fullmatch(r"[A-Z0-9]+-(EUR|USD|USDC|USDT|GBP)", symbol) is not None
+
+
+async def _coinbase_price(session: aiohttp.ClientSession, product: str) -> float:
+    async with session.get(COINBASE_TICKER_URL.format(product=product),
+                           timeout=aiohttp.ClientTimeout(total=15)) as resp:
+        if resp.status != 200:
+            raise ValueError(f"HTTP {resp.status}")
+        return float((await resp.json(content_type=None))["price"])
+
+
 async def fetch_prices(symbols: list[str]) -> tuple[dict[str, float], list[dict]]:
-    """Último precio (cierre o vela en curso) de Yahoo Finance para cada símbolo."""
+    """Último precio (cierre o vela en curso) de Yahoo Finance; para pares cripto que Yahoo
+    no tenga (p. ej. PEPE-USD), precio actual de Coinbase."""
     prices: dict[str, float] = {}
     issues: list[dict] = []
     if not symbols:
@@ -306,11 +322,18 @@ async def fetch_prices(symbols: list[str]) -> tuple[dict[str, float], list[dict]
         results = await asyncio.gather(
             *(fetch_history(session, s, range_="5d") for s in symbols), return_exceptions=True
         )
+        retry = [s for s, r in zip(symbols, results) if isinstance(r, Exception) and _is_crypto_pair(s)]
+        fallback = dict(zip(retry, await asyncio.gather(
+            *(_coinbase_price(session, s) for s in retry), return_exceptions=True
+        )))
     for sym, res in zip(symbols, results):
-        if isinstance(res, Exception):
-            issues.append({"activo": sym, "message": f"precio: {type(res).__name__}: {res}"})
+        if not isinstance(res, Exception):
+            prices[sym] = float(f"{float(res['Close'].iloc[-1]):.8g}")
+        elif sym in fallback and not isinstance(fallback[sym], Exception):
+            prices[sym] = fallback[sym]
         else:
-            prices[sym] = round(float(res["Close"].iloc[-1]), 6)
+            extra = f" · Coinbase: {fallback[sym]}" if sym in fallback else ""
+            issues.append({"activo": sym, "message": f"precio: {type(res).__name__}: {res}{extra}"})
     return prices, issues
 
 

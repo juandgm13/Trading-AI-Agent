@@ -66,25 +66,30 @@
 **Sentimiento:** Fear & Greed {valor}/100 ({clasificación}; ayer {x}, hace una semana {y}) · Capitalización total {X} billones $ ({+/−x}% 24 h, {x}% bajo su máximo histórico) · Dominancia de Bitcoin {x}%.
 {1–2 frases explicando qué significa ese sentimiento y por qué.}
 
-| Moneda | Precio (€) | 24 h | 7 días | 1 mes | 1 año | Tendencia | RSI | vs MM200 | Coinbase |
+**Radar Coinbase** ({N} monedas comprables · hoy suben {x} y bajan {y} · en 7 días suben {a} y bajan {b}):
+- **Mayores por capitalización:** {BTC, ETH, … con su variación de 7 días}
+- **Más suben (7 d, top 100):** {moneda (+x%)…} · **Más bajan:** {moneda (−x%)…}
+{1–2 frases: ¿el movimiento es general o de unas pocas monedas? ¿hay algo que merezca mirarse más a fondo?}
+
+| Moneda | Ranking | Precio (€) | 24 h | 7 días | 1 mes | 1 año | Tendencia | RSI | vs MM200 |
 |---|---|---|---|---|---|---|---|---|---|
-| {Nombre (BTC-EUR)} | {price} | {1d}% | {1w}% | {1m}% | {1y}% | 📈/📉/➡️ {trend} | {rsi14} | {+x% / −x%} | ✅ / ❌ |
+| {Nombre (CÓDIGO)} | #{rank} | {price_eur} | {1d}% | {1w}% | {1m}% | {1y}% | 📈/📉/➡️ {trend} | {rsi14} | {+x% / −x%} |
 
 **Noticias que importan:**
 - {Hecho, con fuente y enlace, y por qué afecta al precio}
 
-### {Moneda} ({SÍMBOLO}) — {ACCIÓN}
-![{SÍMBOLO}](charts/{FECHA}/{SÍMBOLO}.png)
+### {Moneda} ({CÓDIGO}) — {ACCIÓN}
+![{CÓDIGO}](charts/{FECHA}/{PAR}.png)
 
 - **Qué es:** {en una línea}
 - **Lo que dice el gráfico:** {…}
 - **🧑‍💼 Recomendación: {ACCIÓN}.** {Por qué.}
-  - **Cuánto y cómo:** {importe o % orientativo dentro del tope del 25 %; en tramos}
+  - **Cuánto y cómo:** {importe o % orientativo dentro del tope del 25 %, según su ranking; en tramos; par de Coinbase (EUR/USD)}
   - **Qué me haría cambiar de opinión:** {…}
 - **El riesgo:** {…}
 - **Confianza:** baja / media / alta
 
-{1–2 ideas cripto, solo monedas comprables en Coinbase.}
+{1–3 ideas cripto: cualquier moneda de Coinbase; fuera del top 100, solo importes muy pequeños o Evitar.}
 
 ## 8. 💼 Tu cartera
 {Si no hay `cartera.csv` o está vacío: "Aún no has registrado movimientos en `inputs/cartera.csv`; las recomendaciones son genéricas." y omitir la tabla.}
@@ -122,7 +127,7 @@
 ## 13. Fuentes
 - {Fuente} — [{titular}]({url})
 - Precios e indicadores de bolsa: Yahoo Finance (velas diarias, último cierre disponible)
-- Cripto: Yahoo Finance (EUR) · disponibilidad en Coinbase · Fear & Greed (alternative.me) · Coinpaprika
+- Cripto: Coinbase (universo de monedas y velas diarias) · Coinpaprika (datos de mercado) · Fear & Greed (alternative.me)
 - **Fuentes que fallaron hoy:** {lista o "ninguna"}
 
 ---
