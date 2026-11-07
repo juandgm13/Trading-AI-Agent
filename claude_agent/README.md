@@ -60,7 +60,7 @@ Luego, en una sesión de Claude Code: *"Sigue claude_agent/daily_prompt.md"*.
 - Horario: `CRON_TZ=Europe/Madrid 47 7 * * 1-5` (lunes a viernes, 7:47).
 - Cada disparo crea una sesión nueva con este prompt:
 
-  > Haz checkout de la rama `claude/trading-agent-news-analysis-de0ruw` del repositorio y sigue al pie
+  > Haz checkout de la rama `Trading-Agent_Claude` del repositorio y sigue al pie
   > de la letra las instrucciones de `claude_agent/daily_prompt.md` para generar y publicar el informe
   > pre-apertura de hoy.
 

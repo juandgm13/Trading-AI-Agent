@@ -9,7 +9,7 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
 
 ## Paso 0 — Preparación
 1. Asegúrate de estar en la rama del informe con lo último:
-   `git fetch origin claude/trading-agent-news-analysis-de0ruw && git checkout claude/trading-agent-news-analysis-de0ruw && git pull origin claude/trading-agent-news-analysis-de0ruw`
+   `git fetch origin Trading-Agent_Claude && git checkout Trading-Agent_Claude && git pull origin Trading-Agent_Claude`
 2. Instala dependencias (rápido si ya están): `pip install -q -r claude_agent/requirements.txt`
 3. Calcula la fecha de hoy en Madrid: `TZ=Europe/Madrid date +%F` → la llamaremos `FECHA`.
 4. Si hoy es sábado o domingo, no hagas nada más y termina.
@@ -55,7 +55,7 @@ Reglas de estilo y contenido:
 ## Paso 4 — Publicar
 1. `git add claude_agent/reports/FECHA.md`
 2. `git commit -m "Informe pre-apertura FECHA"`
-3. `git push -u origin claude/trading-agent-news-analysis-de0ruw`
+3. `git push -u origin Trading-Agent_Claude`
    (si falla por red, reintenta hasta 4 veces esperando 2s, 4s, 8s y 16s).
 4. Si tienes disponible una herramienta de notificación push, envía un aviso corto con el
    termómetro del día y las 3 ideas clave.
