@@ -1,0 +1,59 @@
+# Configuración de la recogida de noticias del informe diario (claude_agent/fetch_news.py).
+# Solo fuentes PÚBLICAS: en la nube de Anthropic no hay credenciales.
+# Puedes añadir o quitar feeds y símbolos libremente.
+
+timezone: Europe/Madrid
+lookback_hours: 24          # Ventana de noticias en días laborables normales
+monday_lookback_hours: 72   # Los lunes se incluye el fin de semana
+max_articles_per_feed: 15
+max_articles_per_symbol: 5
+summary_max_chars: 400
+full_content_top_n: 6       # Nº de artículos (más recientes de España + EE. UU.) con texto completo
+full_content_max_chars: 2500
+# Dominios cuyas páginas de artículo bloquean la descarga automática (solo se usa el resumen RSS)
+full_content_skip_domains:
+  - investing.com
+
+# Grupos: espana | europa | eeuu | macro
+# (Comprobados desde la nube: CNBC, Cinco Días y elEconomista bloquean el acceso automático.)
+feeds:
+  espana:
+    - {name: "Expansión Mercados", url: "https://e00-expansion.uecdn.es/rss/mercados.xml"}
+    - {name: "Expansión Economía", url: "https://e00-expansion.uecdn.es/rss/economia.xml"}
+    - {name: "Expansión Empresas", url: "https://www.expansion.com/rss/empresas.xml"}
+    - {name: "El País Economía", url: "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/economia/portada"}
+    - {name: "Europa Press Economía", url: "https://www.europapress.es/rss/rss.aspx?ch=00136"}
+    - {name: "Investing.com ES", url: "https://es.investing.com/rss/news.rss"}
+    - {name: "Investing.com ES Mercados", url: "https://es.investing.com/rss/market_overview.rss"}
+  europa:
+    - {name: "BCE (notas de prensa)", url: "https://www.ecb.europa.eu/rss/press.html"}
+  eeuu:
+    - {name: "Investing.com", url: "https://www.investing.com/rss/news_25.rss"}
+    - {name: "Investing.com Economía", url: "https://www.investing.com/rss/news_14.rss"}
+    - {name: "MarketWatch", url: "https://feeds.marketwatch.com/marketwatch/topstories/"}
+    - {name: "MarketWatch Market Pulse", url: "https://feeds.content.dowjones.io/public/rss/mw_marketpulse"}
+  macro:
+    - {name: "Federal Reserve", url: "https://www.federalreserve.gov/feeds/press_all.xml"}
+    - {name: "The Economist Finanzas", url: "https://www.economist.com/finance-and-economics/rss.xml"}
+
+# Noticias por símbolo vía Yahoo Finance RSS (sufijo .MC = Bolsa de Madrid)
+watchlist:
+  indices:
+    - {symbol: "^IBEX", name: "IBEX 35"}
+    - {symbol: "^STOXX50E", name: "Euro Stoxx 50"}
+    - {symbol: "^GSPC", name: "S&P 500"}
+    - {symbol: "^IXIC", name: "Nasdaq Composite"}
+  espana:
+    - {symbol: "SAN.MC", name: "Banco Santander"}
+    - {symbol: "BBVA.MC", name: "BBVA"}
+    - {symbol: "ITX.MC", name: "Inditex"}
+    - {symbol: "IBE.MC", name: "Iberdrola"}
+    - {symbol: "TEF.MC", name: "Telefónica"}
+    - {symbol: "REP.MC", name: "Repsol"}
+  eeuu:
+    - {symbol: "AAPL", name: "Apple"}
+    - {symbol: "MSFT", name: "Microsoft"}
+    - {symbol: "NVDA", name: "NVIDIA"}
+    - {symbol: "AMZN", name: "Amazon"}
+    - {symbol: "SPY", name: "ETF S&P 500 (SPDR)"}
+    - {symbol: "QQQ", name: "ETF Nasdaq 100 (Invesco)"}

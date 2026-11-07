@@ -7,6 +7,7 @@
 | `test_storage.py` | 32 | None (in-memory SQLite) |
 | `test_monitor.py` | 72 | None (fully mocked) |
 | `test_news_sources.py` | 35 | None (aiohttp + feedparser mocked) |
+| `claude_agent/test_claude_fetch_news.py` | 15 | None (sources mocked) |
 | `test_news_service.py` | 14 | None (aggregator + classifier mocked) |
 | `test_response_parser.py` | ~22 | None |
 | `test_alerting.py` | 5 | None (mock SMTP) |
@@ -61,6 +62,15 @@ Covers all classes in `src/news_sources.py` with mocked HTTP:
 - `RSSNewsSource`: parse feed via feedparser in executor, timeout, exceptions, skip entries without link, missing/bad dates, debug logging, logger paths
 - `YahooSymbolSource`: URL template, parse feed, timeout, exception, skip no-link, bad/missing dates, debug logging
 - `NewsAggregator`: dedup by URL, exclude stored_urls, logger paths, fetch_market_news combines all sources
+
+### `claude_agent/test_claude_fetch_news.py`
+Covers `claude_agent/fetch_news.py` (daily Claude report collector):
+- Helpers: `load_config`, `lookback_hours` (Monday 72h), `clean_text` (HTML strip, truncation, parser fallback), `article_to_dict`, `filter_and_dedup` (date window, URL and normalized-title dedup), `CollectingLogger`
+- `RSSNewsSource(feeds=...)` custom feeds filtered by group; default feeds unchanged
+- `collect()`: grouping by feed, `feed_status` (`ok`/`sin_noticias_recientes`/`fallo`), per-symbol limits, Yahoo failures, full text (truncation, skipped domains, too-short pages), RSS failure
+- `main()`: explicit and default output path, console summary
+
+Run without the global coverage threshold: `pytest tests/claude_agent -q --no-cov`.
 
 ### `test_news_service.py`
 Covers `NewsIngestionService` with mocked aggregator and classifier:

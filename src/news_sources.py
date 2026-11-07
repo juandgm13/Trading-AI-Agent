@@ -192,8 +192,13 @@ class RSSNewsSource:
 
     FEEDS_CRYPTO: list[tuple[str, str]] = []  # provisión futura
 
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, feeds: list[tuple[str, str, str]] | None = None):
+        """
+        feeds: lista opcional de (source, url, group) que sustituye a los feeds por
+        defecto. Si se indica, fetch() devuelve los feeds cuyo group esté en feed_groups.
+        """
         self._logger = logger
+        self._custom_feeds = feeds
 
     async def fetch(
         self,
@@ -207,12 +212,15 @@ class RSSNewsSource:
         max_articles_per_feed: máximo de artículos a devolver por feed (los más recientes).
         """
         feeds: list[tuple[str, str, str]] = []  # (source, url, group)
-        if "stocks" in feed_groups:
-            feeds.extend((src, url, "stocks") for src, url in self.FEEDS_STOCKS)
-        if "macro" in feed_groups:
-            feeds.extend((src, url, "macro") for src, url in self.FEEDS_MACRO)
-        if "crypto" in feed_groups:
-            feeds.extend((src, url, "crypto") for src, url in self.FEEDS_CRYPTO)
+        if self._custom_feeds is not None:
+            feeds = [f for f in self._custom_feeds if f[2] in feed_groups]
+        else:
+            if "stocks" in feed_groups:
+                feeds.extend((src, url, "stocks") for src, url in self.FEEDS_STOCKS)
+            if "macro" in feed_groups:
+                feeds.extend((src, url, "macro") for src, url in self.FEEDS_MACRO)
+            if "crypto" in feed_groups:
+                feeds.extend((src, url, "crypto") for src, url in self.FEEDS_CRYPTO)
 
         loop = asyncio.get_event_loop()
         tasks = [

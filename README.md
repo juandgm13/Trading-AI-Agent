@@ -11,6 +11,7 @@ Autonomous trading agent that monitors stock prices in real time using a **multi
 | [Dashboard](docs/dashboard.md) | Streamlit pages and shared components |
 | [Database](docs/database.md) | SQLite schema and StorageLayer API |
 | [Testing](docs/testing.md) | Test suite overview and how to run tests |
+| [Daily pre-market report](claude_agent/README.md) | Scheduled Claude Code task (cloud): public news → Spanish beginner-friendly report |
 
 ---
 
@@ -71,6 +72,7 @@ Trading-AI-Agent/
 │   ├── app.py                  # Summary dashboard
 │   ├── components.py           # Shared components (paper/live banner)
 │   └── pages/                  # Artículos, Precios, Trades, Portfolio, Watchlist, Estados
+├── claude_agent/               # Daily pre-market report via Claude Code scheduled task (no secrets)
 ├── docs/                       # Detailed documentation
 ├── tests/                      # pytest suite (35 tests)
 ├── main.py                     # Tkinter launcher

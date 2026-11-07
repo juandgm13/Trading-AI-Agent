@@ -187,3 +187,28 @@ The dashboard displays a prominent banner on every page indicating the active mo
 - ⚠️ **MODO REAL** — any other URL
 
 To switch to live trading, change `ALPACA_BASE_URL=https://api.alpaca.markets` in your `.env`.
+
+## Daily pre-market report (`claude_agent/`)
+
+Runs as a Claude Code scheduled task in the cloud — **no `.env` needed** (no Alpaca, Gmail or Ollama).
+
+```bash
+pip install -r claude_agent/requirements.txt   # aiohttp, feedparser, PyYAML (+ pytest)
+python claude_agent/fetch_news.py               # → claude_agent/data/news_YYYY-MM-DD.json
+```
+
+`claude_agent/config.yaml` options:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `timezone` | `Europe/Madrid` | Used for the report date and Monday detection |
+| `lookback_hours` / `monday_lookback_hours` | `24` / `72` | News window |
+| `max_articles_per_feed` / `max_articles_per_symbol` | `15` / `5` | Limits |
+| `summary_max_chars` | `400` | RSS summary truncation (HTML stripped) |
+| `full_content_top_n` / `full_content_max_chars` | `6` / `2500` | Full text for the newest Spain + US articles |
+| `full_content_skip_domains` | `[investing.com]` | Domains whose article pages block automated fetch |
+| `feeds.{espana,europa,eeuu,macro}` | see file | `{name, url}` RSS feeds |
+| `watchlist.<group>` | see file | `{symbol, name}` for Yahoo Finance RSS (`.MC` = Madrid) |
+
+Editable inputs for Claude: `claude_agent/sources.md` (pages to web-fetch, daily searches, interests) and
+`claude_agent/inputs/` (any personal context files). Schedule: `CRON_TZ=Europe/Madrid 47 7 * * 1-5`.

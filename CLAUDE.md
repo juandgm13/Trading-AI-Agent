@@ -123,6 +123,7 @@ The monitor pre-fetches bars via Alpaca and reads pre-classified news from the D
 - **Evidence charts**: PNG candlestick charts are generated via `mplfinance` at state transitions (opportunity detected, position opened) and stored in `charts/`. Path is persisted in `symbol_states.chart_path`.
 - **Stop on symbol boundary**: `stop_event` is checked at the start of each symbol in `_check_all()`, not only at the top of the main loop.
 - **Market hours standby**: at the start of each `_check_all()` cycle, the monitor calls `AlpacaClient.get_clock()`. If `is_open=False`, it logs the next open time and sleeps until then (min 60s, interruptible by `stop_event`). If the clock API fails, the cycle continues normally.
+- **Claude daily report (`claude_agent/`)**: independent of the local agent; no Alpaca/Gmail/Ollama. `RSSNewsSource(feeds=[(source, url, group)])` overrides default feeds. See `claude_agent/README.md`.
 - **Watchlist enrichment from ENV**: when `WATCHLIST_SYMBOLS` is set, each symbol is enriched via `AlpacaClient.get_asset()` to populate `name`, `exchange`, `marginable`, and `shortable`. Falls back to a minimal entry if the API returns `None`.
 
 ### SQLite tables
@@ -183,6 +184,14 @@ ui/
     4_Portfolio.py   Live portfolio (Alpaca)
     5_Watchlist.py   Watchlist management (shows exchange/marginable/shortable)
     6_Estados.py     Symbol states + agent reports + evidence charts
+claude_agent/   Daily pre-market news report run by a Claude Code scheduled task (cloud, public sources only)
+  fetch_news.py      Public RSS + Yahoo-by-symbol collection → data/news_YYYY-MM-DD.json (reuses src/news_sources.py)
+  config.yaml        Feeds (espana/europa/eeuu/macro) + watchlist + lookback window
+  sources.md         Editable list of pages to web-fetch, daily web searches, user interests
+  inputs/            User-provided context files read on each run
+  daily_prompt.md    Instructions Claude follows on each scheduled run
+  report_template.md Fixed structure of the Spanish report
+  reports/           Generated reports (YYYY-MM-DD.md, committed)
 main.py      Tkinter UI + thread management (Monitor ON/OFF, Analyze now, Analyze news)
 tests/       pytest suite (~427 tests, 100% coverage)
 charts/      Evidence PNG charts (auto-created, gitignored)

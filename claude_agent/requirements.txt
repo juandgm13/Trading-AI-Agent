@@ -1,0 +1,9 @@
+# Dependencias mínimas para el informe diario en la nube (sin Ollama, Alpaca ni agent-framework)
+aiohttp>=3.9.0
+feedparser>=6.0.0
+PyYAML>=6.0
+# Solo para ejecutar los tests
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=5.0.0
+python-dotenv>=1.0.0

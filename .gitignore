@@ -209,3 +209,6 @@ trading_agent.db
 *.db
 .vscode/
 =*
+
+# Informe diario Claude: datos crudos descargados en cada ejecución
+claude_agent/data/

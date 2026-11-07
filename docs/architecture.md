@@ -257,3 +257,25 @@ The chart path is logged as `file:///absolute/path.png` and displayed in the **E
 - **Watchlist enrichment**: when `WATCHLIST_SYMBOLS` is set, each symbol is enriched via `get_asset()` (name, exchange, marginable, shortable). Falls back to minimal entry on API failure.
 - **Short selling**: disabled by default. Enable with `ALLOW_SHORT_SELLING=true` (env var) or `allow_short_selling: true` in `trading_agent.yaml`. Only applies to symbols with `shortable=1` in the watchlist. The `TradingEntryAgent` prompt includes the `OPEN_SHORT` option only when both conditions are met. Position side (`long`/`short`) is stored in `symbol_states.position_side` and used for reversed target/stop logic and P&L calculation.
 - Prompt separation by state: `WATCHING` uses macro-focused prompts; `OPPORTUNITY_FOUND` uses timing-focused prompts with stricter conditions.
+
+## Daily pre-market report (Claude Code scheduled task)
+
+Independent pipeline under `claude_agent/` that runs in Anthropic's cloud (no credentials available):
+
+```
+Scheduled task (Mon–Fri 07:47 Europe/Madrid, fresh session)
+  └─ Claude follows claude_agent/daily_prompt.md
+       fetch_news.py ──► RSSNewsSource(feeds=config) + YahooSymbolSource(watchlist)
+                         → filter by lookback (24h, 72h on Mondays) + dedup URL/title
+                         → optional full text (fetch_article_content, skip blocked domains)
+                         → claude_agent/data/news_YYYY-MM-DD.json
+       web fetch / web search from sources.md + files in inputs/
+       Claude writes claude_agent/reports/YYYY-MM-DD.md (report_template.md) → commit + push
+```
+
+| Module | Input | Output |
+|---|---|---|
+| `fetch_news.collect(cfg, now, full_content)` | `config.yaml` dict | `{generated_at, lookback_hours, counts, feed_status[], issues[], market{espana,europa,eeuu,macro}, symbols{SYM: {name, group, articles[]}}}` |
+| `RSSNewsSource(logger, feeds)` | optional `[(source, url, group)]` | when `feeds` is given it replaces the default feeds; `fetch(feed_groups)` keeps feeds whose group matches |
+
+`feed_status` values: `ok`, `sin_noticias_recientes` (feed responded, nothing in window), `fallo` (no entries / blocked).
