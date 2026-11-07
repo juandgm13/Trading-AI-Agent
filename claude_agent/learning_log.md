@@ -21,3 +21,4 @@ Puedes editar el temario o añadir temas que te interesen.
 
 | Fecha | Concepto | Ejemplo usado |
 |---|---|---|
+| 2026-11-07 | Tipos de interés y bancos centrales (BCE, Fed) | Lagarde y probabilidad de subida de la Fed en diciembre |
