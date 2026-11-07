@@ -123,7 +123,7 @@ The monitor pre-fetches bars via Alpaca and reads pre-classified news from the D
 - **Evidence charts**: PNG candlestick charts are generated via `mplfinance` at state transitions (opportunity detected, position opened) and stored in `charts/`. Path is persisted in `symbol_states.chart_path`.
 - **Stop on symbol boundary**: `stop_event` is checked at the start of each symbol in `_check_all()`, not only at the top of the main loop.
 - **Market hours standby**: at the start of each `_check_all()` cycle, the monitor calls `AlpacaClient.get_clock()`. If `is_open=False`, it logs the next open time and sleeps until then (min 60s, interruptible by `stop_event`). If the clock API fails, the cycle continues normally.
-- **Claude daily report (`claude_agent/`)**: independent of the local agent; no Alpaca/Gmail/Ollama. `RSSNewsSource(feeds=[(source, url, group)])` overrides default feeds. See `claude_agent/README.md`.
+- **Claude daily report (`claude_agent/`)**: independent of the local agent; no Alpaca/Gmail/Ollama. `RSSNewsSource(feeds=[(source, url, group)])` overrides default feeds. The report gives direct recommendations (Comprar / Mantener / Reducir / Vender / Esperar…) with why, size, horizon and invalidation; includes a crypto section (only coins tradable on Coinbase in EUR, max `crypto.max_portfolio_pct` = 25 % of the portfolio) and the user's portfolio from `inputs/cartera.csv` (never modified by the run). See `claude_agent/README.md`.
 - **Watchlist enrichment from ENV**: when `WATCHLIST_SYMBOLS` is set, each symbol is enriched via `AlpacaClient.get_asset()` to populate `name`, `exchange`, `marginable`, and `shortable`. Falls back to a minimal entry if the API returns `None`.
 
 ### SQLite tables
@@ -187,10 +187,12 @@ ui/
 claude_agent/   Daily pre-market news report run by a Claude Code scheduled task (cloud, public sources only)
   fetch_news.py      Public RSS + Yahoo-by-symbol collection → data/news_YYYY-MM-DD.json (reuses src/news_sources.py)
   fetch_prices.py    Yahoo daily bars (2y) → technical indicators JSON + mplfinance charts (reports/charts/DATE/)
+  fetch_crypto.py    Coinbase tradable EUR pairs + Fear & Greed + Coinpaprika + Yahoo EUR bars → data/crypto_YYYY-MM-DD.json (+ charts)
+  portfolio.py       inputs/cartera.csv movements → positions (weighted avg cost), P&L, crypto weight vs cap → data/portfolio_YYYY-MM-DD.json
   learning_log.md    Didactic syllabus + concepts already explained (updated by each run)
-  config.yaml        Feeds (espana/europa/eeuu/macro) + watchlist + lookback window
+  config.yaml        Feeds (espana/europa/eeuu/macro/cripto) + watchlist + crypto (Coinbase, 25 % cap, coins) + portfolio + lookback window
   sources.md         Editable list of pages to web-fetch, daily web searches, user interests
-  inputs/            User-provided context files read on each run
+  inputs/            User-provided context files read on each run (cartera.csv = user's movements)
   daily_prompt.md    Instructions Claude follows on each scheduled run
   report_template.md Fixed structure of the Spanish report
   reports/           Generated reports (YYYY-MM-DD.md + charts/YYYY-MM-DD/*.png, committed)

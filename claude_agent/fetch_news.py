@@ -36,7 +36,7 @@ from src.news_sources import (  # noqa: E402
 
 DEFAULT_CONFIG = Path(__file__).resolve().parent / "config.yaml"
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
-FEED_GROUPS = ("espana", "europa", "eeuu", "macro")
+FEED_GROUPS = ("espana", "europa", "eeuu", "macro", "cripto")
 _MIN_FULL_TEXT_CHARS = 200  # por debajo suele ser un muro de cookies o "(null)"
 
 
@@ -128,11 +128,20 @@ def _feeds_from_config(cfg: dict) -> list[tuple[str, str, str]]:
 
 
 def _watchlist_from_config(cfg: dict) -> list[tuple[str, str, str]]:
+    """Watchlist bursátil (índices, España, EE. UU.): (símbolo, nombre, grupo)."""
     items = []
     for group, entries in (cfg.get("watchlist") or {}).items():
         for entry in entries or []:
             items.append((entry["symbol"], entry.get("name", entry["symbol"]), group))
     return items
+
+
+def _crypto_watchlist_from_config(cfg: dict) -> list[tuple[str, str, str]]:
+    """Watchlist de criptomonedas (bloque `crypto` de config.yaml): (símbolo, nombre, "cripto")."""
+    return [
+        (entry["symbol"], entry.get("name", entry["symbol"]), "cripto")
+        for entry in ((cfg.get("crypto") or {}).get("watchlist") or [])
+    ]
 
 
 async def collect(cfg: dict, now: datetime | None = None, full_content: bool = True) -> dict:
@@ -149,7 +158,7 @@ async def collect(cfg: dict, now: datetime | None = None, full_content: bool = T
     group_by_source = {name: group for name, _, group in feeds}
     rss = RSSNewsSource(logger=logger, feeds=feeds)
     yahoo = YahooSymbolSource(logger=logger)
-    watchlist = _watchlist_from_config(cfg)
+    watchlist = _watchlist_from_config(cfg) + _crypto_watchlist_from_config(cfg)
 
     rss_task = rss.fetch(
         feed_groups=FEED_GROUPS,

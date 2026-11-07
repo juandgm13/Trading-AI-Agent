@@ -34,6 +34,11 @@ DEFAULT_CHARTS_DIR = _HERE / "reports" / "charts"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; TradingReport/1.0)"}
 _TIMEOUT = 15
 RECENT_BARS = 60
+# Nº de velas por periodo: la bolsa cotiza ~252 días/año; las criptomonedas, los 365.
+CALENDARS = {
+    "bolsa": {"1w": 5, "1m": 21, "3m": 63, "1y": 252},
+    "cripto": {"1w": 7, "1m": 30, "3m": 90, "1y": 365},
+}
 
 
 # ── Descarga ─────────────────────────────────────────────────────────────────
@@ -149,7 +154,9 @@ def _r(value, nd: int = 2):
     return round(float(value), nd)
 
 
-def compute_indicators(df: pd.DataFrame) -> dict:
+def compute_indicators(df: pd.DataFrame, calendar: str = "bolsa") -> dict:
+    periods = CALENDARS[calendar]
+    year_bars = periods["1y"]
     close = df["Close"]
     price = float(close.iloc[-1])
     sma = {n: close.rolling(n).mean() for n in (20, 50, 200)}
@@ -170,8 +177,8 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     hist_prev = _r(m_hist.iloc[-2], 3) if len(m_hist) > 1 else None
 
     returns = close.pct_change().dropna()
-    vol20 = _r(returns.tail(20).std() * (252 ** 0.5) * 100, 1) if len(returns) >= 20 else None
-    year = df.tail(252)
+    vol20 = _r(returns.tail(20).std() * (year_bars ** 0.5) * 100, 1) if len(returns) >= 20 else None
+    year = df.tail(year_bars)
     hi52, lo52 = float(year["High"].max()), float(year["Low"].min())
     vol_avg20 = float(df["Volume"].tail(20).mean())
     supports, resistances = swing_levels(df)
@@ -184,10 +191,11 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         "price": _r(price),
         "change_pct": {
             "1d": pct_change(close, 1),
-            "1w": pct_change(close, 5),
-            "1m": pct_change(close, 21),
-            "3m": pct_change(close, 63),
-            "1y": pct_change(close, 252) if len(close) > 252 else pct_change(close, len(close) - 1),
+            "1w": pct_change(close, periods["1w"]),
+            "1m": pct_change(close, periods["1m"]),
+            "3m": pct_change(close, periods["3m"]),
+            "1y": pct_change(close, year_bars) if len(close) > year_bars
+            else pct_change(close, len(close) - 1),
         },
         "sma": {"20": last[20], "50": last[50], "200": last[200]},
         "price_vs_sma_pct": {"50": vs(last[50]), "200": vs(last[200])},
@@ -258,6 +266,7 @@ def make_chart(symbol: str, name: str, df: pd.DataFrame, out_dir: Path, bars: in
 
 
 def safe_name(symbol: str) -> str:
+    """Nombre de archivo seguro: ^IBEX → IDX_IBEX, EURUSD=X → EURUSD_X (BTC-EUR se queda igual)."""
     return symbol.replace("^", "IDX_").replace("=", "_").replace("/", "_")
 
 

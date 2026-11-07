@@ -159,6 +159,24 @@ class _Resp:
         return self._payload
 
 
+def test_compute_indicators_crypto_calendar_uses_365_days():
+    rng = np.random.default_rng(0)
+    closes = 100 * np.cumprod(1 + rng.normal(0.001, 0.02, 400))
+    stock = fp.compute_indicators(_df(closes))
+    crypto = fp.compute_indicators(_df(closes), calendar="cripto")
+    assert crypto["change_pct"]["1w"] == fp.pct_change(pd.Series(closes), 7)
+    assert crypto["change_pct"]["1m"] == fp.pct_change(pd.Series(closes), 30)
+    assert crypto["change_pct"]["1y"] == fp.pct_change(pd.Series(closes), 365)
+    assert stock["change_pct"]["1y"] == fp.pct_change(pd.Series(closes), 252)
+    assert crypto["volatility_20d_annual_pct"] > stock["volatility_20d_annual_pct"]  # √365 > √252
+    with pytest.raises(KeyError):
+        fp.compute_indicators(_df(closes), calendar="otro")
+
+
+def test_safe_name_keeps_crypto_symbol():
+    assert fp.safe_name("BTC-EUR") == "BTC-EUR"
+
+
 @pytest.mark.asyncio
 async def test_fetch_history_ok_and_http_error():
     session = MagicMock()

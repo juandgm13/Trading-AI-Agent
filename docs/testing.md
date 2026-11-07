@@ -7,8 +7,10 @@
 | `test_storage.py` | 32 | None (in-memory SQLite) |
 | `test_monitor.py` | 72 | None (fully mocked) |
 | `test_news_sources.py` | 35 | None (aiohttp + feedparser mocked) |
-| `claude_agent/test_claude_fetch_news.py` | 15 | None (sources mocked) |
-| `claude_agent/test_claude_fetch_prices.py` | 28 | None (HTTP mocked; one real mplfinance PNG to tmp) |
+| `claude_agent/test_claude_fetch_news.py` | 17 | None (sources mocked) |
+| `claude_agent/test_claude_fetch_prices.py` | 30 | None (HTTP mocked; one real mplfinance PNG to tmp) |
+| `claude_agent/test_claude_fetch_crypto.py` | 14 | None (Coinbase / Fear & Greed / Coinpaprika / Yahoo mocked) |
+| `claude_agent/test_claude_portfolio.py` | 28 | None (prices mocked; reads the real `inputs/cartera.csv` template) |
 | `test_news_service.py` | 14 | None (aggregator + classifier mocked) |
 | `test_response_parser.py` | ~22 | None |
 | `test_alerting.py` | 5 | None (mock SMTP) |
@@ -66,17 +68,35 @@ Covers all classes in `src/news_sources.py` with mocked HTTP:
 
 ### `claude_agent/test_claude_fetch_news.py`
 Covers `claude_agent/fetch_news.py` (daily Claude report collector):
-- Helpers: `load_config`, `lookback_hours` (Monday 72h), `clean_text` (HTML strip, truncation, parser fallback), `article_to_dict`, `filter_and_dedup` (date window, URL and normalized-title dedup), `CollectingLogger`
+- Helpers: `load_config` (incl. `cripto` feeds + `crypto` block), `_crypto_watchlist_from_config`, `lookback_hours` (Monday 72h), `clean_text` (HTML strip, truncation, parser fallback), `article_to_dict`, `filter_and_dedup` (date window, URL and normalized-title dedup), `CollectingLogger`
 - `RSSNewsSource(feeds=...)` custom feeds filtered by group; default feeds unchanged
-- `collect()`: grouping by feed, `feed_status` (`ok`/`sin_noticias_recientes`/`fallo`), per-symbol limits, Yahoo failures, full text (truncation, skipped domains, too-short pages), RSS failure
+- `collect()`: grouping by feed (incl. `cripto`), crypto symbols in `symbols`, `feed_status` (`ok`/`sin_noticias_recientes`/`fallo`), per-symbol limits, Yahoo failures, full text (truncation, skipped domains, too-short pages), RSS failure
 - `main()`: explicit and default output path, console summary
 
 ### `claude_agent/test_claude_fetch_prices.py`
 Covers `claude_agent/fetch_prices.py`:
 - `parse_yahoo_chart`: null closes dropped, volume filled, Yahoo error / empty / no valid closes
-- Indicators: RSI (only-up = 100, only-down = 0, warm-up NaN), MACD, `pct_change`, `classify_trend`, `rsi_zone`, `swing_levels`, golden/death cross detection, full vs short history in `compute_indicators`
+- Indicators: crypto calendar (`calendar="cripto"`: 7/30/90/365 bars, √365 volatility), RSI (only-up = 100, only-down = 0, warm-up NaN), MACD, `pct_change`, `classify_trend`, `rsi_zone`, `swing_levels`, golden/death cross detection, full vs short history in `compute_indicators`
 - `recent_bars`, `safe_name`, `make_chart` (real PNG), `fetch_history` (params, HTTP error)
 - `collect()`: charts only for requested symbols, chart failures, symbols not in watchlist, default charts dir; `main()` output and console summary
+
+### `claude_agent/test_claude_fetch_crypto.py`
+Covers `claude_agent/fetch_crypto.py`:
+- `parse_coinbase_products` (only online, tradable, non cancel-only pairs in the quote currency), `base_currency`
+- `parse_fear_greed` (Spanish label, yesterday / week-ago history, empty payloads), `parse_global` (distance to ATH)
+- `_get_json` (params, HTTP error)
+- `collect()`: `coinbase_available` per coin, crypto calendar indicators, charts and chart failures, symbols outside the
+  watchlist, each external source failing independently (Coinbase down / no EUR pairs → `null`), default charts dir
+- `main()`: output file and console summary
+
+### `claude_agent/test_claude_portfolio.py`
+Covers `claude_agent/portfolio.py`:
+- CSV parsing: `,`/`;` delimiter, decimal comma/point, date formats, real file line numbers in `issues`, inferred
+  `cripto` type, invalid operations / quantities / prices / dates, missing columns, the committed `cartera.csv` template
+- `build_positions`: weighted average cost incl. fees, partial sales (realized P&L), dividends, overselling, currency mismatch
+- `summarize`: EUR conversion via FX, valuation at cost without price, missing FX, weights, closed positions,
+  crypto weight vs cap, `margen_hasta_tope_eur`, over-cap detection, empty portfolio
+- `fetch_prices`, `collect()` (FX symbols requested, missing / empty CSV), `main()` (default path from config)
 
 Run without the global coverage threshold: `pytest tests/claude_agent -q --no-cov`.
 

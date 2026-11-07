@@ -39,8 +39,10 @@ CFG = {
         "espana": [{"name": "Expansión Mercados", "url": "https://e/rss"}],
         "eeuu": [{"name": "MarketWatch", "url": "https://m/rss"}],
         "macro": [{"name": "Fed", "url": "https://f/rss"}],
+        "cripto": [{"name": "CoinDesk", "url": "https://c/rss"}],
     },
     "watchlist": {"espana": [{"symbol": "SAN.MC", "name": "Santander"}], "eeuu": [{"symbol": "AAPL"}]},
+    "crypto": {"watchlist": [{"symbol": "BTC-EUR", "name": "Bitcoin"}]},
 }
 
 
@@ -51,6 +53,20 @@ def test_load_config_reads_real_file():
     assert cfg["timezone"] == "Europe/Madrid"
     assert cfg["feeds"]["espana"]
     assert cfg["watchlist"]["espana"]
+
+
+def test_load_config_has_crypto_block():
+    cfg = fn.load_config()
+    assert cfg["feeds"]["cripto"]
+    assert cfg["crypto"]["max_portfolio_pct"] == 25
+    assert all(e["symbol"].endswith("-EUR") for e in cfg["crypto"]["watchlist"])
+
+
+def test_crypto_watchlist_from_config():
+    assert fn._crypto_watchlist_from_config(CFG) == [("BTC-EUR", "Bitcoin", "cripto")]
+    assert fn._crypto_watchlist_from_config({"crypto": {"watchlist": [{"symbol": "ETH-EUR"}]}}) == [
+        ("ETH-EUR", "ETH-EUR", "cripto")]
+    assert fn._crypto_watchlist_from_config({}) == []
 
 
 def test_load_config_empty_file(tmp_path):
@@ -154,6 +170,7 @@ async def test_collect_builds_report_data():
         _art(2, source="MarketWatch", url="https://blocked.com/x"),
         _art(3, source="Desconocida"),  # fuente no configurada → eeuu
         _art(4, source="Fed", hours_ago=48),  # antigua → sin_noticias_recientes
+        _art(5, source="CoinDesk"),
     ]
 
     async def yahoo_fetch(symbol, max_articles=20):
@@ -171,9 +188,13 @@ async def test_collect_builds_report_data():
         data = await fn.collect(CFG, now=NOW)
 
     assert data["lookback_hours"] == 24
-    assert data["counts"]["market"] == {"espana": 1, "europa": 0, "eeuu": 2, "macro": 0}
+    assert data["counts"]["market"] == {"espana": 1, "europa": 0, "eeuu": 2, "macro": 0, "cripto": 1}
     status = {f["name"]: f["status"] for f in data["feed_status"]}
-    assert status == {"Expansión Mercados": "ok", "MarketWatch": "ok", "Fed": "sin_noticias_recientes"}
+    assert status == {"Expansión Mercados": "ok", "MarketWatch": "ok", "Fed": "sin_noticias_recientes",
+                      "CoinDesk": "ok"}
+    assert data["market"]["cripto"][0]["group"] == "cripto"
+    assert data["symbols"]["BTC-EUR"]["group"] == "cripto"
+    assert data["symbols"]["BTC-EUR"]["name"] == "Bitcoin"
     assert len(data["symbols"]["SAN.MC"]["articles"]) == 2
     assert data["symbols"]["SAN.MC"]["name"] == "Santander"
     assert data["symbols"]["AAPL"] == {"name": "AAPL", "group": "eeuu", "articles": []}

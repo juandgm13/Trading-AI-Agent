@@ -14,7 +14,7 @@ full_content_max_chars: 2500
 full_content_skip_domains:
   - investing.com
 
-# Grupos: espana | europa | eeuu | macro
+# Grupos: espana | europa | eeuu | macro | cripto
 # (Comprobados desde la nube: CNBC, Cinco Días y elEconomista bloquean el acceso automático.)
 feeds:
   espana:
@@ -35,6 +35,11 @@ feeds:
   macro:
     - {name: "Federal Reserve", url: "https://www.federalreserve.gov/feeds/press_all.xml"}
     - {name: "The Economist Finanzas", url: "https://www.economist.com/finance-and-economics/rss.xml"}
+  # (Comprobados desde la nube: Bitcoin Magazine bloquea; CoinGecko limita peticiones sin clave.)
+  cripto:
+    - {name: "CoinDesk", url: "https://www.coindesk.com/arc/outboundfeeds/rss"}
+    - {name: "Cointelegraph", url: "https://cointelegraph.com/rss"}
+    - {name: "Decrypt", url: "https://decrypt.co/feed"}
 
 # Noticias por símbolo vía Yahoo Finance RSS (sufijo .MC = Bolsa de Madrid)
 watchlist:
@@ -57,3 +62,27 @@ watchlist:
     - {symbol: "AMZN", name: "Amazon"}
     - {symbol: "SPY", name: "ETF S&P 500 (SPDR)"}
     - {symbol: "QQQ", name: "ETF Nasdaq 100 (Invesco)"}
+
+# Criptomonedas (claude_agent/fetch_crypto.py). Precios en EUR vía Yahoo Finance (velas diarias, 365 días/año).
+# Solo se recomiendan monedas que se puedan comprar en el exchange del usuario (Coinbase, par en EUR);
+# la lista se comprueba cada día contra la API pública de Coinbase.
+crypto:
+  exchange: coinbase
+  quote_currency: EUR
+  max_portfolio_pct: 25       # Tope de cripto sobre el valor total de la cartera (decisión del usuario)
+  watchlist:
+    - {symbol: "BTC-EUR", name: "Bitcoin"}
+    - {symbol: "ETH-EUR", name: "Ethereum"}
+    - {symbol: "SOL-EUR", name: "Solana"}
+    - {symbol: "XRP-EUR", name: "XRP"}
+    - {symbol: "ADA-EUR", name: "Cardano"}
+    - {symbol: "LINK-EUR", name: "Chainlink"}
+    - {symbol: "AVAX-EUR", name: "Avalanche"}
+    - {symbol: "DOT-EUR", name: "Polkadot"}
+    - {symbol: "LTC-EUR", name: "Litecoin"}
+    - {symbol: "DOGE-EUR", name: "Dogecoin"}
+
+# Cartera del usuario (claude_agent/portfolio.py): movimientos en CSV, editable como tabla.
+portfolio:
+  file: inputs/cartera.csv     # Relativo a claude_agent/
+  base_currency: EUR

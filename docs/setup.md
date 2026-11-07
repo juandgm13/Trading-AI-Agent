@@ -197,7 +197,13 @@ pip install -r claude_agent/requirements.txt   # aiohttp, feedparser, PyYAML, pa
 python claude_agent/fetch_news.py               # → claude_agent/data/news_YYYY-MM-DD.json
 python claude_agent/fetch_prices.py             # → claude_agent/data/prices_YYYY-MM-DD.json
 python claude_agent/fetch_prices.py --charts SAN.MC,AAPL   # + PNG in claude_agent/reports/charts/YYYY-MM-DD/
+python claude_agent/fetch_crypto.py             # → claude_agent/data/crypto_YYYY-MM-DD.json (Coinbase EUR pairs, Fear & Greed)
+python claude_agent/fetch_crypto.py --charts BTC-EUR,ETH-EUR
+python claude_agent/portfolio.py                # → claude_agent/data/portfolio_YYYY-MM-DD.json (from inputs/cartera.csv)
 ```
+
+> Use `python -m pip install …` so packages land in the same interpreter that runs the scripts. If no stable
+> `mplfinance>=0.12` is published for your Python, install the latest pre-release: `python -m pip install --pre mplfinance`.
 
 `claude_agent/config.yaml` options:
 
@@ -209,8 +215,16 @@ python claude_agent/fetch_prices.py --charts SAN.MC,AAPL   # + PNG in claude_age
 | `summary_max_chars` | `400` | RSS summary truncation (HTML stripped) |
 | `full_content_top_n` / `full_content_max_chars` | `6` / `2500` | Full text for the newest Spain + US articles |
 | `full_content_skip_domains` | `[investing.com]` | Domains whose article pages block automated fetch |
-| `feeds.{espana,europa,eeuu,macro}` | see file | `{name, url}` RSS feeds |
+| `feeds.{espana,europa,eeuu,macro,cripto}` | see file | `{name, url}` RSS feeds (`cripto`: CoinDesk, Cointelegraph, Decrypt) |
 | `watchlist.<group>` | see file | `{symbol, name}` for Yahoo Finance RSS news **and** price history/indicators (`.MC` = Madrid) |
+| `crypto.exchange` / `crypto.quote_currency` | `coinbase` / `EUR` | Coins are flagged `coinbase_available` if Coinbase has an online, tradable pair in this currency |
+| `crypto.max_portfolio_pct` | `25` | Max crypto weight of the total portfolio (user decision); the report recommends reducing above it |
+| `crypto.watchlist` | BTC, ETH, SOL, XRP, ADA, LINK, AVAX, DOT, LTC, DOGE (`-EUR`) | Yahoo symbols for crypto prices/indicators (365-day calendar) and news |
+| `portfolio.file` / `portfolio.base_currency` | `inputs/cartera.csv` / `EUR` | User movements CSV (relative to `claude_agent/`) and valuation currency |
+
+`inputs/cartera.csv` columns: `fecha,activo,nombre,tipo,operacion,cantidad,precio,moneda,comision,broker,notas`
+(`tipo` = accion/etf/fondo/cripto/otro, `operacion` = compra/venta/dividendo; `,` or `;` separator, decimal comma
+or point). Positions use weighted average cost; see `claude_agent/inputs/README.md`.
 
 Editable inputs for Claude: `claude_agent/sources.md` (pages to web-fetch, daily searches, interests) and
 `claude_agent/inputs/` (any personal context files), `claude_agent/learning_log.md` (didactic syllabus). Schedule: `CRON_TZ=Europe/Madrid 47 7 * * 1-5`.
