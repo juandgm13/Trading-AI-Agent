@@ -1,1 +1,9 @@
-fecha,activo,nombre,tipo,operacion,cantidad,precio,moneda,comision,broker,notas
+fecha;activo;nombre;tipo;operacion;cantidad;precio;moneda;comision;notas
+01/01/2026;AIR;Airbus SE;accion;compra;5;230;EUR;0;
+01/01/2026;BTC;bitcoin;criptomoneda;compra;0,00113223;74000;EUR;0;
+01/01/2026;SHIB;shiba inu;criptomoneda;compra;1000000;0,06;EUR;0;
+11/02/2022;AAPL;apple;accion;compra;0,15;150,66;EUR;0;
+07/04/2022;REP;repsol;accion;compra;2;12,37;EUR;0;
+07/04/2022;ITX;inditex;accion;compra;1;26,94;EUR;0;
+07/04/2022;SLR;solaria energia;accion;compra;1;14,99;EUR;0;
+07/04/2022;ORY;oryzon genomics;accion;compra;4;3,23;EUR;0;
