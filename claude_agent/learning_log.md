@@ -27,5 +27,3 @@ Puedes editar el temario o añadir temas que te interesen.
 
 | Fecha | Concepto | Ejemplo usado |
 |---|---|---|
-| 2026-11-07 | Inflación (IPC) | IPC de EE. UU. del martes 10 (último dato 3,7 %) y subida de tipos de la Fed |
-| 2026-11-08 | El RSI: sobrecompra y sobreventa | Iberdrola (RSI 72) y NVIDIA (RSI 31) |
