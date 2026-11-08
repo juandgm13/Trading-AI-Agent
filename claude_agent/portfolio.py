@@ -200,6 +200,12 @@ def build_positions(movements: list[Movement]) -> tuple[dict[str, Position], lis
     return positions, issues
 
 
+def public_brokers(brokers: set[str]) -> str:
+    """Privacidad: el informe se publica en la web y solo se nombra Coinbase; el resto → "otro bróker"."""
+    names = {b if "coinbase" in b.lower() else "otro bróker" for b in brokers if b.strip()}
+    return ", ".join(sorted(names, key=lambda n: (n == "otro bróker", n)))
+
+
 def fx_symbol(currency: str, base: str = "EUR") -> str:
     """Ticker de Yahoo con unidades de `currency` por 1 `base` (EURUSD=X → dólares por euro)."""
     return f"{base}{currency}=X"
@@ -239,7 +245,7 @@ def summarize(positions: dict[str, Position], prices: dict[str, float], fx: dict
             "activo": pos.activo,
             "nombre": pos.nombre,
             "tipo": pos.tipo,
-            "broker": ", ".join(sorted(pos.brokers)),
+            "broker": public_brokers(pos.brokers),
             "moneda": pos.moneda,
             "cantidad": round(pos.cantidad, 8),
             "precio_medio": round(pos.precio_medio, 4),

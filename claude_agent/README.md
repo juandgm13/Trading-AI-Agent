@@ -18,7 +18,10 @@ Anthropic) que cada día laborable, antes de que abran la bolsa española (9:00)
   detallado del núcleo + top 15 + tus monedas, sentimiento (Fear & Greed) y noticias. Tope del 25 % de la cartera.
 - **Tu cartera**: si apuntas tus movimientos en `inputs/cartera.csv`, el informe valora tus posiciones y
   te dice qué hacer con cada una.
-- **Entrega**: el informe se guarda en `claude_agent/reports/AAAA-MM-DD.md` (commit + push).
+- **Entrega**: el informe se guarda en `claude_agent/reports/AAAA-MM-DD.md` y se publica como web en
+  **GitHub Pages** (carpeta `docs/` de la rama `Trading-Agent_Claude`):
+  <https://juandgm13.github.io/Trading-AI-Agent/> — portada con el último informe y sus recomendaciones,
+  informe completo con índice, archivo y página "Aprende".
 
 ## Flujo diario
 
@@ -31,10 +34,11 @@ Tarea programada (L–V ~7:47 Madrid)
        4. python claude_agent/portfolio.py       → data/portfolio_FECHA.json (tu cartera desde inputs/cartera.csv)
        5. web fetch de sources.md + búsquedas     → cierre anterior, futuros, agenda, bancos centrales, cripto
           + lee inputs/                           → tus notas, empresas de interés
-       6. decide 3–5 ideas de bolsa + 1–3 de cripto con acción directa → --charts … → reports/charts/FECHA/*.png
+       6. decide 3–5 ideas de bolsa + 1–3 de cripto con acción directa → --charts … → docs/informes/charts/FECHA/*.png
        7. elige la lección del día (learning_log.md)
-       8. redacta reports/FECHA.md con report_template.md
-       9. git commit + push (informe + gráficos + learning_log.md)
+       8. redacta reports/FECHA.md con report_template.md (front matter + Markdown)
+       9. python claude_agent/build_site.py      → regenera la web en docs/ (GitHub Pages)
+      10. git commit + push (informe + learning_log.md + docs/)
 ```
 
 ## Archivos
@@ -47,12 +51,14 @@ Tarea programada (L–V ~7:47 Madrid)
 | `inputs/cartera.csv` | **Editable como tabla**: tus movimientos (compras, ventas, dividendos). Formato en `inputs/README.md` |
 | `fetch_news.py` | Recoge noticias públicas → JSON compacto (sin LLM) |
 | `fetch_crypto.py` | Cripto: universo = todas las monedas de Coinbase cruzadas con Coinpaprika, radar (top por capitalización, más suben/bajan, amplitud), Fear & Greed, capitalización/dominancia e indicadores con velas diarias de Coinbase (par EUR o USD, 365 días) + gráficos |
+| `build_site.py` | Convierte todos los informes en la web estática de `docs/` (HTML/CSS propios, sin Jekyll): portada, `informes/FECHA.html`, `archivo.html`, `aprende.html` |
+| `site/` | Plantilla HTML (`base.html`), estilos (`style.css`, modo claro/oscuro, móvil, impresión) y `site.js` (tema y ampliar gráficos) |
 | `portfolio.py` | Lee `inputs/cartera.csv` → posiciones (precio medio), valor y G/P en EUR, peso de cripto frente al tope |
 | `fetch_prices.py` | Velas diarias (Yahoo, 2 años) → indicadores (MM20/50/200, RSI, MACD, volatilidad, 52 semanas, soportes/resistencias) + gráficos PNG |
 | `learning_log.md` | Temario didáctico y registro de conceptos ya explicados (lo actualiza Claude) |
 | `daily_prompt.md` | Instrucciones completas que sigue Claude en cada ejecución |
 | `report_template.md` | Estructura fija del informe |
-| `reports/` | Informes generados (versionados) y sus gráficos en `reports/charts/FECHA/` |
+| `reports/` | Informes generados (Markdown con front matter, versionados). Sus gráficos están en `docs/informes/charts/FECHA/` |
 | `data/` | JSON crudos de cada día (ignorado por git) |
 
 ## Ejecución manual
@@ -62,10 +68,11 @@ pip install -r claude_agent/requirements.txt
 python claude_agent/fetch_news.py                 # → claude_agent/data/news_AAAA-MM-DD.json
 python claude_agent/fetch_news.py --no-full-content --output /tmp/news.json
 python claude_agent/fetch_prices.py                # → claude_agent/data/prices_AAAA-MM-DD.json
-python claude_agent/fetch_prices.py --charts SAN.MC,^IBEX   # + gráficos en reports/charts/AAAA-MM-DD/
+python claude_agent/fetch_prices.py --charts SAN.MC,^IBEX   # + gráficos en docs/informes/charts/AAAA-MM-DD/
 python claude_agent/fetch_crypto.py                # → claude_agent/data/crypto_AAAA-MM-DD.json
 python claude_agent/fetch_crypto.py --charts BTC,PEPE      # cualquier moneda de Coinbase
 python claude_agent/portfolio.py                   # → claude_agent/data/portfolio_AAAA-MM-DD.json
+python claude_agent/build_site.py                  # → docs/ (abre docs/index.html en el navegador)
 ```
 
 Luego, en una sesión de Claude Code: *"Sigue claude_agent/daily_prompt.md"*.
@@ -84,6 +91,8 @@ Luego, en una sesión de Claude Code: *"Sigue claude_agent/daily_prompt.md"*.
   controla cuántas de las mayores por capitalización se analizan a fondo (15).
   Comprobado desde la nube: Bitcoin Magazine bloquea el RSS, CoinGecko limita las peticiones sin clave y Yahoo
   no tiene muchas monedas pequeñas (por eso las velas cripto vienen de Coinbase).
+- **Web** → título y URL en `site` de `config.yaml`; diseño en `site/style.css`. La web es pública: el informe
+  solo nombra Coinbase como bróker (los demás aparecen como "otro bróker").
 - **Tope de cripto** → `crypto.max_portfolio_pct` (25 % por decisión del usuario).
 - **Lecciones** → edita el temario de `learning_log.md` o añade temas que quieras aprender.
 - **Páginas concretas o búsquedas** → edita `sources.md`.

@@ -82,3 +82,8 @@ crypto:
 portfolio:
   file: inputs/cartera.csv     # Relativo a claude_agent/
   base_currency: EUR
+
+# Web del informe (GitHub Pages sirve docs/ de la rama Trading-Agent_Claude; claude_agent/build_site.py)
+site:
+  title: "Informe pre-apertura"
+  base_url: "https://juandgm13.github.io/Trading-AI-Agent/"

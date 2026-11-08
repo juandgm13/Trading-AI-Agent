@@ -1,8 +1,9 @@
 # Dependencias mínimas para el informe diario en la nube (sin Ollama, Alpaca ni agent-framework)
-# pandas + mplfinance: indicadores técnicos y gráficos (fetch_prices.py)
+# pandas + mplfinance: indicadores técnicos y gráficos (fetch_prices.py) · markdown: web en docs/ (build_site.py)
 aiohttp>=3.9.0
 feedparser>=6.0.0
 PyYAML>=6.0
+markdown>=3.5
 pandas>=2.0.0
 mplfinance>=0.12.0
 # Solo para ejecutar los tests

@@ -1,3 +1,11 @@
+---
+fecha: {AAAA-MM-DD}
+termometro: {tranquilo | prudencia | incertidumbre}
+resumen: "{una frase con la idea del día}"
+leccion: "{concepto del día}"
+recomendaciones:
+  - {activo: "{Nombre (TICKER)}", accion: "{Comprar | Comprar más | Mantener | Reducir | Vender | Esperar | Evitar}", confianza: "{baja | media | alta}"}
+---
 # 📈 Informe pre-apertura — {DÍA DE LA SEMANA} {DD} de {MES} de {AAAA}
 
 > Generado automáticamente a las {HH:MM} (hora de Madrid) · Bolsa española abre a las 9:00 · Wall Street a las 15:30 · Cripto: 24/7
@@ -43,7 +51,7 @@
 
 ## 6. Ideas de bolsa: qué haría un experto
 ### {Empresa o ETF} ({TICKER}) — {ACCIÓN}
-![{TICKER}](charts/{FECHA}/{TICKER_ARCHIVO}.png)
+![{TICKER}](../../docs/informes/charts/{FECHA}/{TICKER_ARCHIVO}.png)
 
 - **Qué es:** {a qué se dedica, en una línea}
 - **Por qué es noticia hoy:** {hecho concreto, con fuente}
@@ -79,7 +87,7 @@
 - {Hecho, con fuente y enlace, y por qué afecta al precio}
 
 ### {Moneda} ({CÓDIGO}) — {ACCIÓN}
-![{CÓDIGO}](charts/{FECHA}/{PAR}.png)
+![{CÓDIGO}](../../docs/informes/charts/{FECHA}/{PAR}.png)
 
 - **Qué es:** {en una línea}
 - **Lo que dice el gráfico:** {…}

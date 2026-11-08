@@ -7,7 +7,7 @@ cifras reales y no estimaciones del modelo.
 
 Uso:
     python claude_agent/fetch_prices.py                          # → data/prices_FECHA.json
-    python claude_agent/fetch_prices.py --charts SAN.MC,AAPL     # + PNG en reports/charts/FECHA/
+    python claude_agent/fetch_prices.py --charts SAN.MC,AAPL     # + PNG en docs/informes/charts/FECHA/
 """
 from __future__ import annotations
 
@@ -30,7 +30,8 @@ from claude_agent.fetch_news import DEFAULT_CONFIG, _watchlist_from_config, load
 
 CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 DEFAULT_DATA_DIR = _HERE / "data"
-DEFAULT_CHARTS_DIR = _HERE / "reports" / "charts"
+# Los gráficos se guardan directamente en la web (GitHub Pages sirve docs/): sin duplicar PNG en el repo
+DEFAULT_CHARTS_DIR = _HERE.parent / "docs" / "informes" / "charts"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; TradingReport/1.0)"}
 _TIMEOUT = 15
 RECENT_BARS = 60

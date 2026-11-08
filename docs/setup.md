@@ -196,11 +196,15 @@ Runs as a Claude Code scheduled task in the cloud — **no `.env` needed** (no A
 pip install -r claude_agent/requirements.txt   # aiohttp, feedparser, PyYAML, pandas, mplfinance (+ pytest)
 python claude_agent/fetch_news.py               # → claude_agent/data/news_YYYY-MM-DD.json
 python claude_agent/fetch_prices.py             # → claude_agent/data/prices_YYYY-MM-DD.json
-python claude_agent/fetch_prices.py --charts SAN.MC,AAPL   # + PNG in claude_agent/reports/charts/YYYY-MM-DD/
+python claude_agent/fetch_prices.py --charts SAN.MC,AAPL   # + PNG in docs/informes/charts/YYYY-MM-DD/
 python claude_agent/fetch_crypto.py             # → claude_agent/data/crypto_YYYY-MM-DD.json (all Coinbase coins, screener, Fear & Greed)
 python claude_agent/fetch_crypto.py --charts BTC,PEPE   # any Coinbase coin
 python claude_agent/portfolio.py                # → claude_agent/data/portfolio_YYYY-MM-DD.json (from inputs/cartera.csv)
+python claude_agent/build_site.py               # → docs/ static site (GitHub Pages)
 ```
+
+**GitHub Pages**: Settings → Pages → Deploy from a branch → `Trading-Agent_Claude` / `docs`. The site is plain
+HTML (`docs/.nojekyll`, no Jekyll build); the technical `docs/*.md` files are not rendered as pages.
 
 > Use `python -m pip install …` so packages land in the same interpreter that runs the scripts. If no stable
 > `mplfinance>=0.12` is published for your Python, install the latest pre-release: `python -m pip install --pre mplfinance`.
@@ -221,6 +225,7 @@ python claude_agent/portfolio.py                # → claude_agent/data/portfoli
 | `crypto.max_portfolio_pct` | `25` | Max crypto weight of the total portfolio (user decision); the report recommends reducing above it |
 | `crypto.watchlist` | BTC, ETH, SOL, XRP | Core coin codes: always get detailed technicals (Coinbase candles, 365-day calendar) and Yahoo news (`CODE-USD`) |
 | `crypto.auto_top_n` / `crypto.screener_top` | `15` / `20` | Largest Coinbase coins (no stablecoins) with detailed technicals / rows of the market-cap radar |
+| `site.title` / `site.base_url` | `Informe pre-apertura` / `https://juandgm13.github.io/Trading-AI-Agent/` | Site title and public URL (used in the daily notification) |
 | `portfolio.file` / `portfolio.base_currency` | `inputs/cartera.csv` / `EUR` | User movements CSV (relative to `claude_agent/`) and valuation currency |
 
 `inputs/cartera.csv` columns: `fecha,activo,nombre,tipo,operacion,cantidad,precio,moneda,comision,broker,notas`

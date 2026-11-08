@@ -17,7 +17,7 @@ Si una fuente falla se anota en `issues` y el resto sigue (el informe nunca se b
 
 Uso:
     python claude_agent/fetch_crypto.py                       # → data/crypto_FECHA.json
-    python claude_agent/fetch_crypto.py --charts BTC,PEPE      # + PNG en reports/charts/FECHA/ (cualquier moneda de Coinbase)
+    python claude_agent/fetch_crypto.py --charts BTC,PEPE      # + PNG en docs/informes/charts/FECHA/ (cualquier moneda de Coinbase)
 """
 from __future__ import annotations
 

@@ -105,7 +105,8 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
    - Bolsa: `python claude_agent/fetch_prices.py --charts SIMBOLO1,SIMBOLO2,...`
    - Cripto: `python claude_agent/fetch_crypto.py --charts BTC,ETH,...` (cualquier moneda de Coinbase)
    (usa los símbolos tal y como aparecen en `config.yaml`; se guardan en
-   `claude_agent/reports/charts/FECHA/` con `^` sustituido por `IDX_`, p. ej. `IDX_IBEX.png`).
+   `docs/informes/charts/FECHA/` —la carpeta de la web— con `^` sustituido por `IDX_`, p. ej. `IDX_IBEX.png`;
+   en cripto el archivo lleva el par usado, p. ej. `BTC-EUR.png` o `PEPE-USD.png`).
    Solo pueden tener gráfico los valores de las watchlists.
 
 ## Paso 7 — Lección del día (progresión didáctica)
@@ -120,7 +121,13 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
 ## Paso 8 — Redacción
 Escribe `claude_agent/reports/FECHA.md` siguiendo **exactamente** la estructura de
 `claude_agent/report_template.md` (sustituye los `{…}`; elimina filas o ideas sin contenido real).
-Los gráficos se enlazan con ruta relativa: `![SAN.MC](charts/FECHA/SAN.MC.png)`.
+Empieza **siempre** con el bloque de metadatos (front matter) de la plantilla, entre líneas `---`: lo usa la
+web para la portada y el archivo. `termometro` debe ser `tranquilo`, `prudencia` o `incertidumbre`; `resumen`,
+una frase; `recomendaciones`, las mismas filas de la tabla resumen (`activo`, `accion` con el verbo exacto
+—Comprar, Comprar más, Mantener, Reducir, Vender, Esperar o Evitar— y `confianza`). Entrecomilla los textos.
+Los gráficos se enlazan así (se ven en GitHub y en la web): `![SAN.MC](../../docs/informes/charts/FECHA/SAN.MC.png)`.
+**Privacidad:** el informe se publica en una web pública. No menciones ningún bróker o banco del usuario salvo
+Coinbase (en la cartera aparecerá como "otro bróker"), ni datos personales.
 
 Reglas de las recomendaciones:
 - Habla como un asesor experto que da su opinión: **verbos directos** ("Comprar", "Mantener",
@@ -160,14 +167,21 @@ Reglas didácticas (el lector quiere aprender):
 - Longitud orientativa: 1.800–2.800 palabras. Que se lea en 10–12 minutos.
 - Termina siempre con el aviso legal de la plantilla.
 
-## Paso 9 — Publicar
-1. `git add claude_agent/reports/FECHA.md claude_agent/reports/charts/FECHA claude_agent/learning_log.md`
+## Paso 9 — Generar la web
+`python claude_agent/build_site.py`
+- Regenera el sitio de GitHub Pages en `docs/` (portada, informe en HTML, archivo y "Aprende") a partir de
+  todos los informes. Si avisa de "sin front matter" o "front matter inválido" en el informe de hoy, corrígelo
+  y vuelve a ejecutarlo. Anota la URL del último informe que imprime.
+
+## Paso 10 — Publicar
+1. `git add claude_agent/reports/FECHA.md claude_agent/learning_log.md docs/index.html docs/archivo.html docs/aprende.html docs/informes docs/assets docs/.nojekyll`
 2. `git commit -m "Informe pre-apertura FECHA"`
 3. `git push -u origin Trading-Agent_Claude`
    (si falla por red, reintenta hasta 4 veces esperando 2s, 4s, 8s y 16s).
 4. Si tienes disponible una herramienta de notificación push, envía un aviso corto con el
-   termómetro del día y las 3 recomendaciones principales (acción + activo).
-5. Responde al final con un resumen de 3–5 líneas del informe y la ruta del archivo.
+   termómetro del día, las 3 recomendaciones principales (acción + activo) y el enlace de la web
+   (`site.base_url` de `config.yaml` + `informes/FECHA.html`).
+5. Responde al final con un resumen de 3–5 líneas del informe, la ruta del archivo y el enlace de la web.
 
-No modifiques ningún otro archivo del repositorio salvo el informe del día, sus gráficos y
-`learning_log.md` (en particular, nunca `inputs/cartera.csv`).
+No modifiques ningún otro archivo del repositorio salvo el informe del día, sus gráficos, `learning_log.md`
+y el sitio generado en `docs/` (en particular, nunca `inputs/cartera.csv` ni la documentación técnica de `docs/*.md`).

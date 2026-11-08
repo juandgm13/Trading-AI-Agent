@@ -312,3 +312,9 @@ def test_main_without_csv_uses_config_path(tmp_path, capsys):
         assert pf.main(["--output", str(out)]) == 0
     assert col.call_args.args[1] == pf._HERE / "inputs" / "cartera.csv"
     assert out.exists() and "recomendaciones genéricas" in capsys.readouterr().out
+
+
+def test_public_brokers_only_names_coinbase():
+    assert pf.public_brokers({"Coinbase", "MyInvestor", "Trade Republic", " "}) == "Coinbase, otro bróker"
+    assert pf.public_brokers({"coinbase advanced"}) == "coinbase advanced"
+    assert pf.public_brokers(set()) == ""
