@@ -227,9 +227,11 @@ HTML (`docs/.nojekyll`, no Jekyll build); the technical `docs/*.md` files are no
 | `crypto.auto_top_n` / `crypto.screener_top` | `15` / `20` | Largest Coinbase coins (no stablecoins) with detailed technicals / rows of the market-cap radar |
 | `site.title` / `site.base_url` | `Informe pre-apertura` / `https://juandgm13.github.io/Trading-AI-Agent/` | Site title and public URL (used in the daily notification) |
 | `portfolio.file` / `portfolio.base_currency` | `inputs/cartera.csv` / `EUR` | User movements CSV (relative to `claude_agent/`) and valuation currency |
+| `portfolio.aportacion_mensual` | `{importe: 200, moneda: EUR, dia: 1}` | Monthly contribution; `portfolio.py` returns the next date and the report proposes how to allocate it (not added to cash automatically) |
 
 `inputs/cartera.csv` columns: `fecha,activo,nombre,tipo,operacion,cantidad,precio,moneda,comision,broker,notas`
-(`tipo` = accion/etf/fondo/cripto/otro, `operacion` = compra/venta/dividendo; `,` or `;` separator, decimal comma
+(`tipo` = accion/etf/fondo/cripto/liquidez/otro — `liquidez` = available cash such as `EUR` or `USDC`, price 1, never priced
+on Yahoo and outside the crypto cap; `operacion` = compra/venta/dividendo; `,` or `;` separator, decimal comma
 or point). Positions use weighted average cost; see `claude_agent/inputs/README.md`.
 
 Editable inputs for Claude: `claude_agent/sources.md` (pages to web-fetch, daily searches, interests) and

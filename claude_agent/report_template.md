@@ -103,13 +103,20 @@ recomendaciones:
 {Si no hay `cartera.csv` o está vacío: "Aún no has registrado movimientos en `inputs/cartera.csv`; las recomendaciones son genéricas." y omitir la tabla.}
 
 **Valor total:** {X} € · **Invertido:** {Y} € · **Ganancia/pérdida no realizada:** {±Z} € ({±z}%) · **Realizada:** {±R} €
-**Reparto:** {acciones x% · ETF y% · cripto z%} · **Cripto vs tope:** {z}% de 25% {✅ dentro / ⚠️ por encima: reducir {importe}}
+**Reparto:** {acciones x% · ETF y% · cripto z% · liquidez l%} · **Cripto vs tope:** {z}% de 25% {✅ dentro / ⚠️ por encima: reducir {importe}}
+**Liquidez disponible:** {L} € ({l} %) · **Próxima aportación:** {importe} € el {proxima_fecha}
 
 | Activo | Cantidad | Precio medio | Precio actual | Valor (€) | G/P | Peso | Acción recomendada |
 |---|---|---|---|---|---|---|---|
 | {Nombre (TICKER)} | {cantidad} | {precio_medio} | {precio_actual} | {valor_eur} | {±pnl_pct}% | {peso_pct}% | {ACCIÓN — motivo breve} |
 
-{2–3 frases: ¿está diversificada? ¿hay demasiado peso en algo? ¿qué movimiento haría un experto esta semana? Avisos sobre filas con error en el CSV.}
+{2–3 frases: ¿está diversificada? ¿hay demasiado peso en algo? ¿qué movimiento haría un experto esta semana con la liquidez? Avisos sobre filas con error en el CSV.}
+
+{Solo si la aportación es en ≤ 3 días o acaba de pasar:}
+**Reparto propuesto de la aportación de {importe} €:**
+| Destino | Importe | Por qué |
+|---|---|---|
+| {ETF / acción / cripto} | {€} | {motivo breve} |
 
 ## 9. Análisis de riesgo
 | Riesgo | Nivel | Explicación |

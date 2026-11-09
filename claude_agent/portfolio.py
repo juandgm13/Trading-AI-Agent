@@ -9,12 +9,17 @@ y la exposición a criptomonedas frente al tope de `config.yaml` (`crypto.max_po
 Columnas del CSV (cabecera obligatoria, separador `,` o `;`, decimales con `.` o `,`):
     fecha,activo,nombre,tipo,operacion,cantidad,precio,moneda,comision,broker,notas
 - activo:    ticker de Yahoo Finance (SAN.MC, AAPL, SPY) o par de Coinbase para cripto (BTC-EUR, PEPE-USD…)
-- tipo:      accion | etf | fondo | cripto | otro
+- tipo:      accion | etf | fondo | cripto | liquidez | otro
+             liquidez: dinero disponible (activo `EUR`, o `USDC`/`USD` en dólares), precio 1; `compra` = ingreso,
+             `venta` = retirada o dinero usado para invertir. No se busca precio y no cuenta como cripto.
 - operacion: compra | venta | dividendo   (dividendo: `precio` = importe neto cobrado; `cantidad` se ignora)
 - precio:    precio por unidad en `moneda`; comision: gastos totales de la operación en `moneda`
 
 Simplificación: la ganancia en EUR de un activo en divisa se calcula con el tipo de cambio actual
 (no se guarda el cambio histórico de cada compra).
+
+`config.yaml` → `portfolio.aportacion_mensual` ({importe, moneda, dia}) se devuelve con la próxima fecha
+para que el informe proponga cómo repartir cada aportación periódica (no se suma sola a la liquidez).
 
 Uso:
     python claude_agent/portfolio.py            # → data/portfolio_FECHA.json
@@ -29,6 +34,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
+import calendar
 from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -48,6 +54,7 @@ COLUMNS = ["fecha", "activo", "nombre", "tipo", "operacion", "cantidad", "precio
            "comision", "broker", "notas"]
 REQUIRED = ("fecha", "activo", "operacion", "precio")
 OPERATIONS = ("compra", "venta", "dividendo")
+CASH_TYPE = "liquidez"              # dinero disponible: precio fijo 1 en su moneda, sin buscar cotización
 _EPS = 1e-9
 
 
@@ -232,7 +239,7 @@ def summarize(positions: dict[str, Position], prices: dict[str, float], fx: dict
             closed.append({"activo": pos.activo, "nombre": pos.nombre, "tipo": pos.tipo,
                            "realizado": round(pos.realizado, 2), "moneda": pos.moneda})
             continue
-        price = prices.get(pos.activo)
+        price = 1.0 if pos.tipo == CASH_TYPE else prices.get(pos.activo)
         value = pos.cantidad * price if price is not None else None
         if price is None:
             issues.append({"activo": pos.activo, "message": "sin precio actual; se valora a coste"})
@@ -264,7 +271,9 @@ def summarize(positions: dict[str, Position], prices: dict[str, float], fx: dict
         })
 
     total = sum(r["valor_eur"] or 0 for r in rows)
-    cost = sum(r["coste_eur"] or 0 for r in rows)
+    cash = sum(r["valor_eur"] or 0 for r in rows if r["tipo"] == CASH_TYPE)
+    invested = total - cash
+    cost = sum(r["coste_eur"] or 0 for r in rows if r["tipo"] != CASH_TYPE)
     for r in rows:
         r["peso_pct"] = round((r["valor_eur"] or 0) / total * 100, 2) if total else None
     rows.sort(key=lambda r: r["valor_eur"] or 0, reverse=True)
@@ -287,14 +296,17 @@ def summarize(positions: dict[str, Position], prices: dict[str, float], fx: dict
     return {
         "base_currency": base,
         "totals": {
-            "valor_eur": round(total, 2),
-            "coste_eur": round(cost, 2),
-            "pnl_no_realizado_eur": round(total - cost, 2),
-            "pnl_no_realizado_pct": round((total / cost - 1) * 100, 2) if cost else None,
+            "valor_eur": round(total, 2),                # patrimonio: inversiones + liquidez
+            "invertido_eur": round(invested, 2),         # valor actual de las inversiones (sin liquidez)
+            "liquidez_eur": round(cash, 2),
+            "coste_eur": round(cost, 2),                 # coste de las inversiones (sin liquidez)
+            "pnl_no_realizado_eur": round(invested - cost, 2),
+            "pnl_no_realizado_pct": round((invested / cost - 1) * 100, 2) if cost else None,
             "pnl_realizado_eur": round(realized_base, 2),
         },
         "por_tipo_pct": {t: round(v / total * 100, 2) for t, v in by_type.items()} if total else {},
         "crypto": crypto,
+        "liquidez": {"valor_eur": round(cash, 2), "peso_pct": round(cash / total * 100, 2) if total else None},
         "positions": rows,
         "closed_positions": closed,
         "fx": fx,
@@ -343,6 +355,28 @@ async def fetch_prices(symbols: list[str]) -> tuple[dict[str, float], list[dict]
     return prices, issues
 
 
+def next_contribution(spec: dict | None, today: date) -> dict | None:
+    """Próxima aportación periódica mensual (`portfolio.aportacion_mensual`): hoy cuenta si es el día."""
+    if not spec or not spec.get("importe"):
+        return None
+    day = int(spec.get("dia", 1))
+
+    def on(year: int, month: int) -> date:
+        return date(year, month, min(day, calendar.monthrange(year, month)[1]))
+
+    nxt = on(today.year, today.month)
+    if nxt < today:
+        year, month = (today.year + 1, 1) if today.month == 12 else (today.year, today.month + 1)
+        nxt = on(year, month)
+    return {
+        "importe": spec["importe"],
+        "moneda": (spec.get("moneda") or "EUR").upper(),
+        "dia": day,
+        "proxima_fecha": nxt.isoformat(),
+        "dias_hasta": (nxt - today).days,
+    }
+
+
 async def collect(cfg: dict, csv_path: Path, now: datetime | None = None) -> dict:
     tz = ZoneInfo(cfg.get("timezone", "Europe/Madrid"))
     now = now or datetime.now(timezone.utc)
@@ -353,6 +387,8 @@ async def collect(cfg: dict, csv_path: Path, now: datetime | None = None) -> dic
         "generated_at": now.isoformat(),
         "generated_at_local": now_local.isoformat(),
         "file": str(csv_path),
+        "aportacion_mensual": next_contribution((cfg.get("portfolio") or {}).get("aportacion_mensual"),
+                                                now_local.date()),
     }
     if not csv_path.exists():
         return {**header, "exists": False, "issues": [{"message": "no existe el archivo de cartera"}]}
@@ -362,7 +398,7 @@ async def collect(cfg: dict, csv_path: Path, now: datetime | None = None) -> dic
     open_pos = [p for p in positions.values() if p.cantidad > _EPS]
     currencies = sorted({p.moneda for p in positions.values()} - {base})
     fx_syms = [fx_symbol(c, base) for c in currencies]
-    prices, price_issues = await fetch_prices([p.activo for p in open_pos] + fx_syms)
+    prices, price_issues = await fetch_prices([p.activo for p in open_pos if p.tipo != CASH_TYPE] + fx_syms)
     fx = {c: prices.pop(s) for c, s in zip(currencies, fx_syms) if s in prices}
     summary = summarize(positions, prices, fx, base=base, crypto_cap_pct=cap)
     return {
@@ -397,6 +433,11 @@ def main(argv: list[str] | None = None) -> int:
     t, c = data["totals"], data["crypto"]
     print(f"  Movimientos: {data['movements']} | Posiciones abiertas: {len(data['positions'])}")
     print(f"  Valor: {t['valor_eur']} EUR | Coste: {t['coste_eur']} | G/P no realizada: {t['pnl_no_realizado_eur']}")
+    if t.get("liquidez_eur"):
+        print(f"  Liquidez: {t['liquidez_eur']} EUR")
+    if data.get("aportacion_mensual"):
+        a = data["aportacion_mensual"]
+        print(f"  Próxima aportación: {a['importe']} {a['moneda']} el {a['proxima_fecha']} (en {a['dias_hasta']} días)")
     if data["positions"]:
         print(f"  Cripto: {c['peso_pct']}% (tope {c['tope_pct']}%)")
     else:
