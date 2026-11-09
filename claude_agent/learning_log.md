@@ -27,3 +27,4 @@ Puedes editar el temario o añadir temas que te interesen.
 
 | Fecha | Concepto | Ejemplo usado |
 |---|---|---|
+| 2026-11-09 | Qué es un ETF | ETF del S&P 500 (SPY) frente a Nvidia: el índice cae −5 % en un mes y NVDA −19 %; QQQ −12 % como ejemplo de ETF concentrado |
