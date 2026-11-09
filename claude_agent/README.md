@@ -53,7 +53,7 @@ Tarea programada (L–V ~7:47 Madrid)
 | `fetch_crypto.py` | Cripto: universo = todas las monedas de Coinbase cruzadas con Coinpaprika, radar (top por capitalización, más suben/bajan, amplitud), Fear & Greed, capitalización/dominancia e indicadores con velas diarias de Coinbase (par EUR o USD, 365 días) + gráficos |
 | `build_site.py` | Convierte todos los informes en la web estática de `docs/` (HTML/CSS propios, sin Jekyll): portada, `informes/FECHA.html`, `archivo.html`, `aprende.html` |
 | `site/` | Plantilla HTML (`base.html`), estilos (`style.css`, modo claro/oscuro, móvil, impresión) y `site.js` (tema y ampliar gráficos) |
-| `portfolio.py` | Lee `inputs/cartera.csv` → posiciones (precio medio), valor y G/P en EUR, peso de cripto frente al tope |
+| `portfolio.py` | Lee `inputs/cartera.csv` → posiciones (precio medio), valor y G/P en EUR, liquidez (`tipo=liquidez`), peso de cripto frente al tope y próxima aportación mensual (`portfolio.aportacion_mensual`) |
 | `fetch_prices.py` | Velas diarias (Yahoo, 2 años) → indicadores (MM20/50/200, RSI, MACD, volatilidad, 52 semanas, soportes/resistencias) + gráficos PNG |
 | `learning_log.md` | Temario didáctico y registro de conceptos ya explicados (lo actualiza Claude) |
 | `daily_prompt.md` | Instrucciones completas que sigue Claude en cada ejecución |

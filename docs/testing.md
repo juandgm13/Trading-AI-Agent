@@ -11,7 +11,7 @@
 | `claude_agent/test_claude_fetch_prices.py` | 31 | None (HTTP mocked; one real mplfinance PNG to tmp) |
 | `claude_agent/test_claude_fetch_crypto.py` | 24 | None (Coinbase / Coinpaprika / Fear & Greed mocked) |
 | `claude_agent/test_claude_build_site.py` | 22 | None (temporary reports/docs; also builds the real reports) |
-| `claude_agent/test_claude_portfolio.py` | 36 | None (prices mocked; reads the real `inputs/cartera.csv` template) |
+| `claude_agent/test_claude_portfolio.py` | 46 | None (prices mocked; reads the real `inputs/cartera.csv` template) |
 | `test_news_service.py` | 14 | None (aggregator + classifier mocked) |
 | `test_response_parser.py` | ~22 | None |
 | `test_alerting.py` | 5 | None (mock SMTP) |
@@ -99,9 +99,11 @@ Covers `claude_agent/portfolio.py`:
   `cripto` type, invalid operations / quantities / prices / dates, missing columns, the committed `cartera.csv` template
 - `build_positions`: weighted average cost incl. fees, partial sales (realized P&L), dividends, overselling, currency mismatch
 - `summarize`: EUR conversion via FX, valuation at cost without price, missing FX, weights, closed positions,
-  crypto weight vs cap, `margen_hasta_tope_eur`, over-cap detection, empty portfolio
+  crypto weight vs cap, `margen_hasta_tope_eur`, over-cap detection, empty portfolio, cash (`tipo=liquidez`: price 1,
+  USDC converted via FX, counted in the total but not in cost/P&L/crypto)
+- `next_contribution`: next monthly contribution date (same day, next month, year change, short months, disabled)
 - `fetch_prices` (Yahoo, Coinbase ticker fallback for crypto pairs, precision of tiny prices), `_coinbase_price`,
-  `_is_crypto_pair`, `public_brokers` (only Coinbase named), `collect()` (FX symbols requested, missing / empty CSV), `main()` (default path from config)
+  `_is_crypto_pair`, `public_brokers` (only Coinbase named), `collect()` (FX symbols requested, cash not priced, `aportacion_mensual`, missing / empty CSV), `main()` (default path from config, cash and next contribution lines)
 
 ### `claude_agent/test_claude_build_site.py`
 Covers `claude_agent/build_site.py`:

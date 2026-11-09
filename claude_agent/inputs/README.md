@@ -20,7 +20,7 @@ tope del 25 % en criptomonedas.
 | `fecha` | Fecha de la operación (`AAAA-MM-DD`; también vale `DD/MM/AAAA`) | `2026-11-09` |
 | `activo` | Ticker de Yahoo Finance; en cripto, el par de Coinbase que usaste | `SAN.MC`, `AAPL`, `SPY`, `BTC-EUR`, `PEPE-USD` |
 | `nombre` | Nombre legible (opcional) | `Banco Santander` |
-| `tipo` | `accion`, `etf`, `fondo`, `cripto` u `otro` | `cripto` |
+| `tipo` | `accion`, `etf`, `fondo`, `cripto`, `liquidez` u `otro` | `cripto` |
 | `operacion` | `compra`, `venta` o `dividendo` | `compra` |
 | `cantidad` | Nº de acciones / participaciones / monedas (vacío en dividendos) | `0.015` |
 | `precio` | Precio por unidad en `moneda`. En dividendos: importe neto cobrado | `68000` |
@@ -45,6 +45,24 @@ Notas:
 - Cripto: sirve cualquier moneda de Coinbase. Si Yahoo no tiene su precio, se toma de Coinbase;
   las monedas cripto que tengas reciben además análisis técnico detallado cada día.
 - Si una fila tiene un error, se ignora y aparece avisada en el informe.
+
+### Liquidez (dinero disponible para invertir)
+Usa `tipo=liquidez` con precio `1`: activo `EUR` para euros, `USDC` (moneda `USD`) para la stablecoin.
+`compra` = ingresas dinero; `venta` = lo retiras o lo usas para invertir. No se busca cotización y no cuenta
+para el tope de cripto. **Cuando inviertas parte de la liquidez**, añade la compra del activo *y* una fila
+`venta` de `EUR` (o `USDC`) por el importe usado; el saldo no se descuenta solo.
+
+```csv
+2026-11-09,EUR,Liquidez disponible,liquidez,compra,7000,1,EUR,0,,
+2026-11-09,USDC,USD Coin,liquidez,compra,2717,1,USD,0,Coinbase,
+2026-11-12,SPY,ETF S&P 500,etf,compra,0.3,690,USD,0,,
+2026-11-12,EUR,Liquidez disponible,liquidez,venta,180,1,EUR,0,,usado para el ETF
+```
+
+### Aportación mensual
+`config.yaml` → `portfolio.aportacion_mensual` (ahora: 200 € el día 1 de cada mes). El informe te recuerda la
+próxima y, cuando toca, propone cómo repartirla. Cuando hagas el ingreso, regístralo como fila `liquidez`
+(`compra` de `EUR`).
 
 > Aviso: el repositorio puede ser visible para otras personas; no pongas aquí datos sensibles
 > (números de cuenta, contraseñas, etc.).

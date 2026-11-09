@@ -1,9 +1,10 @@
-fecha;activo;nombre;tipo;operacion;cantidad;precio;moneda;comision;notas
-01/01/2026;AIR;Airbus SE;accion;compra;5;230;EUR;0;
-01/01/2026;BTC;bitcoin;criptomoneda;compra;0,00113223;74000;EUR;0;
-01/01/2026;SHIB;shiba inu;criptomoneda;compra;1000000;0,06;EUR;0;
-11/02/2022;AAPL;apple;accion;compra;0,15;150,66;EUR;0;
-07/04/2022;REP;repsol;accion;compra;2;12,37;EUR;0;
-07/04/2022;ITX;inditex;accion;compra;1;26,94;EUR;0;
-07/04/2022;SLR;solaria energia;accion;compra;1;14,99;EUR;0;
-07/04/2022;ORY;oryzon genomics;accion;compra;4;3,23;EUR;0;
+fecha,activo,nombre,tipo,operacion,cantidad,precio,moneda,comision,broker,notas
+2022-02-11,AAPL,Apple,accion,compra,0.15,171.99,USD,0,,pagado 150.66 EUR/acción (EUR/USD 1.1416 ese día)
+2022-04-07,REP.MC,Repsol,accion,compra,2,12.37,EUR,0,,
+2022-04-07,ITX.MC,Inditex,accion,compra,1,26.94,EUR,0,,
+2022-04-07,SLR.MC,Solaria Energía,accion,compra,1,14.99,EUR,0,,
+2022-04-07,ORY.MC,Oryzon Genomics,accion,compra,4,3.23,EUR,0,,
+2026-01-01,BTC-EUR,Bitcoin,cripto,compra,0.00113223,74000,EUR,0,Coinbase,fecha aproximada
+2026-01-01,SHIB-EUR,Shiba Inu,cripto,compra,1000000,0.000006,EUR,0,Coinbase,fecha aproximada; 6 EUR en total
+2026-11-09,EUR,Liquidez disponible,liquidez,compra,7000,1,EUR,0,,saldo disponible para invertir
+2026-11-09,USDC,USD Coin (stablecoin),liquidez,compra,2717,1,USD,0,Coinbase,liquidez en Coinbase

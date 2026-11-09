@@ -190,7 +190,7 @@ claude_agent/   Daily pre-market news report run by a Claude Code scheduled task
   fetch_crypto.py    All Coinbase coins × Coinpaprika tickers → universe + screener; Coinbase daily candles → technicals (core + top N + portfolio); Fear & Greed → data/crypto_YYYY-MM-DD.json (+ charts)
   build_site.py      reports/*.md (YAML front matter) + learning_log.md → static site in docs/ (index, informes/DATE.html, archivo, aprende)
   site/              base.html template + style.css + site.js for the site
-  portfolio.py       inputs/cartera.csv movements → positions (weighted avg cost), P&L, crypto weight vs cap → data/portfolio_YYYY-MM-DD.json
+  portfolio.py       inputs/cartera.csv movements → positions (weighted avg cost), P&L, cash (tipo=liquidez), crypto weight vs cap, next monthly contribution → data/portfolio_YYYY-MM-DD.json
   learning_log.md    Didactic syllabus + concepts already explained (updated by each run)
   config.yaml        Feeds (espana/europa/eeuu/macro/cripto) + watchlist + crypto (Coinbase, 25 % cap, core coins, auto_top_n) + portfolio + lookback window
   sources.md         Editable list of pages to web-fetch, daily web searches, user interests

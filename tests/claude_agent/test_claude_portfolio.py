@@ -264,6 +264,63 @@ async def test_collect_with_csv(tmp_path):
     json.dumps(data)
 
 
+def test_summarize_cash_counts_in_total_not_in_pnl_or_crypto():
+    movs = [_mv("compra", 1, 100, activo="SPY", tipo="etf"),
+            _mv("compra", 0.01, 10000, activo="BTC-EUR", tipo="cripto"),
+            _mv("compra", 700, 1, activo="EUR", tipo="liquidez"),
+            _mv("compra", 250, 1, activo="USDC", moneda="USD", tipo="liquidez", broker="Coinbase"),
+            _mv("venta", 100, 1, activo="EUR", tipo="liquidez")]
+    out = pf.summarize(pf.build_positions(movs)[0], {"SPY": 150.0, "BTC-EUR": 10000.0},
+                       fx={"USD": 1.25}, crypto_cap_pct=25)
+    t = out["totals"]
+    assert t["liquidez_eur"] == 600 + 200 and t["invertido_eur"] == 250 and t["valor_eur"] == 1050
+    assert t["coste_eur"] == 200 and t["pnl_no_realizado_eur"] == 50 and t["pnl_no_realizado_pct"] == 25
+    assert out["liquidez"] == {"valor_eur": 800, "peso_pct": pytest.approx(76.19, abs=0.01)}
+    assert out["crypto"]["peso_pct"] == pytest.approx(100 / 1050 * 100, abs=0.01)
+    assert out["por_tipo_pct"]["liquidez"] == pytest.approx(76.19, abs=0.01)
+    rows = {r["activo"]: r for r in out["positions"]}
+    assert rows["USDC"]["precio_actual"] == 1.0 and rows["USDC"]["pnl_eur"] == 0
+    assert rows["USDC"]["broker"] == "Coinbase"
+    assert not out["issues"]
+
+
+@pytest.mark.parametrize("today, spec, expected, days", [
+    (date(2026, 11, 9), {"importe": 200, "dia": 1}, "2026-12-01", 22),
+    (date(2026, 12, 1), {"importe": 200, "dia": 1}, "2026-12-01", 0),
+    (date(2026, 12, 15), {"importe": 200}, "2027-01-01", 17),
+    (date(2027, 2, 10), {"importe": 50, "dia": 31, "moneda": "usd"}, "2027-02-28", 18),
+])
+def test_next_contribution(today, spec, expected, days):
+    out = pf.next_contribution(spec, today)
+    assert out["proxima_fecha"] == expected and out["dias_hasta"] == days
+    assert out["importe"] == spec["importe"] and out["moneda"] == spec.get("moneda", "EUR").upper()
+
+
+@pytest.mark.parametrize("spec", [None, {}, {"importe": 0}])
+def test_next_contribution_disabled(spec):
+    assert pf.next_contribution(spec, date(2026, 11, 9)) is None
+
+
+@pytest.mark.asyncio
+async def test_collect_cash_is_not_priced_and_contribution_is_reported(tmp_path):
+    csv_path = tmp_path / "cartera.csv"
+    csv_path.write_text(
+        HEADER
+        + "2026-01-10,AAPL,Apple,accion,compra,1,200,USD,0,,\n"
+        + "2026-11-09,EUR,Liquidez,liquidez,compra,7000,1,EUR,0,,\n"
+        + "2026-11-09,USDC,USD Coin,liquidez,compra,2500,1,USD,0,Coinbase,\n",
+        encoding="utf-8",
+    )
+    fetch = AsyncMock(return_value=({"AAPL": 250.0, "EURUSD=X": 1.25}, []))
+    cfg = {"portfolio": {"aportacion_mensual": {"importe": 200, "moneda": "EUR", "dia": 1}}}
+    with patch.object(pf, "fetch_prices", new=fetch):
+        data = await pf.collect(cfg, csv_path, now=NOW)
+    assert sorted(fetch.call_args.args[0]) == ["AAPL", "EURUSD=X"]
+    assert data["totals"]["liquidez_eur"] == 7000 + 2000 and data["totals"]["invertido_eur"] == 200
+    assert data["aportacion_mensual"]["proxima_fecha"] == "2026-12-01"
+    assert data["issues"] == []
+
+
 @pytest.mark.asyncio
 async def test_collect_missing_and_empty_csv(tmp_path):
     data = await pf.collect({}, tmp_path / "nope.csv", now=NOW)
@@ -280,6 +337,9 @@ def test_real_csv_template_is_valid():
     text = (pf._HERE / "inputs" / "cartera.csv").read_text(encoding="utf-8-sig")
     assert text.splitlines()[0].split(",") == pf.COLUMNS
     assert pf.read_movements(text)[1] == []
+    positions, issues = pf.build_positions(pf.read_movements(text)[0])
+    assert issues == []
+    assert {p.tipo for p in positions.values()} <= {"accion", "etf", "fondo", "cripto", "liquidez", "otro"}
 
 
 def test_main_prints_summary(tmp_path, monkeypatch, capsys):
@@ -293,7 +353,20 @@ def test_main_prints_summary(tmp_path, monkeypatch, capsys):
     assert col.call_args.args[1] == tmp_path / "c.csv"
     assert (tmp_path / "portfolio_2026-11-10.json").exists()
     out = capsys.readouterr().out
+    assert "Liquidez" not in out and "Próxima aportación" not in out
     assert "Cripto: 20% (tope 25%)" in out and "4: mal" in out and "X: sin precio" in out
+
+
+def test_main_prints_cash_and_contribution(tmp_path, capsys):
+    fake = {"generated_at_local": "2026-11-10T08:00:00+01:00", "exists": True, "movements": 2,
+            "positions": [{}], "totals": {"valor_eur": 7100, "coste_eur": 90, "pnl_no_realizado_eur": 10,
+                                          "liquidez_eur": 7000},
+            "aportacion_mensual": {"importe": 200, "moneda": "EUR", "proxima_fecha": "2026-12-01", "dias_hasta": 21},
+            "crypto": {"peso_pct": 0, "tope_pct": 25}, "issues": []}
+    with patch.object(pf, "collect", new=AsyncMock(return_value=fake)):
+        pf.main(["--output", str(tmp_path / "p.json")])
+    out = capsys.readouterr().out
+    assert "Liquidez: 7000 EUR" in out and "Próxima aportación: 200 EUR el 2026-12-01 (en 21 días)" in out
 
 
 def test_main_empty_portfolio(tmp_path, capsys):

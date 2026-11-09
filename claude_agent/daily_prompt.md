@@ -69,6 +69,17 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
   precio actual, valor y ganancia/pérdida en EUR, peso en la cartera, desde cuándo), totales,
   `por_tipo_pct`, `crypto` (peso actual, tope, si lo excede y `margen_hasta_tope_eur`) e `issues`
   (filas del CSV con errores).
+- **Liquidez**: las filas `tipo=liquidez` (euros y stablecoins como USDC) son dinero disponible para invertir.
+  `totals.valor_eur` es el patrimonio total (inversiones + liquidez), `totals.invertido_eur` solo las
+  inversiones y `liquidez {valor_eur, peso_pct}` el dinero disponible. Los porcentajes de "cuánto" se
+  calculan sobre el patrimonio total, pero tradúcelos siempre a **euros concretos** saliendo de la liquidez.
+  El USDC es liquidez (no cuenta en el tope del 25 % ni es una oportunidad cripto).
+- **Aportación mensual**: `aportacion_mensual {importe, moneda, dia, proxima_fecha, dias_hasta}`. Menciona
+  siempre la próxima aportación en la sección de cartera. Si `dias_hasta` ≤ 3, o es el primer informe en o
+  después del día de la aportación, incluye un **reparto propuesto** de ese importe (p. ej. núcleo indexado /
+  satélites / cripto dentro del tope) con el porqué, y recuerda registrarla en `cartera.csv` como fila
+  `liquidez` (`compra` de `EUR`). Un plan de inversión de la liquidez existente en tramos puede apoyarse en
+  estas aportaciones.
 - Si `exists` es `false` o no hay posiciones, el informe da recomendaciones genéricas y lo indica.
 - Si hay `issues` en el CSV, menciónalos en la sección de cartera para que el usuario los corrija.
 - **No modifiques nunca `cartera.csv`**: lo mantiene el usuario.
