@@ -279,8 +279,10 @@ Scheduled task (Mon–Fri 07:47 Europe/Madrid, fresh session)
                          → claude_agent/data/crypto_YYYY-MM-DD.json
        portfolio.py ───► inputs/cartera.csv (user movements) → weighted average cost positions
                          + Yahoo last price + EURxxx=X FX → claude_agent/data/portfolio_YYYY-MM-DD.json
-       web fetch / web search from sources.md + files in inputs/
-       Claude decides 3–5 stock ideas + 1–2 crypto ideas, each with a direct action
+       web fetch / web search of ALL sources.md lines (no time limit) + files in inputs/
+       Claude decides 3–5 stock ideas (Spain, Europe, US) + 1–3 crypto ideas, each with a direct action;
+         every non-index watchlist stock (e.g. AIR.PA) gets a verdict (full idea or "Resto de la watchlist" table);
+         report length up to ~6,000 words
          (Comprar / Comprar más / Mantener / Reducir / Vender / Esperar / Evitar) + why, size, horizon,
          invalidation level and confidence; crypto: any Coinbase coin, size by market-cap rank, within crypto.max_portfolio_pct (25 %)
          → fetch_prices.py / fetch_crypto.py --charts … → docs/informes/charts/DATE/*.png

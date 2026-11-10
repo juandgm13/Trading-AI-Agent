@@ -67,6 +67,13 @@ recomendaciones:
 
 {Repetir para 3–5 ideas. Incluir al menos una opción "tranquila" (ETF indexado, gran empresa estable).}
 
+### Resto de la watchlist: veredicto rápido
+| Valor | Acción | Por qué (1 frase) | Nivel a vigilar |
+|---|---|---|---|
+| {Nombre (TICKER)} | 🟢 Comprar / 🔵 Mantener / ⏸️ Esperar / ⛔ Evitar… | {noticia o lectura técnica clave} | {soporte/resistencia o noticia} |
+
+{Una fila por cada valor de la watchlist (España, Europa, EE. UU.) que no tenga idea completa arriba.}
+
 ## 7. ₿ Criptomonedas
 > 💡 *Las criptomonedas cotizan 24 horas, 7 días a la semana: los precios son de esta mañana (en euros).
 > Son mucho más volátiles que las acciones: caídas del 50 % o más han ocurrido varias veces.*

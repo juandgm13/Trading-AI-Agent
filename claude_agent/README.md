@@ -32,11 +32,13 @@ Tarea programada (L–V ~7:47 Madrid)
        2. python claude_agent/fetch_prices.py    → data/prices_FECHA.json (indicadores técnicos)
        3. python claude_agent/fetch_crypto.py    → data/crypto_FECHA.json (universo Coinbase, radar, técnico, Fear & Greed)
        4. python claude_agent/portfolio.py       → data/portfolio_FECHA.json (tu cartera desde inputs/cartera.csv)
-       5. web fetch de sources.md + búsquedas     → cierre anterior, futuros, agenda, bancos centrales, cripto
+       5. web fetch de TODAS las páginas y búsquedas de sources.md (sin límite de tiempo)
+                                                  → cierre anterior, futuros, agenda, bancos centrales, cripto
           + lee inputs/                           → tus notas, empresas de interés
-       6. decide 3–5 ideas de bolsa + 1–3 de cripto con acción directa → --charts … → docs/informes/charts/FECHA/*.png
+       6. decide 3–5 ideas de bolsa + 1–3 de cripto con acción directa (y un veredicto para cada valor de la
+          watchlist, p. ej. Airbus) → --charts … → docs/informes/charts/FECHA/*.png
        7. elige la lección del día (learning_log.md)
-       8. redacta reports/FECHA.md con report_template.md (front matter + Markdown)
+       8. redacta reports/FECHA.md con report_template.md (front matter + Markdown, hasta ~6.000 palabras)
        9. python claude_agent/build_site.py      → regenera la web en docs/ (GitHub Pages)
       10. git commit + push (informe + learning_log.md + docs/)
 ```
@@ -51,7 +53,7 @@ Tarea programada (L–V ~7:47 Madrid)
 | `inputs/cartera.csv` | **Editable como tabla**: tus movimientos (compras, ventas, dividendos). Formato en `inputs/README.md` |
 | `fetch_news.py` | Recoge noticias públicas → JSON compacto (sin LLM) |
 | `fetch_crypto.py` | Cripto: universo = todas las monedas de Coinbase cruzadas con Coinpaprika, radar (top por capitalización, más suben/bajan, amplitud), Fear & Greed, capitalización/dominancia e indicadores con velas diarias de Coinbase (par EUR o USD, 365 días) + gráficos |
-| `build_site.py` | Convierte todos los informes en la web estática de `docs/` (HTML/CSS propios, sin Jekyll): portada, `informes/FECHA.html`, `archivo.html`, `aprende.html` |
+| `build_site.py` | Convierte todos los informes en la web estática de `docs/` (HTML/CSS propios, sin Jekyll): portada, `informes/FECHA.html` (en cada idea el gráfico queda fijo arriba mientras se lee su texto), `archivo.html`, `aprende.html` |
 | `site/` | Plantilla HTML (`base.html`), estilos (`style.css`, modo claro/oscuro, móvil, impresión) y `site.js` (tema y ampliar gráficos) |
 | `portfolio.py` | Lee `inputs/cartera.csv` → posiciones (precio medio), valor y G/P en EUR, liquidez (`tipo=liquidez`), peso de cripto frente al tope y próxima aportación mensual (`portfolio.aportacion_mensual`) |
 | `fetch_prices.py` | Velas diarias (Yahoo, 2 años) → indicadores (MM20/50/200, RSI, MACD, volatilidad, 52 semanas, soportes/resistencias) + gráficos PNG |
