@@ -28,3 +28,4 @@ Puedes editar el temario o añadir temas que te interesen.
 | Fecha | Concepto | Ejemplo usado |
 |---|---|---|
 | 2026-11-09 | Qué es un ETF | ETF del S&P 500 (SPY) frente a Nvidia: el índice cae −5 % en un mes y NVDA −19 %; QQQ −12 % como ejemplo de ETF concentrado |
+| 2026-11-10 | Qué es la inflación (IPC) y por qué mueve la bolsa | IPC de EE. UU. de octubre (previsto +0,3 % mensual vs 0,6 %) y Fed al 84 % de subida; 7.000 € en liquidez pierden ~280 € de poder de compra al 4 % de inflación |
