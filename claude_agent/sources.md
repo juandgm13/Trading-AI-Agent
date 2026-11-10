@@ -8,8 +8,8 @@ Claude lo lee en cada ejecución diaria, además del JSON generado por `fetch_ne
 - Lo que pongas en *Mis intereses* se usa para priorizar el contenido del informe.
 - Las líneas que empiezan por `<!--` o están dentro de comentarios HTML se ignoran.
 
-Límite orientativo: ~12 páginas y ~7 búsquedas por ejecución (para que el informe salga a tiempo).
-Si una página falla o está bloqueada, Claude lo anota en el apartado de fuentes y sigue.
+Sin límite: Claude consulta **todas** las páginas y búsquedas de este archivo en cada ejecución, aunque tarde más.
+Si una página falla o está bloqueada, Claude lo anota en el apartado de fuentes (con el motivo) y sigue.
 
 ## Páginas a leer
 
@@ -33,12 +33,14 @@ Si una página falla o está bloqueada, Claude lo anota en el apartado de fuente
 - resultados empresariales hoy Ibex Wall Street
 - earnings today before the bell
 - bitcoin ethereum noticias hoy mercado cripto regulación ETF
+- Airbus noticias hoy acciones entregas pedidos
 
 ## Mis intereses
 
 <!-- Escribe aquí empresas, sectores o temas que te interesen, por ejemplo: -->
 - Perfil: inversor moderado y principiante, horizonte medio/largo plazo.
 - Preferencia por empresas grandes y consolidadas, dividendos y ETFs indexados.
-- Mercados: España (Ibex 35) y Estados Unidos (S&P 500, Nasdaq).
+- Mercados: España (Ibex 35), Europa (Euro Stoxx 50) y Estados Unidos (S&P 500, Nasdaq).
+- Me interesa **Airbus** (AIR.PA) y el sector aeroespacial europeo: quiero su veredicto en cada informe.
 - Criptomonedas: opero en **Coinbase** (en euros). Tope del 25 % de la cartera en cripto.
 - Quiero recomendaciones directas (comprar / mantener / reducir / vender / esperar) con su porqué.

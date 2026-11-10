@@ -210,3 +210,35 @@ def test_uppercase_action_headings_with_note():
     assert '<span class="badge act-comprar">Comprar</span><span class="badge-note">(pequeño, en 2 tramos)</span>' in html
     assert '<span class="badge act-esperar">Esperar</span>' in html
     assert bs.action_badge("COMPRAR MÁS") == '<span class="badge act-comprar-mas">Comprar más</span>'
+
+
+# ── gráfico fijo en las ideas ────────────────────────────────────────────────
+
+def test_wrap_chart_sections_wraps_until_next_heading():
+    html = ('<h3 id="a"><span>SPY</span><span class="badge act-comprar">Comprar</span></h3>\n'
+            '<p><img loading="lazy" alt="SPY" src="charts/x/SPY.png"></p>\n<ul><li>texto A</li></ul>\n'
+            '<h3 id="b">IBE</h3>\n<p><img alt="IBE" src="charts/x/IBE.png"></p>\n<p>texto B</p>\n'
+            '<h3 id="c">Sin gráfico</h3>\n<p>texto C</p>\n'
+            '<h2 id="d">Cripto</h2>\n')
+    out = bs.wrap_chart_sections(html)
+    assert out.count('<section class="idea">') == 2
+    assert ('<figure class="idea-chart"><img loading="lazy" alt="SPY" src="charts/x/SPY.png"></figure>\n'
+            '<div class="idea-body"><ul><li>texto A</li></ul></div></section>') in out
+    assert '<div class="idea-body"><p>texto B</p></div></section>' in out
+    assert '<span class="badge act-comprar">Comprar</span></h3>' in out      # insignia intacta
+    assert '<h3 id="c">Sin gráfico</h3>\n<p>texto C</p>' in out              # sin gráfico: igual
+    assert out.endswith('<h2 id="d">Cripto</h2>\n')
+
+
+def test_wrap_chart_sections_stops_at_hr_and_end():
+    html = '<h3>X</h3><p><img src="a.png"></p><p>t</p><hr>\n<p>fin</p>'
+    out = bs.wrap_chart_sections(html)
+    assert '<div class="idea-body"><p>t</p></div></section>\n<hr>' in out
+    tail = bs.wrap_chart_sections('<h3>Y</h3><p><img src="b.png"></p><p>u</p>')
+    assert tail.endswith('<div class="idea-body"><p>u</p></div></section>\n')
+
+
+def test_render_markdown_wraps_idea_charts():
+    _, body, _ = bs.split_front_matter(REPORT)
+    html, _ = bs.render_markdown(body)
+    assert '<figure class="idea-chart"><img loading="lazy"' in html

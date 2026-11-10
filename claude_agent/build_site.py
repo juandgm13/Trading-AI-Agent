@@ -203,7 +203,22 @@ def postprocess(body_html: str) -> str:
         lambda m: f"<strong>Recomendación:</strong> {action_badge(m.group(2))}",
         out,
     )
-    return out
+    return wrap_chart_sections(out)
+
+
+_CHART_SECTION = re.compile(
+    r"(<h3[^>]*>.*?</h3>)\s*<p>\s*(<img [^>]*>)\s*</p>(.*?)(?=<h[1-3][\s>]|<hr\s*/?>|\Z)", re.S
+)
+
+
+def wrap_chart_sections(body_html: str) -> str:
+    """Envuelve cada idea `### …` cuyo primer elemento es un gráfico para que el gráfico quede fijo arriba
+    (CSS `position: sticky`) mientras se lee su texto; al terminar la idea, el gráfico se va con ella."""
+    return _CHART_SECTION.sub(
+        lambda m: (f'<section class="idea">{m.group(1)}\n<figure class="idea-chart">{m.group(2)}</figure>\n'
+                   f'<div class="idea-body">{m.group(3).strip()}</div></section>\n'),
+        body_html,
+    )
 
 
 def render_markdown(text: str) -> tuple[str, str]:

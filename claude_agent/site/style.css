@@ -139,6 +139,12 @@ a:hover { text-decoration: underline; }
 .prose blockquote p { margin: 4px 0; }
 .prose img { display: block; width: 100%; max-width: 860px; height: auto; border-radius: 10px; border: 1px solid var(--border);
   background: #fff; cursor: zoom-in; margin: 14px 0; }
+/* Ideas con gráfico: el gráfico queda fijo bajo la cabecera mientras se lee el texto de la idea */
+.idea { position: relative; }
+.idea-chart { position: sticky; top: 59px; z-index: 5; margin: 0 0 12px; padding: 10px 0;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  box-shadow: 0 8px 12px -10px rgba(16, 24, 40, .25); }
+.prose .idea-chart img { margin: 0 auto; width: auto; max-width: 100%; max-height: 46vh; object-fit: contain; }
 .prose hr { border: 0; border-top: 1px solid var(--border); margin: 32px 0; }
 .prose code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
 .table-wrap { overflow-x: auto; margin: 14px 0; border: 1px solid var(--border); border-radius: 10px; }
@@ -174,6 +180,7 @@ a:hover { text-decoration: underline; }
   .toc { position: static; max-height: none; }
   .toc details { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
   .prose { padding: 4px 16px 20px; }
+  .prose .idea-chart img { max-height: 34vh; }
   .archive-list li a { grid-template-columns: 1fr auto; }
   .archive-list .summary { grid-column: 1 / -1; white-space: normal; }
 }
@@ -188,5 +195,6 @@ a:hover { text-decoration: underline; }
   .report-layout { display: block; }
   .prose { padding: 0; }
   .prose img { max-width: 100%; break-inside: avoid; }
+  .idea-chart { position: static; box-shadow: none; border: 0; }
   .prose h2 { break-after: avoid; }
 }

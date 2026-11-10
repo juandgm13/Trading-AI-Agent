@@ -57,7 +57,7 @@ Separate from the Streamlit dashboard: the daily Claude report is published as a
 | Page | Content |
 |---|---|
 | `index.html` | Latest report: thermometer, summary, recommendations with action badges, recent reports |
-| `informes/YYYY-MM-DD.html` | Full report with sticky table of contents, chart lightbox, previous/next navigation |
+| `informes/YYYY-MM-DD.html` | Full report with sticky table of contents, chart lightbox, previous/next navigation. In each idea the chart stays pinned under the top bar while its text scrolls (`.idea-chart`, `position: sticky`) and leaves with its section |
 | `archivo.html` | All reports grouped by month |
 | `aprende.html` | Didactic syllabus and concepts already explained, linked to their report |
 

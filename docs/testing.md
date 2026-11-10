@@ -10,7 +10,7 @@
 | `claude_agent/test_claude_fetch_news.py` | 17 | None (sources mocked) |
 | `claude_agent/test_claude_fetch_prices.py` | 31 | None (HTTP mocked; one real mplfinance PNG to tmp) |
 | `claude_agent/test_claude_fetch_crypto.py` | 24 | None (Coinbase / Coinpaprika / Fear & Greed mocked) |
-| `claude_agent/test_claude_build_site.py` | 22 | None (temporary reports/docs; also builds the real reports) |
+| `claude_agent/test_claude_build_site.py` | 25 | None (temporary reports/docs; also builds the real reports) |
 | `claude_agent/test_claude_portfolio.py` | 46 | None (prices mocked; reads the real `inputs/cartera.csv` template) |
 | `test_news_service.py` | 14 | None (aggregator + classifier mocked) |
 | `test_response_parser.py` | ~22 | None |
@@ -110,6 +110,8 @@ Covers `claude_agent/build_site.py`:
 - Front matter: valid, missing, invalid YAML, non-dict, empty; header inference for old reports; `Report` properties
 - Markdown post-processing: chart path rewrite, lazy images, table scroll wrapper, action badges in table cells / upper-case
   `###` headings (incl. "— COMPRAR (en tramos)") / "Recomendación:" lines, ± percentage colours only in pure-percentage cells, line breaks, TOC
+- Sticky idea charts: `wrap_chart_sections` wraps `### idea` + first chart into `<section class="idea">` (chart in
+  `<figure class="idea-chart">`) until the next h2/h3/hr; headings without a chart are left untouched
 - Pages: index (latest + recent cards, escaping), report (prev/next, root-relative assets), archive by month,
   learn page (dates linked only to existing reports), empty site, stale report removal, `.nojekyll`, Madrid time
 - The real `claude_agent/reports/*.md` build without front-matter issues; `main()` console output
