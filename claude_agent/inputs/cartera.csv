@@ -8,5 +8,7 @@ fecha,activo,nombre,tipo,operacion,cantidad,precio,moneda,comision,broker,notas
 2026-01-01,SHIB-EUR,Shiba Inu,cripto,compra,1000000,0.000006,EUR,0,Coinbase,fecha aproximada; 6 EUR en total
 2026-11-09,EUR,Liquidez disponible,liquidez,compra,7000,1,EUR,0,,saldo disponible para invertir
 2026-11-09,USDC,USD Coin (stablecoin),liquidez,compra,2717,1,USD,0,Coinbase,liquidez en Coinbase
-2026-11-11,SPY5.L,SPDR S&P 500 UCITS ETF (LSE),etf,compra,0.467,751.61,USD,0,,ORDEN PENDIENTE de ejecución; precio estimado = último cierre (9-nov); actualizar con el precio real cuando se ejecute
-2026-11-11,EUR,Liquidez disponible,liquidez,venta,314.2,1,EUR,0,,reservado para la orden pendiente de SPY5.L (estimado: 0.467 x 751.61 USD / 1.1171)
+2026-11-11,SPY5.L,SPDR S&P 500 UCITS ETF (LSE),etf,compra,0.462369,756.97,USD,0,,ejecutada 11-nov 09:04; 350.00 USD en total
+2026-11-11,EUR,Liquidez disponible,liquidez,venta,313.70,1,EUR,0,,usado para SPY5.L (350 USD / 1.1157 EUR/USD; ajustar con el cargo real en EUR si difiere)
+2026-11-11,BTC-EUR,Bitcoin,cripto,compra,0.00149753,66108.79,EUR,1,Coinbase,99 EUR de BTC + 1 EUR comisión; pagado con USDC
+2026-11-11,USDC,USD Coin (stablecoin),liquidez,venta,111.57,1,USD,0,Coinbase,usado para la compra de BTC (100 EUR x 1.1157 USD/EUR; estimado)
