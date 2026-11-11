@@ -160,7 +160,7 @@ def test_build_full_site(tmp_path):
     assert result["reports"] == 2 and result["latest"] == "2026-11-09"
     assert result["url"] == "https://x.github.io/repo/informes/2026-11-09.html"
     assert result["issues"] == {"2026-11-07": ["sin front matter"]}
-    assert result["pages"] == ["aprende.html", "archivo.html", "index.html",
+    assert result["pages"] == ["aprende.html", "archivo.html", "historial.html", "index.html",
                                "informes/2026-11-07.html", "informes/2026-11-09.html"]
     assert not (docs / "informes" / "2020-01-01.html").exists() and (docs / "informes" / "charts").exists()
     assert (docs / ".nojekyll").exists() and (docs / "assets" / "style.css").exists()
@@ -176,6 +176,8 @@ def test_build_full_site(tmp_path):
     assert "Siguiente →" in old and "thermo-incertidumbre" in old
     archive = (docs / "archivo.html").read_text(encoding="utf-8")
     assert "Noviembre 2026" in archive and "2 informes" in archive
+    history = (docs / "historial.html").read_text(encoding="utf-8")
+    assert "Historial de recomendaciones" in history and 'class="active"' in history
     learn = (docs / "aprende.html").read_text(encoding="utf-8")
     assert '<a href="informes/2026-11-07.html">2026-11-07</a>' in learn and "<td>2026-10-01</td>" in learn
 
@@ -242,3 +244,48 @@ def test_render_markdown_wraps_idea_charts():
     _, body, _ = bs.split_front_matter(REPORT)
     html, _ = bs.render_markdown(body)
     assert '<figure class="idea-chart"><img loading="lazy"' in html
+
+
+# ── continuidad entre informes ───────────────────────────────────────────────
+
+def _rep(slug, recos):
+    return bs.Report(date=date.fromisoformat(slug), slug=slug, body_md="",
+                     meta={"recomendaciones": [{"activo": a, "accion": x} for a, x in recos]})
+
+
+@pytest.mark.parametrize("name, key", [
+    ("Iberdrola (IBE.MC)", "IBE.MC"),
+    ("ETF S&P 500 (SPY / SPY5.L)", "SPY"),
+    ("ETF S&P 500 (SPY o equivalente UCITS)", "SPY"),
+    ("Bitcoin (btc)", "BTC"),
+    ("Bitcoin (BTC-EUR)", "BTC"),
+    ("  Oro   físico ", "oro físico"),
+    ("Raro ( )", "raro ( )"),
+])
+def test_asset_key(name, key):
+    assert bs.asset_key(name) == key
+
+
+def test_reco_list_marks_changes_vs_previous():
+    today = _rep("2026-11-11", [("Airbus (AIR.PA)", "Esperar"), ("Bitcoin (BTC)", "COMPRAR (poco)"),
+                                ("Nvidia (NVDA)", "Evitar")])
+    before = _rep("2026-11-10", [("Airbus (AIR.PA)", "Comprar"), ("Bitcoin (BTC-EUR)", "Comprar")])
+    html = bs.reco_list(today, before)
+    assert "antes: Comprar" in html and html.count("reco-change") == 2 and "reco-change new" in html
+    assert "reco-change" not in bs.reco_list(today)            # sin informe anterior: sin marcas
+    assert bs.previous_actions(None) == {}
+    assert bs.previous_actions(before) == {"AIR.PA": "Comprar", "BTC": "Comprar"}
+    assert bs._action_label("Algo raro") == "Algo raro"
+
+
+def test_render_history_table():
+    r3 = _rep("2026-11-11", [("Airbus (AIR.PA)", "Comprar"), ("Bitcoin (BTC)", "Comprar")])
+    r2 = bs.Report(date=date(2026, 11, 10), slug="2026-11-10", body_md="")          # sin recomendaciones
+    r1 = _rep("2026-11-09", [("Airbus (AIR.PA)", "Esperar"), ("Iberdrola (IBE.MC)", "Esperar")])
+    html = bs.render_history([r3, r2, r1])
+    assert html.count("<th><a href=") == 2                     # el informe sin recomendaciones no es columna
+    assert html.index("Airbus") < html.index("Bitcoin") < html.index("Iberdrola")  # primero los de hoy
+    assert html.count('class="changed"') == 1                  # Airbus: Esperar → Comprar
+    assert '<td class="muted">—</td>' in html
+    assert "Todavía no hay recomendaciones" in bs.render_history([r2])
+    assert bs.render_history([r3, r1], limit=1).count("<th><a href=") == 1

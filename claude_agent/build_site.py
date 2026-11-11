@@ -8,6 +8,7 @@ Fuente: los informes Markdown de `claude_agent/reports/AAAA-MM-DD.md` (con front
     docs/informes/AAAA-MM-DD.html  informe completo con índice lateral y navegación
     docs/archivo.html              todos los informes por mes
     docs/aprende.html              temario y conceptos explicados (enlazados a su informe)
+    docs/historial.html            recomendaciones por activo a lo largo de los informes (cambios marcados)
     docs/assets/style.css, site.js y docs/.nojekyll (HTML propio, sin Jekyll)
 
 Los gráficos ya están en `docs/informes/charts/FECHA/` (los genera fetch_prices/fetch_crypto); en el Markdown se
@@ -43,6 +44,7 @@ SITE_SRC = _HERE / "site"
 DOCS_DIR = _HERE.parent / "docs"
 LEARNING_LOG = _HERE / "learning_log.md"
 RECENT = 7
+HISTORY_REPORTS = 10   # columnas (informes) de historial.html
 DISCLAIMER = ("Información general generada automáticamente por una IA a partir de noticias y datos públicos. "
               "No es asesoramiento financiero personalizado ni regulado. Invertir conlleva riesgo de pérdida, "
               "muy alto en criptomonedas.")
@@ -244,6 +246,7 @@ def _page(base: Template, *, title: str, description: str, content: str, root: s
         nav_index="active" if active == "index" else "",
         nav_archive="active" if active == "archive" else "",
         nav_learn="active" if active == "learn" else "",
+        nav_history="active" if active == "history" else "",
         body_class=body_class,
         disclaimer=html.escape(DISCLAIMER),
         generated=generated,
@@ -251,18 +254,83 @@ def _page(base: Template, *, title: str, description: str, content: str, root: s
     )
 
 
-def reco_list(report: Report) -> str:
+def asset_key(name: str) -> str:
+    """Clave estable de un activo: el ticker entre paréntesis ("Iberdrola (IBE.MC)" → "IBE.MC"); si no hay, el nombre."""
+    m = re.search(r"\(([^)]+)\)", name)
+    if m:
+        token = re.split(r"[\s/,;]+", m.group(1).strip())[0]
+        if token:  # los pares cripto cuentan como la moneda: "BTC-EUR" → "BTC"
+            return re.sub(r"-(EUR|USD|USDC|USDT)$", "", token.upper())
+    return re.sub(r"\s+", " ", name.strip().lower())
+
+
+def _action_label(action: str) -> str:
+    text = action.strip()
+    for label in ACTIONS:
+        if text.lower().startswith(label.lower()):
+            return label
+    return text
+
+
+def previous_actions(report: Report | None) -> dict[str, str]:
+    return {asset_key(str(r["activo"])): _action_label(str(r["accion"])) for r in report.recommendations} if report else {}
+
+
+def reco_list(report: Report, previous: Report | None = None) -> str:
     recos = report.recommendations
     if not recos:
         return '<p class="reco-empty">Este informe no incluye recomendaciones con acción.</p>'
+    before = previous_actions(previous)
     items = []
     for r in recos:
         conf = f'<span class="conf">confianza {html.escape(str(r["confianza"]))}</span>' if r.get("confianza") else ""
+        change = ""
+        if previous is not None:
+            old = before.get(asset_key(str(r["activo"])))
+            if old is None:
+                change = '<span class="reco-change new">nueva</span>'
+            elif old != _action_label(str(r["accion"])):
+                change = f'<span class="reco-change">antes: {html.escape(old)}</span>'
         items.append(
-            f'<li><span class="reco-asset">{html.escape(str(r["activo"]))}</span>'
+            f'<li><span class="reco-asset">{html.escape(str(r["activo"]))}{change}</span>'
             f'<span>{action_badge(str(r["accion"]))} {conf}</span></li>'
         )
     return f'<ul class="reco-list">{"".join(items)}</ul>'
+
+
+def render_history(reports: list[Report], limit: int = HISTORY_REPORTS) -> str:
+    """Tabla activo × informe (más reciente a la izquierda); marca los cambios de acción respecto al informe anterior."""
+    shown = [r for r in reports if r.recommendations][:limit]
+    if not shown:
+        return '<h1>Historial de recomendaciones</h1><p class="muted">Todavía no hay recomendaciones.</p>'
+    names: dict[str, str] = {}
+    cells: dict[str, dict[str, str]] = {}
+    for r in reversed(shown):  # del más antiguo al más reciente: el nombre visible es el último usado
+        for reco in r.recommendations:
+            key = asset_key(str(reco["activo"]))
+            names[key] = str(reco["activo"])
+            cells.setdefault(key, {})[r.slug] = str(reco["accion"])
+    order = sorted(names, key=lambda k: (shown[0].slug not in cells[k], names[k].lower()))
+    head = "".join(f'<th><a href="informes/{r.slug}.html">{r.date.day}/{r.date.month}</a></th>' for r in shown)
+    rows = []
+    for key in order:
+        tds = []
+        for i, r in enumerate(shown):
+            action = cells[key].get(r.slug)
+            if action is None:
+                tds.append('<td class="muted">—</td>')
+                continue
+            older = next((cells[key].get(o.slug) for o in shown[i + 1:] if o.slug in cells[key]), None)
+            changed = older is not None and _action_label(older) != _action_label(action)
+            tds.append(f'<td class="{"changed" if changed else ""}">{action_badge(action)}</td>')
+        rows.append(f'<tr><th scope="row">{html.escape(names[key])}</th>{"".join(tds)}</tr>')
+    return (
+        '<p class="eyebrow">Coherencia entre informes</p><h1>Historial de recomendaciones</h1>'
+        '<p class="muted">Cada columna es un informe (el más reciente a la izquierda). '
+        'Las casillas con borde marcan un cambio de acción respecto al informe anterior: el informe de ese día explica por qué.</p>'
+        f'<div class="card table-wrap history"><table><thead><tr><th>Activo</th>{head}</tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table></div>'
+    )
 
 
 def report_card(report: Report, root: str) -> str:
@@ -291,12 +359,12 @@ def render_index(reports: list[Report]) -> str:
     <div class="hero-meta">{thermo_pill(latest.thermo)}{lesson}</div>
     <div class="hero-actions">
       <a class="btn" href="informes/{latest.slug}.html">Leer el informe completo</a>
-      <a class="btn btn-ghost" href="archivo.html">Ver archivo</a>
+      <a class="btn btn-ghost" href="historial.html">Historial de recomendaciones</a>
     </div>
   </div>
   <div>
     <p class="eyebrow">Recomendaciones del día</p>
-    {reco_list(latest)}
+    {reco_list(latest, reports[1] if len(reports) > 1 else None)}
   </div>
 </section>
 {recent_block}
@@ -386,6 +454,9 @@ def build(cfg: dict, reports_dir: Path = REPORTS_DIR, docs_dir: Path = DOCS_DIR,
                                   description="Temario y conceptos explicados en los informes.",
                                   content=render_learn(log_text, {r.slug for r in reports}),
                                   root="", active="learn", **common)
+    pages["historial.html"] = _page(base, title="Historial · " + site.get("title", "Informe pre-apertura"),
+                                    description="Recomendaciones por activo a lo largo de los informes.",
+                                    content=render_history(reports), root="", active="history", **common)
     for i, report in enumerate(reports):
         older = reports[i + 1] if i + 1 < len(reports) else None
         newer = reports[i - 1] if i > 0 else None

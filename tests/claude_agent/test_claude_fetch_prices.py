@@ -263,3 +263,125 @@ def test_main_explicit_output(tmp_path):
     with patch.object(fp, "collect", new=AsyncMock(return_value=fake)):
         fp.main(["--output", str(out)])
     assert out.exists()
+
+
+# ── último cierre fiable (meta, vela sin cerrar, retraso, reintento 5d) ─────
+
+DAY = 86400
+T0 = 1_762_761_600  # 2025-11-10 08:00 UTC (lunes)
+
+
+def _meta_payload(closes, meta=None, start=T0):
+    ts = [start + i * DAY for i in range(len(closes))]
+    return {"chart": {"result": [{
+        "meta": meta or {}, "timestamp": ts,
+        "indicators": {"quote": [{"open": closes, "high": closes, "low": closes,
+                                  "close": closes, "volume": [5] * len(closes)}]},
+    }]}}
+
+
+def test_parse_fills_null_last_close_from_meta():
+    meta = {"regularMarketPrice": 9.5, "regularMarketTime": T0 + 2 * DAY + 3600,
+            "regularMarketDayHigh": 9.8, "exchangeTimezoneName": "Europe/Madrid",
+            "currentTradingPeriod": {"regular": {"end": T0 + 2 * DAY + 30000}}}
+    df = fp.parse_yahoo_chart(_meta_payload([1.0, 2.0, None], meta))
+    assert list(df["Close"]) == [1.0, 2.0, 9.5]
+    assert df["High"].iloc[-1] == 9.8 and df["Low"].iloc[-1] == 9.5
+    assert df.attrs == {"price_source": "meta", "exchange_tz": "Europe/Madrid", "regular_end": T0 + 2 * DAY + 30000}
+
+
+def test_parse_appends_missing_bar_from_meta_at_same_hour():
+    meta = {"regularMarketPrice": 7.0, "regularMarketTime": T0 + 3 * DAY + 50000, "regularMarketVolume": 99}
+    df = fp.parse_yahoo_chart(_meta_payload([1.0, 2.0], meta))
+    assert list(df["Close"]) == [1.0, 2.0, 7.0]
+    assert df.index[-1] == pd.Timestamp(T0 + 3 * DAY, unit="s", tz="UTC")
+    assert df["Volume"].iloc[-1] == 99 and df.attrs["price_source"] == "meta"
+
+
+@pytest.mark.parametrize("meta", [
+    {},                                                             # sin meta
+    {"regularMarketPrice": 2.0, "regularMarketTime": T0 + DAY},     # coincide con una vela completa
+    {"regularMarketPrice": 2.0, "regularMarketTime": T0 - 5 * DAY}, # meta más antigua
+])
+def test_parse_keeps_bars_when_meta_not_needed(meta):
+    df = fp.parse_yahoo_chart(_meta_payload([1.0, 2.0], meta))
+    assert list(df["Close"]) == [1.0, 2.0] and df.attrs["price_source"] == "bars"
+
+
+def test_patch_with_meta_on_empty_frame_uses_meta_timestamp():
+    empty = pd.DataFrame({c: [] for c in ("Open", "High", "Low", "Close", "Volume")},
+                         index=pd.DatetimeIndex([], tz="UTC"), dtype=float)
+    out, src = fp._patch_with_meta(empty, {"regularMarketPrice": 3.0, "regularMarketTime": T0})
+    assert src == "meta" and out.index[0] == pd.Timestamp(T0, unit="s", tz="UTC")
+
+
+def _bars(dates, tz="Europe/Madrid", end=None):
+    idx = pd.DatetimeIndex([pd.Timestamp(d + " 08:00", tz="UTC") for d in dates])
+    df = pd.DataFrame({"Open": 1.0, "High": 1.0, "Low": 1.0, "Close": range(1, len(dates) + 1), "Volume": 1.0},
+                      index=idx, dtype=float)
+    df.attrs = {"exchange_tz": tz, "regular_end": end, "price_source": "bars"}
+    return df
+
+
+def test_drop_unclosed_bar():
+    now = datetime(2026, 11, 11, 9, 0, tzinfo=timezone.utc)
+    end = int(pd.Timestamp("2026-11-11 16:35", tz="UTC").timestamp())
+    df = _bars(["2026-11-10", "2026-11-11"], end=end)
+    out = fp.drop_unclosed_bar(df, now)
+    assert len(out) == 1 and out.attrs["exchange_tz"] == "Europe/Madrid"
+    assert len(fp.drop_unclosed_bar(df, datetime(2026, 11, 11, 17, 0, tzinfo=timezone.utc))) == 2  # ya cerró
+    assert len(fp.drop_unclosed_bar(_bars(["2026-11-09", "2026-11-10"]), now)) == 2              # sin vela de hoy
+    assert len(fp.drop_unclosed_bar(_bars(["2026-11-11"]), now)) == 1                            # no deja vacío
+    assert len(fp.drop_unclosed_bar(_bars(["2026-11-10", "2026-11-11"]), now)) == 1              # sin hora de cierre
+
+
+def test_business_days_lag_and_merge():
+    now = datetime(2026, 11, 11, 7, 0, tzinfo=timezone.utc)  # miércoles
+    assert fp.business_days_lag(_bars(["2026-11-10"]), now) == 1
+    assert fp.business_days_lag(_bars(["2026-11-09"]), now) == 2
+    assert fp.business_days_lag(_bars(["2026-11-06"]), datetime(2026, 11, 9, 7, tzinfo=timezone.utc)) == 1  # lunes
+    base, recent = _bars(["2026-11-06", "2026-11-09"]), _bars(["2026-11-09", "2026-11-10"])
+    recent["Close"] = [20.0, 30.0]
+    recent.attrs["price_source"] = "meta"
+    merged = fp._merge_recent(base, recent)
+    assert list(merged["Close"]) == [1.0, 20.0, 30.0] and merged.attrs["price_source"] == "meta"
+
+
+@pytest.mark.asyncio
+async def test_history_with_fallback_paths():
+    now = datetime(2026, 11, 11, 7, 0, tzinfo=timezone.utc)
+    fresh, stale = _bars(["2026-11-09", "2026-11-10"]), _bars(["2026-11-06", "2026-11-09"])
+    recent = _bars(["2026-11-09", "2026-11-10"])
+
+    async def run(results):
+        it = iter(results)
+
+        async def hist(session, sym, range_="2y"):
+            r = next(it)
+            if isinstance(r, Exception):
+                raise r
+            return r
+        with patch.object(fp, "fetch_history", side_effect=hist) as m:
+            out = await fp._history_with_fallback(None, "X", now)
+        return out, m
+
+    out, m = await run([fresh])
+    assert out is fresh and m.call_count == 1                          # al día: sin reintento
+    out, m = await run([stale, recent])
+    assert out.index[-1].date().isoformat() == "2026-11-10" and m.call_args.kwargs == {"range_": "5d"}
+    out, _ = await run([stale, ValueError("HTTP 500")])
+    assert out is stale                                                 # el reintento falla: serie larga
+    out, _ = await run([stale, _bars(["2026-11-06", "2026-11-09"])])
+    assert out is stale                                                 # el reintento no trae nada nuevo
+
+
+@pytest.mark.asyncio
+async def test_collect_flags_stale_and_price_source():
+    df = _df(np.linspace(10, 20, 260))
+    df.attrs = {"price_source": "meta", "exchange_tz": "UTC"}
+    with patch.object(fp, "_history_with_fallback", new=AsyncMock(return_value=df)), \
+         patch.object(fp.aiohttp, "ClientSession", return_value=_FakeSession()):
+        data = await fp.collect({"watchlist": {"eeuu": [{"symbol": "AAPL", "name": "Apple"}]}}, now=NOW)
+    entry = data["symbols"]["AAPL"]
+    assert entry["stale"] is True and entry["price_source"] == "meta"
+    assert "días hábiles de retraso" in data["issues"][0]["message"]

@@ -8,9 +8,9 @@
 | `test_monitor.py` | 72 | None (fully mocked) |
 | `test_news_sources.py` | 35 | None (aiohttp + feedparser mocked) |
 | `claude_agent/test_claude_fetch_news.py` | 17 | None (sources mocked) |
-| `claude_agent/test_claude_fetch_prices.py` | 31 | None (HTTP mocked; one real mplfinance PNG to tmp) |
+| `claude_agent/test_claude_fetch_prices.py` | 41 | None (HTTP mocked; one real mplfinance PNG to tmp) |
 | `claude_agent/test_claude_fetch_crypto.py` | 24 | None (Coinbase / Coinpaprika / Fear & Greed mocked) |
-| `claude_agent/test_claude_build_site.py` | 25 | None (temporary reports/docs; also builds the real reports) |
+| `claude_agent/test_claude_build_site.py` | 34 | None (temporary reports/docs; also builds the real reports) |
 | `claude_agent/test_claude_portfolio.py` | 46 | None (prices mocked; reads the real `inputs/cartera.csv` template) |
 | `test_news_service.py` | 14 | None (aggregator + classifier mocked) |
 | `test_response_parser.py` | ~22 | None |
@@ -76,7 +76,11 @@ Covers `claude_agent/fetch_news.py` (daily Claude report collector):
 
 ### `claude_agent/test_claude_fetch_prices.py`
 Covers `claude_agent/fetch_prices.py`:
-- `parse_yahoo_chart`: null closes dropped, volume filled, Yahoo error / empty / no valid closes
+- `parse_yahoo_chart`: null closes dropped, volume filled, Yahoo error / empty / no valid closes; last close filled from
+  `meta` when null, missing last bar appended from `meta` (same hour of day), `meta` ignored when not needed; `attrs`
+- Last-close reliability: `drop_unclosed_bar` (session open/closed, no close time, single bar), `business_days_lag`
+  (weekends), `_merge_recent`, `_history_with_fallback` (fresh, 5d retry merged, retry failing, retry without new data),
+  `collect()` flags `stale` + issue and exposes `price_source`
 - `_r` keeps 4 significant digits below 1; indicators: crypto calendar (`calendar="cripto"`: 7/30/90/365 bars, √365 volatility), RSI (only-up = 100, only-down = 0, warm-up NaN), MACD, `pct_change`, `classify_trend`, `rsi_zone`, `swing_levels`, golden/death cross detection, full vs short history in `compute_indicators`
 - `recent_bars`, `safe_name`, `make_chart` (real PNG), `fetch_history` (params, HTTP error)
 - `collect()`: charts only for requested symbols, chart failures, symbols not in watchlist, default charts dir; `main()` output and console summary
@@ -114,6 +118,9 @@ Covers `claude_agent/build_site.py`:
   `<figure class="idea-chart">`) until the next h2/h3/hr; headings without a chart are left untouched
 - Pages: index (latest + recent cards, escaping), report (prev/next, root-relative assets), archive by month,
   learn page (dates linked only to existing reports), empty site, stale report removal, `.nojekyll`, Madrid time
+- Continuity: `asset_key` (ticker in parentheses, crypto pair → coin, name fallback), `reco_list` change marks vs the
+  previous report ("antes: X", "nueva"), `render_history` (latest first, reports without recommendations skipped,
+  changed cells, empty, limit), `historial.html` in the built site
 - The real `claude_agent/reports/*.md` build without front-matter issues; `main()` console output
 
 Run without the global coverage threshold: `pytest tests/claude_agent -q --no-cov`.

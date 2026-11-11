@@ -56,9 +56,10 @@ Separate from the Streamlit dashboard: the daily Claude report is published as a
 
 | Page | Content |
 |---|---|
-| `index.html` | Latest report: thermometer, summary, recommendations with action badges, recent reports |
+| `index.html` | Latest report: thermometer, summary, recommendations with action badges (+ change vs previous report), recent reports |
 | `informes/YYYY-MM-DD.html` | Full report with sticky table of contents, chart lightbox, previous/next navigation. In each idea the chart stays pinned under the top bar while its text scrolls (`.idea-chart`, `position: sticky`) and leaves with its section |
 | `archivo.html` | All reports grouped by month |
 | `aprende.html` | Didactic syllabus and concepts already explained, linked to their report |
+| `historial.html` | Recommendations per asset across the last 10 reports (latest first); a changed action vs the previous report is outlined. The index also marks each recommendation with "antes: X" or "nueva" |
 
 Light/dark theme (system preference + toggle), responsive layout and print styles live in `claude_agent/site/`.

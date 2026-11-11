@@ -18,9 +18,14 @@ recomendaciones:
 - {Idea clave 3}
 
 ## 2. ✅ Recomendaciones del día (resumen)
-| Activo | Acción | Cuánto (orientativo) | Horizonte | Por qué, en una frase | Confianza |
-|---|---|---|---|---|---|
-| {Nombre (TICKER)} | 🟢 Comprar / 🟢 Comprar más / 🔵 Mantener / 🟠 Reducir / 🔴 Vender / ⏸️ Esperar / ⛔ Evitar | {importe o % de la cartera; de golpe o en N tramos} | {meses/años} | {motivo principal} | baja / media / alta |
+| Activo | Acción | vs. ayer | Cuánto (orientativo) | Horizonte | Por qué, en una frase | Confianza |
+|---|---|---|---|---|---|---|
+| {Nombre (TICKER)} | 🟢 Comprar / 🟢 Comprar más / 🔵 Mantener / 🟠 Reducir / 🔴 Vender / ⏸️ Esperar / ⛔ Evitar | {= / ↑ antes Esperar / ↓ antes Comprar / nueva / —} | {importe o % de la cartera; de golpe o en N tramos} | {meses/años} | {motivo principal} | baja / media / alta |
+
+**🔁 Seguimiento de ayer** ({fecha del informe anterior}):
+- {Qué se recomendó ayer y qué ha pasado: p. ej. "Airbus: Esperar a 202 € o >217 € → cerró en 208,25 €, sin señal: seguimos esperando"}
+- {Qué movimientos has registrado en `cartera.csv` y cómo cambian el plan: p. ej. "Tramo 1 del ETF ejecutado a 756,97 $ ✅"}
+- {Cada cambio de acción o de nivel respecto a ayer, con su motivo}
 
 > {1–2 frases con la idea general del día: p. ej. "Día para no hacer movimientos grandes: mantener el núcleo indexado y esperar a que el S&P 500 confirme el soporte de 729".}
 

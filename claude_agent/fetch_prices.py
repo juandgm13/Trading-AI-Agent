@@ -20,6 +20,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import aiohttp
+import numpy as np
 import pandas as pd
 
 _HERE = Path(__file__).resolve().parent
@@ -45,7 +46,12 @@ CALENDARS = {
 # ── Descarga ─────────────────────────────────────────────────────────────────
 
 def parse_yahoo_chart(payload: dict) -> pd.DataFrame:
-    """Convierte la respuesta de /v8/finance/chart en DataFrame OHLCV (índice fecha UTC)."""
+    """Convierte la respuesta de /v8/finance/chart en DataFrame OHLCV (índice fecha UTC).
+
+    Antes de la apertura, Yahoo a veces publica tarde (o con cierre nulo) la vela diaria de la sesión
+    anterior de algunos valores europeos, aunque `meta.regularMarketPrice` ya trae ese cierre. En ese
+    caso la vela se completa (o se añade) desde `meta` y `df.attrs["price_source"]` vale "meta".
+    """
     chart = (payload or {}).get("chart") or {}
     if chart.get("error"):
         raise ValueError(f"Yahoo error: {chart['error']}")
@@ -64,12 +70,55 @@ def parse_yahoo_chart(payload: dict) -> pd.DataFrame:
             "Volume": quote.get("volume"),
         },
         index=pd.to_datetime(timestamps, unit="s", utc=True),
+        dtype=float,
     )
+    meta = res.get("meta") or {}
+    df, source = _patch_with_meta(df, meta)
     df = df.dropna(subset=["Close"])
     if df.empty:
         raise ValueError("Yahoo: sin cierres válidos")
     df["Volume"] = df["Volume"].fillna(0)
+    df.attrs["price_source"] = source
+    df.attrs["exchange_tz"] = meta.get("exchangeTimezoneName") or "UTC"
+    regular = (meta.get("currentTradingPeriod") or {}).get("regular") or {}
+    df.attrs["regular_end"] = regular.get("end")
     return df
+
+
+def _patch_with_meta(df: pd.DataFrame, meta: dict) -> tuple[pd.DataFrame, str]:
+    """Rellena o añade la última vela con `meta.regularMarket*` si la serie diaria va por detrás."""
+    price, ts = meta.get("regularMarketPrice"), meta.get("regularMarketTime")
+    if price is None or ts is None:
+        return df, "bars"
+    tz = meta.get("exchangeTimezoneName") or "UTC"
+    stamp = pd.Timestamp(ts, unit="s", tz="UTC")
+    mdate = stamp.tz_convert(tz).date()
+    bar = {
+        "Open": meta.get("regularMarketOpen") or price,
+        "High": meta.get("regularMarketDayHigh") or price,
+        "Low": meta.get("regularMarketDayLow") or price,
+        "Close": float(price),
+        "Volume": meta.get("regularMarketVolume") or 0,
+    }
+    local_dates = [t.tz_convert(tz).date() for t in df.index]
+    if mdate in local_dates:
+        i = local_dates.index(mdate)
+        if not pd.isna(df["Close"].iloc[i]):
+            return df, "bars"
+        row = df.index[i]
+        for col, val in bar.items():
+            if pd.isna(df.at[row, col]):
+                df.at[row, col] = float(val)
+        return df, "meta"
+    if local_dates and mdate < max(local_dates):
+        return df, "bars"
+    if local_dates:  # misma hora del día que las velas existentes, en la fecha de `meta`
+        last = df.index[-1]
+        index = last + pd.Timedelta(days=(mdate - last.tz_convert(tz).date()).days)
+    else:
+        index = stamp
+    extra = pd.DataFrame([bar], index=pd.DatetimeIndex([index]), dtype=float)
+    return pd.concat([df, extra]), "meta"
 
 
 async def fetch_history(
@@ -85,6 +134,56 @@ async def fetch_history(
             raise ValueError(f"HTTP {resp.status}")
         payload = await resp.json(content_type=None)
     return parse_yahoo_chart(payload)
+
+
+
+# ── Último cierre fiable ─────────────────────────────────────────────────────
+
+def drop_unclosed_bar(df: pd.DataFrame, now: datetime) -> pd.DataFrame:
+    """Quita la vela de hoy si su sesión aún no ha cerrado: `price` es siempre el último cierre."""
+    if len(df) < 2:
+        return df
+    tz = df.attrs.get("exchange_tz") or "UTC"
+    now_ts = pd.Timestamp(now).tz_convert("UTC")
+    if df.index[-1].tz_convert(tz).date() != now_ts.tz_convert(tz).date():
+        return df
+    end = df.attrs.get("regular_end")
+    if end is not None and now_ts >= pd.Timestamp(end, unit="s", tz="UTC"):
+        return df
+    out = df.iloc[:-1].copy()
+    out.attrs = dict(df.attrs)
+    return out
+
+
+def business_days_lag(df: pd.DataFrame, now: datetime) -> int:
+    """Días hábiles (lun–vie, sin festivos) entre la última vela y hoy, en la zona de la bolsa."""
+    tz = df.attrs.get("exchange_tz") or "UTC"
+    last = df.index[-1].tz_convert(tz).date()
+    today = pd.Timestamp(now).tz_convert(tz).date()
+    return int(np.busday_count(last, today))
+
+
+def _merge_recent(base: pd.DataFrame, recent: pd.DataFrame) -> pd.DataFrame:
+    """Une la serie larga con una corta más reciente (las velas recientes ganan por fecha)."""
+    def by_day(df):
+        return df.set_axis(df.index.normalize())
+    merged = by_day(recent).combine_first(by_day(base)).sort_index()
+    merged.attrs = {**base.attrs, **recent.attrs}
+    return merged
+
+
+async def _history_with_fallback(session: aiohttp.ClientSession, symbol: str, now: datetime) -> pd.DataFrame:
+    """2 años de velas; si el último cierre llega con retraso, reintenta con `range=5d` y fusiona."""
+    df = drop_unclosed_bar(await fetch_history(session, symbol), now)
+    if business_days_lag(df, now) <= 1:
+        return df
+    try:
+        recent = drop_unclosed_bar(await fetch_history(session, symbol, range_="5d"), now)
+    except Exception:  # el reintento es opcional: se conserva la serie larga
+        return df
+    if recent.index[-1].normalize() <= df.index[-1].normalize():
+        return df
+    return drop_unclosed_bar(_merge_recent(df, recent), now)
 
 
 # ── Indicadores ──────────────────────────────────────────────────────────────
@@ -288,7 +387,7 @@ async def collect(cfg: dict, now: datetime | None = None, chart_symbols: set[str
 
     async with aiohttp.ClientSession(trust_env=True) as session:
         results = await asyncio.gather(
-            *(fetch_history(session, sym) for sym, _, _ in watchlist), return_exceptions=True
+            *(_history_with_fallback(session, sym, now) for sym, _, _ in watchlist), return_exceptions=True
         )
 
     symbols: dict[str, dict] = {}
@@ -297,7 +396,12 @@ async def collect(cfg: dict, now: datetime | None = None, chart_symbols: set[str
         if isinstance(res, Exception):
             issues.append({"symbol": sym, "message": f"{type(res).__name__}: {res}"})
             continue
-        entry = {"name": name, "group": group, **compute_indicators(res), "recent_bars": recent_bars(res)}
+        lag = business_days_lag(res, now)
+        if lag > 1:
+            issues.append({"symbol": sym, "message": f"último cierre {res.index[-1].date().isoformat()}: "
+                                                     f"{lag} días hábiles de retraso (¿festivo o dato no publicado?)"})
+        entry = {"name": name, "group": group, **compute_indicators(res), "recent_bars": recent_bars(res),
+                 "price_source": res.attrs.get("price_source", "bars"), "stale": lag > 1}
         if sym in chart_symbols:
             try:
                 entry["chart"] = make_chart(sym, name, res, charts_dir)

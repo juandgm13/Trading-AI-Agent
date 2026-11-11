@@ -31,12 +31,14 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
   EE. UU.): último cierre (`price`, `last_date`), variaciones `change_pct` (1d/1w/1m/3m/1y), medias
   móviles `sma` 20/50/200 y `price_vs_sma_pct`, `trend` (alcista/bajista/lateral), `sma_cross_last_20d`
   (cruce dorado / de la muerte), `rsi14` + `rsi_zone`, `macd` (+ `momentum`), volatilidad anualizada,
-  máximo/mínimo de 52 semanas y distancia, `supports` / `resistances`, `volume_vs_avg20` y las
+  máximo/mínimo de 52 semanas y distancia, `supports` / `resistances`, `volume_vs_avg20`, `price_source`, `stale` y las
   últimas 60 velas (`recent_bars`: fecha, apertura, máximo, mínimo, cierre, volumen).
 - **Usa solo las cifras del JSON.** No calcules ni estimes indicadores por tu cuenta.
 - Ojo: `price` es el **último cierre**, no el precio de hoy (el mercado aún no ha abierto).
-- Si el `last_date` de algún valor tiene más de un día hábil de retraso, dilo explícitamente en la sección 4
-  ("datos de X a fecha DD-mmm") y no los presentes como el cierre de ayer.
+- El script ya completa el último cierre con el precio de cierre que publica Yahoo si la vela diaria llega con retraso
+  (`price_source: "meta"`) y descarta la vela de hoy si la sesión aún no ha cerrado. Si aun así algún valor trae `stale: true`
+  (más de un día hábil de retraso; también aparece en `issues`), dilo explícitamente en la sección 4 ("datos de X a fecha
+  DD-mmm") y no los presentes como el cierre de ayer (puede ser un festivo de esa bolsa).
 
 ## Paso 3 — Criptomonedas vía Python (todo Coinbase)
 `python claude_agent/fetch_crypto.py`
@@ -105,6 +107,18 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
    apunta la página en "Fuentes que fallaron" con el **motivo real** (bloqueo, error, sin datos), nunca "por
    tiempo". No intentes saltarte bloqueos anti-bot.
 
+## Paso 5 bis — Revisar el informe anterior (coherencia entre días)
+1. Abre el informe más reciente de `claude_agent/reports/` anterior a hoy (el último `AAAA-MM-DD.md`): lee su front matter
+   (`recomendaciones`) y sus secciones 2 (resumen), 6 (ideas de bolsa, con niveles de entrada e invalidación), 7 (cripto) y 8
+   (cartera y plan de tramos). Si no hay informe anterior, indícalo y sigue.
+2. Para cada activo recomendado ayer, comprueba con los datos de hoy qué ha pasado: ¿se tocó el nivel de entrada?, ¿se rompió el
+   nivel que invalidaba la idea?, ¿hubo una noticia nueva?
+3. Compara `cartera.csv` con lo recomendado: ¿el usuario ejecutó alguna recomendación (compra, venta, tramo)? **No vuelvas a
+   recomendar una compra que ya ha hecho**; ajusta el siguiente paso del plan (p. ej. "tramo 1 hecho; el tramo 2 toca el día X").
+4. **Sé consecuente**: mantén la acción, los niveles y el plan de ayer salvo que haya un motivo concreto (dato, noticia o
+   nivel técnico). Si cambias la acción de un activo (p. ej. Comprar → Esperar) o un nivel, explica en una frase **qué ha
+   cambiado desde ayer**. Cambiar de opinión es legítimo; hacerlo sin explicarlo, no.
+
 ## Paso 6 — Decidir las recomendaciones y generar sus gráficos
 1. Cruza **noticias + análisis técnico + cartera del usuario** para elegir **3–5 ideas de bolsa**
    (mezcla España, Europa y EE. UU., e incluye al menos una opción tranquila: ETF indexado o gran empresa
@@ -151,6 +165,12 @@ Los gráficos se enlazan así (se ven en GitHub y en la web): `![SAN.MC](../../d
 **Privacidad:** el informe se publica en una web pública. No menciones ningún bróker o banco del usuario salvo
 Coinbase (en la cartera aparecerá como "otro bróker"), ni datos personales.
 
+En la tabla de la sección 2, la columna **"vs. ayer"** indica para cada activo: `=` (misma acción que ayer), `↑` (más
+compradora: p. ej. Esperar → Comprar), `↓` (más prudente: p. ej. Comprar → Esperar o Mantener → Reducir), `nueva` (no estaba
+ayer) o `—` (no hay informe anterior). El bloque **"Seguimiento de ayer"** (sección 2) resume en 2–5 viñetas qué se recomendó
+ayer, qué ha pasado con los niveles y qué movimientos registró el usuario. Usa el mismo nombre y ticker para cada activo día
+tras día (p. ej. siempre "Iberdrola (IBE.MC)"): la web enlaza las recomendaciones por el ticker entre paréntesis.
+
 Reglas de las recomendaciones:
 - Habla como un asesor experto que da su opinión: **verbos directos** ("Comprar", "Mantener",
   "Reducir"…), cada uno con su porqué. Nada de evasivas cuando los datos permiten una opinión; si no
@@ -196,7 +216,7 @@ Reglas didácticas (el lector quiere aprender):
   y vuelve a ejecutarlo. Anota la URL del último informe que imprime.
 
 ## Paso 10 — Publicar
-1. `git add claude_agent/reports/FECHA.md claude_agent/learning_log.md docs/index.html docs/archivo.html docs/aprende.html docs/informes docs/assets docs/.nojekyll`
+1. `git add claude_agent/reports/FECHA.md claude_agent/learning_log.md docs/index.html docs/archivo.html docs/aprende.html docs/historial.html docs/informes docs/assets docs/.nojekyll`
 2. `git commit -m "Informe pre-apertura FECHA"`
 3. `git push -u origin Trading-Agent_Claude`
    (si falla por red, reintenta hasta 4 veces esperando 2s, 4s, 8s y 16s).

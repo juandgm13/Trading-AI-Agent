@@ -104,6 +104,13 @@ a:hover { text-decoration: underline; }
   border-bottom: 1px solid var(--border); }
 .reco-list li:last-child { border-bottom: 0; }
 .reco-asset { font-weight: 600; }
+.reco-change { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 6px; font-size: 12px;
+  font-weight: 600; color: var(--muted); border: 1px dashed var(--border); }
+.reco-change.new { border-style: solid; }
+.history table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.history th, .history td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: center; white-space: nowrap; }
+.history tbody th { text-align: left; font-weight: 600; white-space: normal; min-width: 180px; }
+.history td.changed .badge { outline: 2px solid currentColor; outline-offset: 2px; }
 .reco-empty { color: var(--muted); font-size: 14px; }
 .section-title { font-size: 20px; margin: 36px 0 14px; letter-spacing: -.01em; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }

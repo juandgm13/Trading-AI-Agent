@@ -270,6 +270,9 @@ Scheduled task (Mon–Fri 07:47 Europe/Madrid, fresh session)
                          → optional full text (fetch_article_content, skip blocked domains)
                          → claude_agent/data/news_YYYY-MM-DD.json
        fetch_prices.py ─► Yahoo /v8/finance/chart (2y daily) per watchlist symbol
+                         → last bar patched from chart meta (regularMarketPrice/Time) when the daily bar is late or null
+                         → today's bar dropped while the session is open (price = last close)
+                         → still >1 business day behind → retry range=5d and merge; else stale=true + issue
                          → compute_indicators() (pandas) → claude_agent/data/prices_YYYY-MM-DD.json
        fetch_crypto.py ─► Coinbase /products (every online, tradable pair, any quote → universe ~400 coins)
                          × Coinpaprika /v1/tickers (rank, price, market cap, 24h/7d/30d/1y) → universe + screener
@@ -280,6 +283,8 @@ Scheduled task (Mon–Fri 07:47 Europe/Madrid, fresh session)
        portfolio.py ───► inputs/cartera.csv (user movements) → weighted average cost positions
                          + Yahoo last price + EURxxx=X FX → claude_agent/data/portfolio_YYYY-MM-DD.json
        web fetch / web search of ALL sources.md lines (no time limit) + files in inputs/
+       Claude reads the previous report (front matter + sections 2, 6–8) and cartera.csv: keeps actions/levels
+         unless something changed (and says what), never re-recommends a purchase already made
        Claude decides 3–5 stock ideas (Spain, Europe, US) + 1–3 crypto ideas, each with a direct action;
          every non-index watchlist stock (e.g. AIR.PA) gets a verdict (full idea or "Resto de la watchlist" table);
          report length up to ~6,000 words
@@ -290,16 +295,17 @@ Scheduled task (Mon–Fri 07:47 Europe/Madrid, fresh session)
        Claude writes claude_agent/reports/YYYY-MM-DD.md (report_template.md: YAML front matter + Markdown)
        build_site.py ──► all reports + learning_log.md → markdown (tables, toc, nl2br) + post-processing
                          (chart paths, action badges, ± colours, table scroll) → docs/ static site
-                         (index.html, informes/DATE.html, archivo.html, aprende.html, assets/, .nojekyll)
+                         (index.html, informes/DATE.html, archivo.html, aprende.html, historial.html, assets/, .nojekyll)
        commit + push → GitHub Pages serves docs/ from branch Trading-Agent_Claude
 ```
 
 | Module | Input | Output |
 |---|---|---|
 | `fetch_news.collect(cfg, now, full_content)` | `config.yaml` dict | `{generated_at, lookback_hours, counts, feed_status[], issues[], market{espana,europa,eeuu,macro}, symbols{SYM: {name, group, articles[]}}}` |
-| `fetch_prices.collect(cfg, now, chart_symbols, charts_dir)` | `config.yaml` dict | `{generated_at, source, symbols{SYM: {name, group, last_date, price, change_pct{1d,1w,1m,3m,1y}, sma{20,50,200}, price_vs_sma_pct, trend, sma_cross_last_20d, rsi14, rsi_zone, macd{line,signal,histogram,momentum}, volatility_20d_annual_pct, high_52w, low_52w, dist_from_*_52w_pct, supports[], resistances[], volume_vs_avg20, recent_bars[60], chart?}}, issues[]}` |
+| `fetch_prices.collect(cfg, now, chart_symbols, charts_dir)` | `config.yaml` dict | `{generated_at, source, symbols{SYM: {name, group, last_date, price, change_pct{1d,1w,1m,3m,1y}, sma{20,50,200}, price_vs_sma_pct, trend, sma_cross_last_20d, rsi14, rsi_zone, macd{line,signal,histogram,momentum}, volatility_20d_annual_pct, high_52w, low_52w, dist_from_*_52w_pct, supports[], resistances[], volume_vs_avg20, price_source ("bars" \| "meta"), stale, recent_bars[60], chart?}}, issues[]}` |
+| `fetch_prices.drop_unclosed_bar(df, now)` / `business_days_lag(df, now)` | OHLCV DataFrame with `attrs{exchange_tz, regular_end, price_source}` | Drops today's bar if its regular session has not ended / business days (Mon–Fri) between the last bar and today in the exchange time zone |
 | `fetch_crypto.collect(cfg, now, chart_symbols, charts_dir)` | `config.yaml` dict | `{generated_at, exchange, max_portfolio_pct, usd_eur, coinbase_count \| null, fear_greed{value, classification, clasificacion, date, yesterday, week_ago} \| null, market{market_cap_usd, market_cap_change_24h_pct, volume_24h_usd, bitcoin_dominance_pct, market_cap_ath_usd, market_cap_ath_date, dist_from_ath_pct} \| null, screener{top_market_cap[], gainers_7d[], losers_7d[], gainers_30d[], losers_30d[] (top 100, no stablecoins), breadth_24h, breadth_7d} \| null, symbols{CODE: {name, rank, reasons[], product, currency, coinbase_quotes, coinbase_available, price_eur, …same indicators as fetch_prices…, recent_bars[60], chart?}}, universe[{symbol, name, rank, coinbase_quotes, price_usd, price_eur, market_cap_usd, volume_24h_usd, change_pct{24h,7d,30d,1y}, dist_from_ath_pct, stablecoin}], universe_without_data[], issues[]}` |
-| `build_site.build(cfg, reports_dir, docs_dir, learning_log, now)` | reports + `site{title, base_url}` | Writes the site; returns `{reports, pages[], latest, url, issues{slug: [...]}}` (missing/invalid front matter → published anyway, header inferred) |
+| `build_site.build(cfg, reports_dir, docs_dir, learning_log, now)` | reports + `site{title, base_url}` | Writes the site (incl. `historial.html`: asset × report table, assets matched by `asset_key()` = ticker in parentheses, crypto pairs collapsed to the coin; action changes highlighted; index shows "antes: X" / "nueva" vs the previous report); returns `{reports, pages[], latest, url, issues{slug: [...]}}` (missing/invalid front matter → published anyway, header inferred) |
 | `portfolio.collect(cfg, csv_path, now)` | `config.yaml` dict + CSV path | `{exists, movements, last_movement, base_currency, aportacion_mensual{importe, moneda, dia, proxima_fecha, dias_hasta} | null, totals{valor_eur (investments + cash), invertido_eur, liquidez_eur, coste_eur, pnl_no_realizado_eur, pnl_no_realizado_pct (investments only), pnl_realizado_eur}, por_tipo_pct, crypto{valor_eur, peso_pct, tope_pct, excede_tope, margen_hasta_tope_eur}, liquidez{valor_eur, peso_pct}, positions[{activo, nombre, tipo, broker, moneda, cantidad, precio_medio, precio_actual, valor, coste, pnl, pnl_pct, valor_eur, coste_eur, pnl_eur, realizado, dividendos, desde, peso_pct}], closed_positions[], fx, issues[]}` (`{exists: false}` without CSV) |
 | `fetch_prices.compute_indicators(df, calendar="bolsa")` | OHLCV DataFrame | Indicator dict (`calendar="cripto"` uses 7/30/90/365-bar periods and √365 volatility; deterministic; trend = alcista if price > SMA50 > SMA200 and SMA50 rising, bajista if inverse, else lateral) |
 | `RSSNewsSource(logger, feeds)` | optional `[(source, url, group)]` | when `feeds` is given it replaces the default feeds; `fetch(feed_groups)` keeps feeds whose group matches |

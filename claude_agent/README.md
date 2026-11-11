@@ -21,7 +21,9 @@ Anthropic) que cada día laborable, antes de que abran la bolsa española (9:00)
 - **Entrega**: el informe se guarda en `claude_agent/reports/AAAA-MM-DD.md` y se publica como web en
   **GitHub Pages** (carpeta `docs/` de la rama `Trading-Agent_Claude`):
   <https://juandgm13.github.io/Trading-AI-Agent/> — portada con el último informe y sus recomendaciones,
-  informe completo con índice, archivo y página "Aprende".
+  informe completo con índice, archivo, página "Aprende" e "Historial" (qué se recomendó cada día para cada activo).
+- **Coherencia**: cada informe lee el anterior y tu `cartera.csv`; mantiene acciones y niveles salvo que algo cambie
+  (y lo explica), y la tabla de recomendaciones indica el cambio "vs. ayer".
 
 ## Flujo diario
 
@@ -29,12 +31,14 @@ Anthropic) que cada día laborable, antes de que abran la bolsa española (9:00)
 Tarea programada (L–V ~7:47 Madrid)
   └─ Claude sigue claude_agent/daily_prompt.md
        1. python claude_agent/fetch_news.py      → data/news_FECHA.json (RSS ES/EU/US + watchlist)
-       2. python claude_agent/fetch_prices.py    → data/prices_FECHA.json (indicadores técnicos)
+       2. python claude_agent/fetch_prices.py    → data/prices_FECHA.json (indicadores técnicos; último cierre
+                                                    completado con el precio de cierre de Yahoo si la vela llega tarde)
        3. python claude_agent/fetch_crypto.py    → data/crypto_FECHA.json (universo Coinbase, radar, técnico, Fear & Greed)
        4. python claude_agent/portfolio.py       → data/portfolio_FECHA.json (tu cartera desde inputs/cartera.csv)
        5. web fetch de TODAS las páginas y búsquedas de sources.md (sin límite de tiempo)
                                                   → cierre anterior, futuros, agenda, bancos centrales, cripto
           + lee inputs/                           → tus notas, empresas de interés
+          + lee el informe anterior                → qué se recomendó ayer, qué pasó, qué ejecutaste
        6. decide 3–5 ideas de bolsa + 1–3 de cripto con acción directa (y un veredicto para cada valor de la
           watchlist, p. ej. Airbus) → --charts … → docs/informes/charts/FECHA/*.png
        7. elige la lección del día (learning_log.md)
@@ -53,10 +57,10 @@ Tarea programada (L–V ~7:47 Madrid)
 | `inputs/cartera.csv` | **Editable como tabla**: tus movimientos (compras, ventas, dividendos). Formato en `inputs/README.md` |
 | `fetch_news.py` | Recoge noticias públicas → JSON compacto (sin LLM) |
 | `fetch_crypto.py` | Cripto: universo = todas las monedas de Coinbase cruzadas con Coinpaprika, radar (top por capitalización, más suben/bajan, amplitud), Fear & Greed, capitalización/dominancia e indicadores con velas diarias de Coinbase (par EUR o USD, 365 días) + gráficos |
-| `build_site.py` | Convierte todos los informes en la web estática de `docs/` (HTML/CSS propios, sin Jekyll): portada, `informes/FECHA.html` (en cada idea el gráfico queda fijo arriba mientras se lee su texto), `archivo.html`, `aprende.html` |
+| `build_site.py` | Convierte todos los informes en la web estática de `docs/` (HTML/CSS propios, sin Jekyll): portada, `informes/FECHA.html` (en cada idea el gráfico queda fijo arriba mientras se lee su texto), `archivo.html`, `aprende.html`, `historial.html` (recomendaciones por activo e informe) |
 | `site/` | Plantilla HTML (`base.html`), estilos (`style.css`, modo claro/oscuro, móvil, impresión) y `site.js` (tema y ampliar gráficos) |
 | `portfolio.py` | Lee `inputs/cartera.csv` → posiciones (precio medio), valor y G/P en EUR, liquidez (`tipo=liquidez`), peso de cripto frente al tope y próxima aportación mensual (`portfolio.aportacion_mensual`) |
-| `fetch_prices.py` | Velas diarias (Yahoo, 2 años) → indicadores (MM20/50/200, RSI, MACD, volatilidad, 52 semanas, soportes/resistencias) + gráficos PNG |
+| `fetch_prices.py` | Velas diarias (Yahoo, 2 años; si el último cierre llega tarde lo completa con el precio de cierre de Yahoo, descarta la vela de una sesión aún abierta y marca `stale`) → indicadores (MM20/50/200, RSI, MACD, volatilidad, 52 semanas, soportes/resistencias) + gráficos PNG |
 | `learning_log.md` | Temario didáctico y registro de conceptos ya explicados (lo actualiza Claude) |
 | `daily_prompt.md` | Instrucciones completas que sigue Claude en cada ejecución |
 | `report_template.md` | Estructura fija del informe |
