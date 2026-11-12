@@ -55,6 +55,11 @@ watchlist:
     - {symbol: "IBE.MC", name: "Iberdrola"}
     - {symbol: "TEF.MC", name: "Telefónica"}
     - {symbol: "REP.MC", name: "Repsol"}
+    - {symbol: "SLR.MC", name: "Solaria Energía"}
+    - {symbol: "ORY.MC", name: "Oryzon Genomics"}
+    - {symbol: "IAG.MC", name: "IAG (Iberia, British Airways)"}
+    - {symbol: "IDR.MC", name: "Indra"}
+    - {symbol: "AENA.MC", name: "Aena"}
   eeuu:
     - {symbol: "AAPL", name: "Apple"}
     - {symbol: "MSFT", name: "Microsoft"}
@@ -62,8 +67,15 @@ watchlist:
     - {symbol: "AMZN", name: "Amazon"}
     - {symbol: "SPY", name: "ETF S&P 500 (SPDR)"}
     - {symbol: "QQQ", name: "ETF Nasdaq 100 (Invesco)"}
+    - {symbol: "GOOGL", name: "Alphabet (Google)"}
+    - {symbol: "BRK-B", name: "Berkshire Hathaway"}
+    - {symbol: "IWDA.AS", name: "ETF iShares Core MSCI World"}
   europa:
     - {symbol: "AIR.PA", name: "Airbus"}
+    - {symbol: "ASML.AS", name: "ASML"}
+    - {symbol: "MC.PA", name: "LVMH"}
+    - {symbol: "SAP.DE", name: "SAP"}
+    - {symbol: "SIE.DE", name: "Siemens"}
 
 # Criptomonedas (claude_agent/fetch_crypto.py). Universo = TODAS las monedas que se pueden comprar en
 # Coinbase (cualquier par: USD, EUR, USDC…), comprobado cada día con su API pública y cruzado con Coinpaprika.
