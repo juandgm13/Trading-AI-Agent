@@ -30,3 +30,4 @@ Puedes editar el temario o añadir temas que te interesen.
 | 2026-11-09 | Qué es un ETF | ETF del S&P 500 (SPY) frente a Nvidia: el índice cae −5 % en un mes y NVDA −19 %; QQQ −12 % como ejemplo de ETF concentrado |
 | 2026-11-10 | Qué es la inflación (IPC) y por qué mueve la bolsa | IPC de EE. UU. de octubre (previsto +0,3 % mensual vs 0,6 %) y Fed al 84 % de subida; 7.000 € en liquidez pierden ~280 € de poder de compra al 4 % de inflación |
 | 2026-11-11 | Los tipos de interés y los bancos centrales (Fed y BCE) | IPC de EE. UU. caliente (+0,4 %) → 91 % de probabilidad de subida de la Fed en diciembre y bono a 10 años al 5 %: con 10.000 € un bono pagaría 500 €/año; deuda de 1.000 M a 4 % vs 4,25 %; efecto en el dólar y los USDC |
+| 2026-11-12 | Qué es la capitalización bursátil | Nvidia pierde 430.000 M$ de valor en dos días por la crisis de su CEO; peso por capitalización en el S&P 500 (por qué el ETF cae menos); ranking cripto; Shiba Inu a 1 € = 589 billones € |
