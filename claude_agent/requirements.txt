@@ -1,11 +1,15 @@
 # Dependencias mínimas para el informe diario en la nube (sin Ollama, Alpaca ni agent-framework)
 # pandas + mplfinance: indicadores técnicos y gráficos (fetch_prices.py) · markdown: web en docs/ (build_site.py)
+# pillow fijado explícitamente: el contenedor trae python3-pil 10.2 de Ubuntu (compilado para otro Python) que
+# rompe los gráficos ('cannot import name _imaging'); exigir >=11 obliga a pip a instalar una rueda válida.
+# mplfinance solo publica versiones beta recientes: nombrar una beta permite instalarla sin --pre.
 aiohttp>=3.9.0
 feedparser>=6.0.0
 PyYAML>=6.0
 markdown>=3.5
 pandas>=2.0.0
-mplfinance>=0.12.0
+mplfinance>=0.12.10b0
+pillow>=11.0
 # Solo para ejecutar los tests
 pytest>=8.0.0
 pytest-asyncio>=0.23.0

@@ -70,7 +70,8 @@ Tarea programada (L–V ~7:47 Madrid)
 ## Ejecución manual
 
 ```bash
-pip install -r claude_agent/requirements.txt
+python -m pip install -r claude_agent/requirements.txt
+python -c "import mplfinance; from PIL import _imaging"   # comprueba que los gráficos funcionarán
 python claude_agent/fetch_news.py                 # → claude_agent/data/news_AAAA-MM-DD.json
 python claude_agent/fetch_news.py --no-full-content --output /tmp/news.json
 python claude_agent/fetch_prices.py                # → claude_agent/data/prices_AAAA-MM-DD.json
@@ -80,6 +81,9 @@ python claude_agent/fetch_crypto.py --charts BTC,PEPE      # cualquier moneda de
 python claude_agent/portfolio.py                   # → claude_agent/data/portfolio_AAAA-MM-DD.json
 python claude_agent/build_site.py                  # → docs/ (abre docs/index.html en el navegador)
 ```
+
+`requirements.txt` exige `pillow>=11.0` porque algunas imágenes de sistema (p. ej. el contenedor cloud) traen
+`python3-pil` de Ubuntu compilado para otro Python, que hace fallar los gráficos con `cannot import name '_imaging'`.
 
 Luego, en una sesión de Claude Code: *"Sigue claude_agent/daily_prompt.md"*.
 

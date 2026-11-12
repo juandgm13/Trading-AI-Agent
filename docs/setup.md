@@ -193,7 +193,7 @@ To switch to live trading, change `ALPACA_BASE_URL=https://api.alpaca.markets` i
 Runs as a Claude Code scheduled task in the cloud — **no `.env` needed** (no Alpaca, Gmail or Ollama).
 
 ```bash
-pip install -r claude_agent/requirements.txt   # aiohttp, feedparser, PyYAML, pandas, mplfinance (+ pytest)
+pip install -r claude_agent/requirements.txt   # aiohttp, feedparser, PyYAML, pandas, mplfinance, pillow>=11 (+ pytest)
 python claude_agent/fetch_news.py               # → claude_agent/data/news_YYYY-MM-DD.json
 python claude_agent/fetch_prices.py             # → claude_agent/data/prices_YYYY-MM-DD.json
 python claude_agent/fetch_prices.py --charts SAN.MC,AAPL   # + PNG in docs/informes/charts/YYYY-MM-DD/

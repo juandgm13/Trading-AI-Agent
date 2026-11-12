@@ -13,8 +13,9 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
 1. Asegúrate de estar en la rama del informe con lo último:
    `git fetch origin Trading-Agent_Claude && git checkout Trading-Agent_Claude && git pull origin Trading-Agent_Claude`
 2. Instala dependencias (rápido si ya están): `python -m pip install -q -r claude_agent/requirements.txt`
-   (usa `python -m pip` para instalar en el mismo intérprete que ejecuta los scripts; si `mplfinance`
-   no se encuentra como versión estable, instala la última con `python -m pip install -q --pre mplfinance`).
+   (usa `python -m pip` para instalar en el mismo intérprete que ejecuta los scripts). Comprueba que los
+   gráficos funcionarán: `python -c "import mplfinance; from PIL import _imaging"`. Solo si falla, ejecuta
+   `python -m pip install -q --upgrade --ignore-installed pillow` y repite la comprobación.
 3. Calcula la fecha de hoy en Madrid: `TZ=Europe/Madrid date +%F` → la llamaremos `FECHA`.
 4. Si hoy es sábado o domingo, no hagas nada más y termina.
 5. Si `claude_agent/reports/FECHA.md` ya existe, no lo regeneres: termina.
