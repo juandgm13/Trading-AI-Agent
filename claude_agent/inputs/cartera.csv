@@ -12,3 +12,7 @@ fecha,activo,nombre,tipo,operacion,cantidad,precio,moneda,comision,broker,notas
 2026-11-11,EUR,Liquidez disponible,liquidez,venta,313.70,1,EUR,0,,usado para SPY5.L (350 USD / 1.1157 EUR/USD; ajustar con el cargo real en EUR si difiere)
 2026-11-11,BTC-EUR,Bitcoin,cripto,compra,0.00149753,66108.79,EUR,1,Coinbase,99 EUR de BTC + 1 EUR comisión; pagado con USDC
 2026-11-11,USDC,USD Coin (stablecoin),liquidez,venta,111.57,1,USD,0,Coinbase,usado para la compra de BTC (100 EUR x 1.1157 USD/EUR; estimado)
+2026-11-18,SPY5.L,SPDR S&P 500 UCITS ETF (LSE),etf,compra,0.40711,736.90,USD,1,,ejecutada 18-nov 09:17; 300.00 USD + 1 USD comisión
+2026-11-18,EUR,Liquidez disponible,liquidez,venta,274.06,1,EUR,0,,usado para SPY5.L (301 USD / 1.0983 EUR/USD; estimado: ajustar con el cargo real en EUR)
+2026-11-18,AIR.PA,Airbus,accion,compra,0.679535,201.25,EUR,0.91,,ejecutada 18-nov 09:34; comisión 1 USD ≈ 0.91 EUR
+2026-11-18,EUR,Liquidez disponible,liquidez,venta,137.67,1,EUR,0,,usado para AIR.PA (136.76 EUR + 0.91 EUR de comisión; estimado)
