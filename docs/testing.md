@@ -8,7 +8,8 @@
 | `test_monitor.py` | 72 | None (fully mocked) |
 | `test_news_sources.py` | 35 | None (aiohttp + feedparser mocked) |
 | `claude_agent/test_claude_fetch_news.py` | 17 | None (sources mocked) |
-| `claude_agent/test_claude_fetch_prices.py` | 41 | None (HTTP mocked; one real mplfinance PNG to tmp) |
+| `claude_agent/test_claude_fetch_prices.py` | 42 | None (HTTP mocked; one real mplfinance PNG to tmp) |
+| `claude_agent/test_claude_fetch_rates.py` | 14 | None (ECB / FRED HTTP mocked) |
 | `claude_agent/test_claude_fetch_crypto.py` | 24 | None (Coinbase / Coinpaprika / Fear & Greed mocked) |
 | `claude_agent/test_claude_build_site.py` | 34 | None (temporary reports/docs; also builds the real reports) |
 | `claude_agent/test_claude_portfolio.py` | 46 | None (prices mocked; reads the real `inputs/cartera.csv` template) |
@@ -83,7 +84,15 @@ Covers `claude_agent/fetch_prices.py`:
   `collect()` flags `stale` + issue and exposes `price_source`
 - `_r` keeps 4 significant digits below 1; indicators: crypto calendar (`calendar="cripto"`: 7/30/90/365 bars, √365 volatility), RSI (only-up = 100, only-down = 0, warm-up NaN), MACD, `pct_change`, `classify_trend`, `rsi_zone`, `swing_levels`, golden/death cross detection, full vs short history in `compute_indicators`
 - `recent_bars`, `safe_name`, `make_chart` (real PNG), `fetch_history` (params, HTTP error)
-- `collect()`: charts only for requested symbols, chart failures, symbols not in watchlist, default charts dir; `main()` output and console summary
+- `collect()`: charts only for requested symbols, chart failures, symbols not in watchlist, default charts dir, the
+  `materias_primas` group (gold `GC=F` / `IGLN.L`); `main()` output and console summary
+
+### `claude_agent/test_claude_fetch_rates.py`
+Covers `claude_agent/fetch_rates.py`:
+- `parse_ecb_csv` (sorted, empty values skipped), `parse_fred_csv` (`.` = missing), `summarize` (with/without previous)
+- `assess`: above / below threshold, fallback to the ECB deposit rate and AAA 1-year yield, no data → `tipos_altos = null`
+- `_get_text` (OK, HTTP error, retry after timeout, giving up), `fetch_series` URLs (ECB `format=csvdata`, FRED `cosd`)
+- `collect()`: rates + per-series issues (HTTP error, no observations), defaults without `renta_fija`; `main()` output and summary
 
 ### `claude_agent/test_claude_fetch_crypto.py`
 Covers `claude_agent/fetch_crypto.py`:

@@ -235,6 +235,18 @@ async def test_collect_indicators_charts_and_issues(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_collect_handles_commodities_group():
+    cfg = {"watchlist": {"materias_primas": [{"symbol": "GC=F", "name": "Oro"},
+                                             {"symbol": "IGLN.L", "name": "ETC oro"}]}}
+    with patch.object(fp, "fetch_history", new=AsyncMock(return_value=_df(np.linspace(10, 20, 260)))), \
+         patch.object(fp.aiohttp, "ClientSession", return_value=_FakeSession()):
+        data = await fp.collect(cfg, now=NOW)
+    assert {s: d["group"] for s, d in data["symbols"].items()} == {
+        "GC=F": "materias_primas", "IGLN.L": "materias_primas"}
+    assert fp.safe_name("GC=F") == "GC_F"
+
+
+@pytest.mark.asyncio
 async def test_collect_default_charts_dir():
     with patch.object(fp, "fetch_history", new=AsyncMock(return_value=_df(np.linspace(1, 2, 30)))), \
          patch.object(fp, "make_chart", return_value="x.png") as mk, \

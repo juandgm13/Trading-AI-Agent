@@ -34,6 +34,16 @@ Si una página falla o está bloqueada, Claude lo anota en el apartado de fuente
 - earnings today before the bell
 - bitcoin ethereum noticias hoy mercado cripto regulación ETF
 - Airbus noticias hoy acciones entregas pedidos
+- precio del oro hoy noticias bancos centrales dólar
+
+## Búsquedas de renta fija (solo si los tipos están altos: `tipos_altos` en rates_FECHA.json)
+
+- https://www.tesoro.es/deuda-publica/subastas/resultado-ultimas-subastas/letras-del-tesoro — Resultados de las últimas subastas de Letras del Tesoro
+- Letras del Tesoro última subasta rentabilidad 3 6 9 12 meses
+- mejores depósitos a plazo fijo 12 meses TAE este mes
+- fondos de renta fija a vencimiento rentabilidad objetivo CNMV
+- mejores fondos monetarios euro rentabilidad comisiones
+- mejores cuentas remuneradas TAE este mes
 
 ## Mis intereses
 
@@ -42,5 +52,8 @@ Si una página falla o está bloqueada, Claude lo anota en el apartado de fuente
 - Preferencia por empresas grandes y consolidadas, dividendos y ETFs indexados.
 - Mercados: España (Ibex 35), Europa (Euro Stoxx 50) y Estados Unidos (S&P 500, Nasdaq).
 - Me interesa **Airbus** (AIR.PA) y el sector aeroespacial europeo: quiero su veredicto en cada informe.
+- Quiero seguir el **oro** cada día (activo refugio); para invertir, el ETC IGLN.L.
+- Cuando los tipos estén altos (Euríbor 12 m ≥ 3 %), quiero opciones **fiables** de renta fija a tipo fijo para la
+  liquidez: Letras del Tesoro, depósitos con FGD, fondos de renta fija a vencimiento y monetarios.
 - Criptomonedas: opero en **Coinbase** (en euros). Tope del 25 % de la cartera en cripto.
 - Quiero recomendaciones directas (comprar / mantener / reducir / vender / esperar) con su porqué.

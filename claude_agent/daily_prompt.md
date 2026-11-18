@@ -29,7 +29,7 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
 ## Paso 2 — Precios e indicadores técnicos vía Python
 `python claude_agent/fetch_prices.py`
 - Genera `claude_agent/data/prices_FECHA.json` con, para cada valor de la watchlist (índices, España,
-  EE. UU.): último cierre (`price`, `last_date`), variaciones `change_pct` (1d/1w/1m/3m/1y), medias
+  Europa, EE. UU. y materias primas —el oro: `GC=F` y el ETC `IGLN.L`—): último cierre (`price`, `last_date`), variaciones `change_pct` (1d/1w/1m/3m/1y), medias
   móviles `sma` 20/50/200 y `price_vs_sma_pct`, `trend` (alcista/bajista/lateral), `sma_cross_last_20d`
   (cruce dorado / de la muerte), `rsi14` + `rsi_zone`, `macd` (+ `momentum`), volatilidad anualizada,
   máximo/mínimo de 52 semanas y distancia, `supports` / `resistances`, `volume_vs_avg20`, `price_source`, `stale` y las
@@ -40,6 +40,21 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
   (`price_source: "meta"`) y descarta la vela de hoy si la sesión aún no ha cerrado. Si aun así algún valor trae `stale: true`
   (más de un día hábil de retraso; también aparece en `issues`), dilo explícitamente en la sección 4 ("datos de X a fecha
   DD-mmm") y no los presentes como el cierre de ayer (puede ser un festivo de esa bolsa).
+
+- **Oro** (grupo `materias_primas`): `GC=F` es el precio de referencia (futuros, $/onza; cotiza casi 24 h) e
+  `IGLN.L` el ETC de oro físico que el usuario puede comprar (iShares Physical Gold, Bolsa de Londres, en USD).
+  Sigue el oro **cada día**: es un termómetro del miedo, del dólar y de los tipos de interés reales.
+
+## Paso 2 bis — Tipos de interés vía Python
+`python claude_agent/fetch_rates.py`
+- Genera `claude_agent/data/rates_FECHA.json` (API pública del BCE + FRED): `rates` con `bce_deposito` (tipo de la
+  facilidad de depósito), `euribor_12m` (media mensual), `deuda_aaa_1a` (rendimiento a 1 año de la deuda AAA de la
+  zona euro, referencia de un tipo fijo a 1 año) y `fed_superior`, cada uno con `valor`, `fecha` y `anterior`; además
+  `umbral_pct`, `referencia`, **`tipos_altos`** (true/false/null), `motivo` e `issues`.
+- Usa estas cifras en la sección 4 (Macro). **Si `tipos_altos` es `true`**, el informe incluye el apartado
+  "🏦 Dónde aparcar la liquidez a tipo fijo" (Paso 6 bis). Si es `false`, omítelo con una sola línea en la sección 8
+  ("Tipos por debajo del umbral (x % < 3 %): hoy no hay apartado de renta fija"). Si es `null` (sin datos), busca el
+  Euríbor a 12 meses con una búsqueda web y decide con el mismo umbral, indicándolo.
 
 ## Paso 3 — Criptomonedas vía Python (todo Coinbase)
 `python claude_agent/fetch_crypto.py`
@@ -98,6 +113,8 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
      anterior, futuros, divisas, petróleo, agenda del día, decisiones de bancos centrales y, en cripto,
      movimientos de las últimas 24 h, regulación, ETF de bitcoin/ether y hackeos.
    - *Búsquedas del día*: haz una búsqueda web por línea (todas), añadiendo la fecha de hoy.
+   - *Búsquedas de renta fija*: **solo si `tipos_altos` es `true`**, haz también todas las búsquedas y páginas de
+     ese bloque (ver Paso 6 bis).
    - *Mis intereses*: úsalo para priorizar empresas, sectores y tono.
 2. Lee los demás archivos de `claude_agent/inputs/` (excepto `README.md`) como contexto del usuario.
 3. Abre con web fetch 3–6 artículos del JSON que parezcan especialmente relevantes (prioriza los de valores de
@@ -126,8 +143,8 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
    estable) y **1–3 ideas de cripto**, que pueden ser **cualquier moneda de Coinbase**: núcleo (BTC/ETH)
    y, si el radar y el técnico lo justifican, alguna del top 100 con un motivo claro (noticia + técnico). Prioriza los activos que
    el usuario ya tiene en cartera: para cada uno debe quedar claro qué hacer.
-   **Todos los valores de la watchlist** (grupos `espana`, `europa` y `eeuu` de `config.yaml`, no los índices;
-   p. ej. Airbus, AIR.PA) deben recibir una acción: como idea completa en la sección 6 o, si no es de las
+   **Todos los valores de la watchlist** (grupos `espana`, `europa`, `eeuu` y `materias_primas` de `config.yaml`,
+   no los índices; p. ej. Airbus, AIR.PA, o el oro) deben recibir una acción: como idea completa en la sección 6 o, si no es de las
    principales, en la tabla "Resto de la watchlist: veredicto rápido". Si un valor tiene noticias en `symbols`
    del JSON de noticias, menciónalas (aunque sea en una frase).
 2. Para cada idea decide **una acción con verbo directo**:
@@ -145,6 +162,35 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
    `docs/informes/charts/FECHA/` —la carpeta de la web— con `^` sustituido por `IDX_`, p. ej. `IDX_IBEX.png`;
    en cripto el archivo lleva el par usado, p. ej. `BTC-EUR.png` o `PEPE-USD.png`).
    Solo pueden tener gráfico los valores de las watchlists.
+
+4. **Oro**: da siempre un veredicto sobre el oro con el **ETC `IGLN.L`** como vehículo (idea completa con gráfico
+   `--charts GC=F,IGLN.L` cuando haya motivo —movimiento fuerte, noticia, nivel técnico o encaje en la cartera—; si no,
+   fila en "Resto de la watchlist"). Para un perfil moderado, el oro es un **diversificador**: peso orientativo del
+   0–10 % del patrimonio, en tramos, nunca con productos apalancados ni futuros (`GC=F` es solo la referencia del precio).
+   Explica qué lo mueve (dólar, tipos reales, bancos centrales, geopolítica) y recuerda que no paga dividendos ni intereses.
+   PAXG (oro tokenizado en cripto) no sustituye al ETC. Nómbralo siempre igual: "Oro (IGLN.L)".
+
+## Paso 6 bis — Renta fija a tipo fijo (solo si `tipos_altos` es `true`)
+1. Haz todas las búsquedas y páginas del bloque *Búsquedas de renta fija* de `sources.md`, añadiendo el mes y el año.
+2. Escribe en la sección 8 el apartado **"### 🏦 Dónde aparcar la liquidez a tipo fijo"** de la plantilla: una tabla de
+   3–6 opciones **fiables** y una recomendación concreta.
+3. **Qué cuenta como fiable** (no incluyas nada que no cumpla esto):
+   - **Letras del Tesoro** (3, 6, 9 y 12 meses) y deuda pública de la zona euro: tipo fijo, emisor Estado.
+     Da la rentabilidad de la **última subasta** con su fecha (fuente: Tesoro Público).
+   - **Depósitos a plazo fijo** de entidades españolas o europeas cubiertas por el **Fondo de Garantía de Depósitos**
+     (hasta 100.000 € por titular y entidad). Indica TAE, plazo, importe mínimo/máximo y condiciones (vinculación).
+   - **Fondos de renta fija a vencimiento** (con "rentabilidad objetivo") y **fondos monetarios**, registrados en la
+     **CNMV**, de gestoras grandes, con comisiones bajas. Deja claro que **su rentabilidad no está garantizada**
+     (objetivo no es promesa; el monetario es variable) y que penalizan el reembolso anticipado si los hay.
+   - Prohibido: productos estructurados, bonos de empresas de baja calidad ("high yield"), préstamos P2P,
+     "staking"/rendimientos cripto, cuentas de entidades sin licencia en la UE u ofertas sin fuente verificable.
+   - Solo datos de **este mes**, con fuente y fecha; si una cifra no se puede comprobar, no la pongas.
+4. **Recomendación**: cuánto de la liquidez (en euros) poner y a qué plazo, **sin bloquear** el dinero de los tramos ya
+   planificados (ETF, Airbus, aportaciones) ni el colchón de emergencia. Prefiere plazos cortos (3–12 meses) y
+   escalonados. Compara con la referencia (`deuda_aaa_1a`, Euríbor) para decir si una oferta es buena. Recuerda la
+   fiscalidad (los intereses tributan como rendimientos del capital mobiliario en el IRPF).
+5. **Privacidad**: los bancos y gestoras aparecen como ofertas del mercado, nunca como "tu banco"; no nombres el bróker
+   del usuario.
 
 ## Paso 7 — Lección del día (progresión didáctica)
 1. Lee `claude_agent/learning_log.md`: es la lista de conceptos ya explicados y el temario sugerido.

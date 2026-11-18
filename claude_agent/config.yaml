@@ -76,6 +76,10 @@ watchlist:
     - {symbol: "MC.PA", name: "LVMH"}
     - {symbol: "SAP.DE", name: "SAP"}
     - {symbol: "SIE.DE", name: "Siemens"}
+  # Materias primas: el oro como activo refugio (referencia en futuros + ETC de oro físico comprable)
+  materias_primas:
+    - {symbol: "GC=F", name: "Oro (futuros, $/onza)"}
+    - {symbol: "IGLN.L", name: "ETC iShares Physical Gold (LSE)"}
 
 # Criptomonedas (claude_agent/fetch_crypto.py). Universo = TODAS las monedas que se pueden comprar en
 # Coinbase (cualquier par: USD, EUR, USDC…), comprobado cada día con su API pública y cruzado con Coinpaprika.
@@ -91,6 +95,13 @@ crypto:
     - {symbol: "ETH", name: "Ethereum"}
     - {symbol: "SOL", name: "Solana"}
     - {symbol: "XRP", name: "XRP"}
+
+# Tipos de interés (claude_agent/fetch_rates.py): BCE, Euríbor 12 m, deuda AAA a 1 año y Fed.
+# Si `referencia` >= `umbral_pct`, el informe añade "Dónde aparcar la liquidez a tipo fijo"
+# (Letras del Tesoro, depósitos con FGD, fondos de renta fija a vencimiento y monetarios).
+renta_fija:
+  umbral_pct: 3.0
+  referencia: euribor_12m      # euribor_12m | bce_deposito | deuda_aaa_1a
 
 # Cartera del usuario (claude_agent/portfolio.py): movimientos en CSV, editable como tabla.
 portfolio:

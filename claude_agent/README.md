@@ -32,7 +32,10 @@ Tarea programada (L–V ~7:47 Madrid)
   └─ Claude sigue claude_agent/daily_prompt.md
        1. python claude_agent/fetch_news.py      → data/news_FECHA.json (RSS ES/EU/US + watchlist)
        2. python claude_agent/fetch_prices.py    → data/prices_FECHA.json (indicadores técnicos; último cierre
-                                                    completado con el precio de cierre de Yahoo si la vela llega tarde)
+                                                    completado con el precio de cierre de Yahoo si la vela llega tarde;
+                                                    incluye el oro: GC=F y el ETC IGLN.L)
+      2b. python claude_agent/fetch_rates.py    → data/rates_FECHA.json (BCE, Euríbor 12 m, deuda AAA 1 año, Fed;
+                                                    tipos_altos = Euríbor 12 m ≥ 3 % → apartado de renta fija a tipo fijo)
        3. python claude_agent/fetch_crypto.py    → data/crypto_FECHA.json (universo Coinbase, radar, técnico, Fear & Greed)
        4. python claude_agent/portfolio.py       → data/portfolio_FECHA.json (tu cartera desde inputs/cartera.csv)
        5. web fetch de TODAS las páginas y búsquedas de sources.md (sin límite de tiempo)
@@ -56,6 +59,7 @@ Tarea programada (L–V ~7:47 Madrid)
 | `inputs/` | **Editable**: deja aquí archivos propios (notas, PDFs, listas de enlaces) |
 | `inputs/cartera.csv` | **Editable como tabla**: tus movimientos (compras, ventas, dividendos). Formato en `inputs/README.md` |
 | `fetch_news.py` | Recoge noticias públicas → JSON compacto (sin LLM) |
+| `fetch_rates.py` | Tipos de interés de referencia (API pública del BCE + FRED) y decisión `tipos_altos` según `renta_fija` de `config.yaml` |
 | `fetch_crypto.py` | Cripto: universo = todas las monedas de Coinbase cruzadas con Coinpaprika, radar (top por capitalización, más suben/bajan, amplitud), Fear & Greed, capitalización/dominancia e indicadores con velas diarias de Coinbase (par EUR o USD, 365 días) + gráficos |
 | `build_site.py` | Convierte todos los informes en la web estática de `docs/` (HTML/CSS propios, sin Jekyll): portada, `informes/FECHA.html` (en cada idea el gráfico queda fijo arriba mientras se lee su texto), `archivo.html`, `aprende.html`, `historial.html` (recomendaciones por activo e informe) |
 | `site/` | Plantilla HTML (`base.html`), estilos (`style.css`, modo claro/oscuro, móvil, impresión) y `site.js` (tema y ampliar gráficos) |
@@ -104,6 +108,12 @@ Luego, en una sesión de Claude Code: *"Sigue claude_agent/daily_prompt.md"*.
 - **Web** → título y URL en `site` de `config.yaml`; diseño en `site/style.css`. La web es pública: el informe
   solo nombra Coinbase como bróker (los demás aparecen como "otro bróker").
 - **Tope de cripto** → `crypto.max_portfolio_pct` (25 % por decisión del usuario).
+- **Oro** → grupo `watchlist.materias_primas` (`GC=F` como referencia del precio, `IGLN.L` como ETC comprable);
+  recibe veredicto cada día como el resto de la watchlist.
+- **Renta fija a tipo fijo** → `renta_fija.umbral_pct` (3 %) y `renta_fija.referencia` (`euribor_12m`,
+  `bce_deposito` o `deuda_aaa_1a`). Con los tipos por encima del umbral, el informe añade en la sección 8
+  "🏦 Dónde aparcar la liquidez a tipo fijo" (Letras del Tesoro, depósitos con FGD, fondos de renta fija a
+  vencimiento y monetarios), con las búsquedas del bloque *Búsquedas de renta fija* de `sources.md`.
 - **Lecciones** → edita el temario de `learning_log.md` o añade temas que quieras aprender.
 - **Páginas concretas o búsquedas** → edita `sources.md`.
 - **Tu contexto personal** → archivos en `inputs/` (no pongas datos sensibles: el repo puede ser visible).

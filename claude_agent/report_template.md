@@ -40,7 +40,11 @@ recomendaciones:
 ### Estados Unidos
 {Cierre anterior, futuros pre-apertura, noticias de grandes empresas.}
 ### Macro (tipos de interés, inflación, divisas, materias primas)
-{BCE, Fed, euro/dólar, petróleo, bonos — explicado con sencillez. 💡 notas para los términos nuevos.}
+{BCE, Fed, euro/dólar, petróleo, bonos — explicado con sencillez. 💡 notas para los términos nuevos.
+Tipos de referencia (de `rates_FECHA.json`): BCE {x} %, Euríbor 12 m {y} %, deuda AAA a 1 año {z} %, Fed {w} %.}
+
+**🥇 Oro:** {precio (GC=F, $/onza) y del ETC IGLN.L, variación del día y del mes, tendencia y por qué se mueve
+(dólar, tipos reales, bancos centrales, geopolítica), en 2–3 frases.}
 
 ## 5. Panorama técnico de la watchlist
 > 💡 *Cómo leer esta tabla:* la **tendencia** resume si el precio lleva meses subiendo, bajando o de lado
@@ -77,7 +81,7 @@ recomendaciones:
 |---|---|---|---|
 | {Nombre (TICKER)} | 🟢 Comprar / 🔵 Mantener / ⏸️ Esperar / ⛔ Evitar… | {noticia o lectura técnica clave} | {soporte/resistencia o noticia} |
 
-{Una fila por cada valor de la watchlist (España, Europa, EE. UU.) que no tenga idea completa arriba.}
+{Una fila por cada valor de la watchlist (España, Europa, EE. UU. y el oro, IGLN.L) que no tenga idea completa arriba.}
 
 ## 7. ₿ Criptomonedas
 > 💡 *Las criptomonedas cotizan 24 horas, 7 días a la semana: los precios son de esta mañana (en euros).
@@ -129,6 +133,20 @@ recomendaciones:
 | Destino | Importe | Por qué |
 |---|---|---|
 | {ETF / acción / cripto} | {€} | {motivo breve} |
+
+{Solo si `tipos_altos` es true en rates_FECHA.json; si no, una línea: "Tipos por debajo del umbral (x % < 3 %): hoy no hay apartado de renta fija".}
+### 🏦 Dónde aparcar la liquidez a tipo fijo
+> 💡 *Con los tipos altos, el dinero que espera a invertirse puede ganar un interés casi sin riesgo. Referencias de hoy:
+> Euríbor 12 m {y} % · deuda AAA a 1 año {z} % · BCE {x} %.*
+
+| Producto | Tipo | Rentabilidad | Plazo | Garantía / riesgo | Mínimo | Fuente (fecha) |
+|---|---|---|---|---|---|---|
+| {Letras del Tesoro a 12 meses} | Deuda pública (tipo fijo) | {x} % (última subasta) | 12 meses | Estado español | 1.000 € | [Tesoro Público]({url}) ({fecha}) |
+| {Depósito X} | Depósito a plazo fijo | {x} % TAE | {n} meses | FGD hasta 100.000 € | {€} | [{fuente}]({url}) ({fecha}) |
+| {Fondo Y} | Fondo de renta fija a vencimiento / monetario | {x} % objetivo (no garantizado) | {fecha de vencimiento} | CNMV; puede fluctuar | {€} | [{fuente}]({url}) ({fecha}) |
+
+**🧑‍💼 Recomendación:** {cuántos euros de la liquidez, en qué producto(s) y a qué plazo, por qué, y qué parte queda libre
+para los tramos ya planificados y el colchón. Recordatorio fiscal y de que "objetivo" no es "garantizado".}
 
 ## 9. Análisis de riesgo
 | Riesgo | Nivel | Explicación |

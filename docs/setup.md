@@ -197,6 +197,7 @@ pip install -r claude_agent/requirements.txt   # aiohttp, feedparser, PyYAML, pa
 python claude_agent/fetch_news.py               # → claude_agent/data/news_YYYY-MM-DD.json
 python claude_agent/fetch_prices.py             # → claude_agent/data/prices_YYYY-MM-DD.json
 python claude_agent/fetch_prices.py --charts SAN.MC,AAPL   # + PNG in docs/informes/charts/YYYY-MM-DD/
+python claude_agent/fetch_rates.py              # → claude_agent/data/rates_YYYY-MM-DD.json (ECB, Euribor, Fed; tipos_altos)
 python claude_agent/fetch_crypto.py             # → claude_agent/data/crypto_YYYY-MM-DD.json (all Coinbase coins, screener, Fear & Greed)
 python claude_agent/fetch_crypto.py --charts BTC,PEPE   # any Coinbase coin
 python claude_agent/portfolio.py                # → claude_agent/data/portfolio_YYYY-MM-DD.json (from inputs/cartera.csv)
@@ -220,7 +221,8 @@ HTML (`docs/.nojekyll`, no Jekyll build); the technical `docs/*.md` files are no
 | `full_content_top_n` / `full_content_max_chars` | `6` / `2500` | Full text for the newest Spain + US articles |
 | `full_content_skip_domains` | `[investing.com]` | Domains whose article pages block automated fetch |
 | `feeds.{espana,europa,eeuu,macro,cripto}` | see file | `{name, url}` RSS feeds (`cripto`: CoinDesk, Cointelegraph, Decrypt) |
-| `watchlist.<group>` | see file | `{symbol, name}` for Yahoo Finance RSS news **and** price history/indicators (`.MC` = Madrid) |
+| `watchlist.<group>` | see file | `{symbol, name}` for Yahoo Finance RSS news **and** price history/indicators (`.MC` = Madrid). Groups: `indices`, `espana`, `europa`, `eeuu`, `materias_primas` (gold: `GC=F` reference, `IGLN.L` physical-gold ETC) |
+| `renta_fija.umbral_pct` / `renta_fija.referencia` | `3.0` / `euribor_12m` | When the reference rate (`euribor_12m`, `bce_deposito` or `deuda_aaa_1a`, from `fetch_rates.py`) is at or above the threshold, the report adds a fixed-rate section (Treasury bills, FGD-covered deposits, target-maturity and money-market funds) |
 | `crypto.exchange` | `coinbase` | Universe = every coin with an online, tradable Coinbase pair (any quote: USD, EUR, USDC…) |
 | `crypto.max_portfolio_pct` | `25` | Max crypto weight of the total portfolio (user decision); the report recommends reducing above it |
 | `crypto.watchlist` | BTC, ETH, SOL, XRP | Core coin codes: always get detailed technicals (Coinbase candles, 365-day calendar) and Yahoo news (`CODE-USD`) |
