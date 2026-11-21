@@ -16,3 +16,5 @@ fecha,activo,nombre,tipo,operacion,cantidad,precio,moneda,comision,broker,notas
 2026-11-18,EUR,Liquidez disponible,liquidez,venta,274.06,1,EUR,0,,usado para SPY5.L (301 USD / 1.0983 EUR/USD; estimado: ajustar con el cargo real en EUR)
 2026-11-18,AIR.PA,Airbus,accion,compra,0.679535,201.25,EUR,0.91,,ejecutada 18-nov 09:34; comisión 1 USD ≈ 0.91 EUR
 2026-11-18,EUR,Liquidez disponible,liquidez,venta,137.67,1,EUR,0,,usado para AIR.PA (136.76 EUR + 0.91 EUR de comisión; estimado)
+2026-11-20,AIR.PA,Airbus,accion,compra,0.826999,192.98,EUR,0.91,,tramo 2: orden limitada ejecutada 20-nov 10:28; comisión estimada 1 USD ≈ 0.91 EUR (como el tramo 1; ajustar si difiere)
+2026-11-20,EUR,Liquidez disponible,liquidez,venta,160.50,1,EUR,0,,usado para AIR.PA tramo 2 (159.59 EUR + 0.91 EUR de comisión; estimado)
