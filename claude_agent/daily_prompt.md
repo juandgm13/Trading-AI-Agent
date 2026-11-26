@@ -89,11 +89,23 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
   precio actual, valor y ganancia/pérdida en EUR, peso en la cartera, desde cuándo), totales,
   `por_tipo_pct`, `crypto` (peso actual, tope, si lo excede y `margen_hasta_tope_eur`) e `issues`
   (filas del CSV con errores).
+- **Evolución**: el script reconstruye cada día la serie diaria de la cartera desde el inicio del plan
+  (`evolucion`: valor de las inversiones, lo puesto, ganancia/pérdida, liquidez y patrimonio por día) y genera el
+  gráfico `docs/informes/charts/FECHA/cartera.png` (ruta en `chart`). En la sección 8, enlázalo
+  (`![Evolución de tu cartera](../../docs/informes/charts/FECHA/cartera.png)`) y explícalo en 2–3 frases llanas con
+  las cifras de `evolucion_resumen`: ganancia/pérdida de hoy (`pnl_eur`) y su cambio en 1 y 7 días
+  (`pnl_cambio_1d_eur`, `pnl_cambio_7d_eur`, que no dependen de lo que aportes), mejor y peor momento (`pnl_max`,
+  `pnl_min`), cuánto has puesto en el periodo (`puesto_en_periodo_eur`) y qué parte del dinero está ya invertida
+  (`invertido_pct`). Di qué posiciones explican el movimiento. No calcules cifras por tu cuenta. Si no hay gráfico
+  (`chart` ausente), omite la imagen y menciona el motivo si aparece en `issues`.
 - **Liquidez**: las filas `tipo=liquidez` (euros y stablecoins como USDC) son dinero disponible para invertir.
   `totals.valor_eur` es el patrimonio total (inversiones + liquidez), `totals.invertido_eur` solo las
   inversiones y `liquidez {valor_eur, peso_pct}` el dinero disponible. Los porcentajes de "cuánto" se
   calculan sobre el patrimonio total, pero tradúcelos siempre a **euros concretos** saliendo de la liquidez.
   El USDC es liquidez (no cuenta en el tope del 25 % ni es una oportunidad cripto).
+- **Todo el dinero de la cartera es para invertir.** El colchón de emergencia del usuario (gastos e imprevistos)
+  está **aparte** y no forma parte de `cartera.csv`. No reserves colchón con esta liquidez ni se lo recomiendes: la
+  prudencia se aplica con los tramos, la diversificación y el tamaño de cada posición, no apartando dinero "por si acaso".
 - **Aportación mensual**: `aportacion_mensual {importe, moneda, dia, proxima_fecha, dias_hasta}`. Menciona
   siempre la próxima aportación en la sección de cartera. Si `dias_hasta` ≤ 3, o es el primer informe en o
   después del día de la aportación, incluye un **reparto propuesto** de ese importe (p. ej. núcleo indexado /
@@ -186,7 +198,7 @@ Trabaja desde la raíz del repositorio. Todas las rutas son relativas a ella.
      "staking"/rendimientos cripto, cuentas de entidades sin licencia en la UE u ofertas sin fuente verificable.
    - Solo datos de **este mes**, con fuente y fecha; si una cifra no se puede comprobar, no la pongas.
 4. **Recomendación**: cuánto de la liquidez (en euros) poner y a qué plazo, **sin bloquear** el dinero de los tramos ya
-   planificados (ETF, Airbus, aportaciones) ni el colchón de emergencia. Prefiere plazos cortos (3–12 meses) y
+   planificados (ETF, Airbus, aportaciones); el colchón de emergencia está aparte y no hay que reservarlo. Prefiere plazos cortos (3–12 meses) y
    escalonados. Compara con la referencia (`deuda_aaa_1a`, Euríbor) para decir si una oferta es buena. Recuerda la
    fiscalidad (los intereses tributan como rendimientos del capital mobiliario en el IRPF).
 5. **Privacidad**: los bancos y gestoras aparecen como ofertas del mercado, nunca como "tu banco"; no nombres el bróker

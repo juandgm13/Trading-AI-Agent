@@ -122,6 +122,11 @@ Tipos de referencia (de `rates_FECHA.json`): BCE {x} %, Euríbor 12 m {y} %, deu
 **Reparto:** {acciones x% · ETF y% · cripto z% · liquidez l%} · **Cripto vs tope:** {z}% de 25% {✅ dentro / ⚠️ por encima: reducir {importe}}
 **Liquidez disponible:** {L} € ({l} %) · **Próxima aportación:** {importe} € el {proxima_fecha}
 
+![Evolución de tu cartera](../../docs/informes/charts/{FECHA}/cartera.png)
+
+{2–3 frases explicando el gráfico con `evolucion_resumen`: ganancia/pérdida de hoy y su cambio en 1 y 7 días, mejor y peor
+momento, qué parte del dinero está ya invertida y qué posiciones explican el movimiento.}
+
 | Activo | Cantidad | Precio medio | Precio actual | Valor (€) | G/P | Peso | Acción recomendada |
 |---|---|---|---|---|---|---|---|
 | {Nombre (TICKER)} | {cantidad} | {precio_medio} | {precio_actual} | {valor_eur} | {±pnl_pct}% | {peso_pct}% | {ACCIÓN — motivo breve} |
@@ -146,7 +151,7 @@ Tipos de referencia (de `rates_FECHA.json`): BCE {x} %, Euríbor 12 m {y} %, deu
 | {Fondo Y} | Fondo de renta fija a vencimiento / monetario | {x} % objetivo (no garantizado) | {fecha de vencimiento} | CNMV; puede fluctuar | {€} | [{fuente}]({url}) ({fecha}) |
 
 **🧑‍💼 Recomendación:** {cuántos euros de la liquidez, en qué producto(s) y a qué plazo, por qué, y qué parte queda libre
-para los tramos ya planificados y el colchón. Recordatorio fiscal y de que "objetivo" no es "garantizado".}
+para los tramos ya planificados (el colchón de emergencia está aparte). Recordatorio fiscal y de que "objetivo" no es "garantizado".}
 
 ## 9. Análisis de riesgo
 | Riesgo | Nivel | Explicación |

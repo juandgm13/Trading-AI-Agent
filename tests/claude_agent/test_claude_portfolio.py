@@ -391,3 +391,197 @@ def test_public_brokers_only_names_coinbase():
     assert pf.public_brokers({"Coinbase", "MyInvestor", "Trade Republic", " "}) == "Coinbase, otro bróker"
     assert pf.public_brokers({"coinbase advanced"}) == "coinbase advanced"
     assert pf.public_brokers(set()) == ""
+
+
+# ── evolución de la cartera ──────────────────────────────────────────────────
+
+def _series(values: dict) -> pd.Series:
+    return pd.Series({date.fromisoformat(k): v for k, v in values.items()})
+
+
+def test_evolution_start_default_config_and_fallbacks():
+    movs = [_mv("compra", 1, 10, fecha="2022-04-07"),
+            _mv("compra", 700, 1, activo="EUR", tipo="liquidez", fecha="2026-11-09")]
+    assert pf.evolution_start(movs) == date(2026, 11, 9)                # primer movimiento de liquidez
+    assert pf.evolution_start(movs, "2026-01-15") == date(2026, 1, 15)
+    assert pf.evolution_start(movs, date(2025, 1, 1)) == date(2025, 1, 1)
+    assert pf.evolution_start(movs[:1]) == date(2022, 4, 7)              # sin liquidez: primer movimiento
+    assert pf.evolution_start([]) is None
+
+
+@pytest.mark.parametrize("start, rng", [
+    (date(2026, 11, 9), "1mo"), (date(2026, 10, 1), "3mo"), (date(2026, 7, 1), "6mo"), (date(2026, 1, 1), "1y"),
+    (date(2025, 1, 1), "2y"), (date(2022, 4, 7), "5y"), (date(2015, 1, 1), "max"),
+])
+def test_history_range(start, rng):
+    assert pf.history_range(start, date(2026, 11, 26)) == rng
+
+
+def test_daily_closes_uses_calendar_day_and_last_bar():
+    idx = pd.to_datetime(["2026-11-09 14:30", "2026-11-09 21:00", "2026-11-10 21:00"], utc=True)
+    df = pd.DataFrame({"Close": [1.0, 2.0, None]}, index=idx)
+    out = pf.daily_closes(df)
+    assert out.to_dict() == {date(2026, 11, 9): 2.0}
+
+
+def test_build_evolution_buys_sells_fx_weekend_and_missing_history():
+    movs = [
+        _mv("compra", 1000, 1, activo="EUR", tipo="liquidez", fecha="2026-11-06"),
+        _mv("compra", 2, 100, activo="SPY", tipo="etf", moneda="USD", fecha="2026-11-09"),
+        _mv("venta", 200, 1, activo="EUR", tipo="liquidez", fecha="2026-11-09"),
+        _mv("compra", 1, 50, activo="NOHIST", fecha="2026-11-10"),
+        _mv("venta", 1, 110, activo="SPY", tipo="etf", moneda="USD", fecha="2026-11-10"),
+    ]
+    hist = {"SPY": _series({"2026-11-06": 90.0, "2026-11-09": 100.0, "2026-11-10": 120.0})}
+    fx = {"USD": _series({"2026-11-05": 1.0, "2026-11-09": 1.25})}
+    points, issues = pf.build_evolution(movs, hist, fx, date(2026, 11, 7), date(2026, 11, 10), {"USD": 1.25})
+    assert [p["fecha"] for p in points] == ["2026-11-07", "2026-11-08", "2026-11-09", "2026-11-10"]
+    sat = points[0]                                                      # fin de semana: solo liquidez
+    assert sat["patrimonio_eur"] == 1000 and sat["valor_inversiones_eur"] == 0 and sat["pnl_pct"] is None
+    mon = points[2]                                                      # 2 SPY a 100 $ y 1,25 $/€
+    assert mon["valor_inversiones_eur"] == 160 and mon["coste_eur"] == 160 and mon["liquidez_eur"] == 800
+    assert mon["por_tipo_eur"] == {"liquidez": 800, "etf": 160}
+    tue = points[3]                                                      # 1 SPY a 120 $ + NOHIST a coste
+    assert tue["valor_inversiones_eur"] == 96 + 50 and tue["coste_eur"] == 80 + 50
+    assert tue["pnl_eur"] == 16 and tue["pnl_pct"] == round(16 / 130 * 100, 2)
+    assert issues == [{"activo": "NOHIST", "message": "evolución: sin cierre histórico; se valora a coste"}]
+
+
+def test_build_evolution_without_fx_skips_position():
+    movs = [_mv("compra", 1, 100, activo="SPY", tipo="etf", moneda="USD", fecha="2026-11-09"),
+            _mv("compra", 1, 5, activo="OLD", fecha="2026-11-01"), _mv("venta", 1, 6, activo="OLD", fecha="2026-11-02")]
+    points, _ = pf.build_evolution(movs, {}, {}, date(2026, 11, 9), date(2026, 11, 9), {})  # OLD cerrada
+    assert points[0]["patrimonio_eur"] == 0
+
+
+def test_filled_empty():
+    assert pf._filled(None, [date(2026, 1, 1)]) == {}
+    assert pf._filled(pd.Series(dtype=float), [date(2026, 1, 1)]) == {}
+
+
+def test_today_point_matches_summary():
+    movs = [_mv("compra", 1, 100, activo="SPY", tipo="etf"), _mv("compra", 50, 1, activo="EUR", tipo="liquidez")]
+    positions, _ = pf.build_positions(movs)
+    summary = pf.summarize(positions, {"SPY": 110.0}, {})
+    p = pf.today_point(summary, date(2026, 11, 26))
+    assert p == {"fecha": "2026-11-26", "valor_inversiones_eur": 110, "coste_eur": 100, "pnl_eur": 10,
+                 "pnl_pct": 10.0, "liquidez_eur": 50, "patrimonio_eur": 160,
+                 "por_tipo_eur": {"etf": 110, "liquidez": 50}}
+
+
+def _pt(day, value, cost, cash=100.0):
+    return {"fecha": day, "valor_inversiones_eur": value, "coste_eur": cost, "pnl_eur": value - cost,
+            "pnl_pct": (value / cost - 1) * 100 if cost else None, "liquidez_eur": cash,
+            "patrimonio_eur": value + cash, "por_tipo_eur": {"etf": value, "liquidez": cash}}
+
+
+def test_evolution_summary():
+    assert pf.evolution_summary([]) is None
+    pts = [_pt(f"2026-11-{d:02d}", v, c) for d, (v, c) in
+           enumerate([(100, 100), (120, 100), (90, 100), (95, 100), (200, 200), (210, 200), (190, 200), (205, 200),
+                      (300, 290)], start=1)]
+    r = pf.evolution_summary(pts)
+    assert r["desde"] == "2026-11-01" and r["dias"] == 9
+    assert r["pnl_eur"] == 10 and r["pnl_cambio_1d_eur"] == 5 and r["pnl_cambio_7d_eur"] == -10
+    assert r["patrimonio_cambio_1d_eur"] == 95 and r["patrimonio_cambio_desde_inicio_eur"] == 200
+    assert r["puesto_en_periodo_eur"] == 190 and r["invertido_pct"] == 75.0
+    assert r["pnl_max"] == {"fecha": "2026-11-02", "eur": 20} and r["pnl_min"] == {"fecha": "2026-11-03", "eur": -10}
+    short = pf.evolution_summary(pts[:1])
+    assert short["pnl_cambio_1d_eur"] is None and short["pnl_cambio_7d_eur"] is None
+    empty = pf.evolution_summary([{**pts[0], "patrimonio_eur": 0}])
+    assert empty["invertido_pct"] is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_histories_yahoo_coinbase_fallback_fx_and_errors():
+    idx = pd.to_datetime(["2026-11-09", "2026-11-10"], utc=True)
+
+    async def hist(session, sym, range_="2y", interval="1d"):
+        assert range_ == "1mo"
+        if sym in ("BAD", "PEPE-USD", "ZZZ-USD"):
+            raise ValueError("HTTP 404")
+        return pd.DataFrame({"Close": [1.0, 1.1 if sym == "EURUSD=X" else 10.0]}, index=idx)
+
+    async def coinbase(session, product, now, pages=2):
+        assert pages == 1
+        if product == "ZZZ-USD":
+            raise ValueError("Coinbase: sin velas")
+        return pd.DataFrame({"Close": [0.5]}, index=idx[:1])
+
+    now = datetime(2026, 11, 26, 7, 0, tzinfo=timezone.utc)
+    with patch.object(pf, "fetch_history", side_effect=hist), \
+         patch("claude_agent.fetch_crypto.fetch_coinbase_history", side_effect=coinbase), \
+         patch.object(pf.aiohttp, "ClientSession", return_value=_FakeSession()):
+        h, fx, issues = await pf.fetch_histories(["SPY", "BAD", "PEPE-USD", "ZZZ-USD"], ["USD"],
+                                                 date(2026, 11, 9), now)
+        assert await pf.fetch_histories([], [], date(2026, 11, 9), now) == ({}, {}, [])
+    assert set(h) == {"SPY", "PEPE-USD"} and h["PEPE-USD"].iloc[0] == 0.5
+    assert fx["USD"].iloc[-1] == 1.1
+    assert {i["activo"] for i in issues} == {"BAD", "ZZZ-USD"}
+
+
+def test_eur_format():
+    assert pf._eur(1234.5) == "1.234" or pf._eur(1234.5) == "1.235"
+    assert pf._eur(1234.567, 2) == "1.234,57"
+
+
+def test_make_portfolio_chart(tmp_path):
+    movs = [_mv("compra", 1, 100, activo="SPY", tipo="etf", fecha="2026-11-02"),
+            _mv("compra", 1, 100, activo="AIR.PA", fecha="2026-11-02"),
+            _mv("venta", 1, 100, activo="SPY", tipo="etf", fecha="2026-11-03"),
+            _mv("dividendo", 0, 3, activo="AIR.PA", fecha="2026-11-03"),
+            _mv("compra", 1, 1, activo="EUR", tipo="liquidez", fecha="2026-11-03"),
+            _mv("compra", 1, 1, activo="OLD", fecha="2026-10-01")]
+    pts = [_pt("2026-11-01", 0, 0), _pt("2026-11-02", 210, 200), _pt("2026-11-03", 90, 100)]
+    path = pf.make_portfolio_chart(pts, movs, tmp_path / "c", objetivo_liquidez_pct=40)
+    assert path.endswith("cartera.png") and (tmp_path / "c" / "cartera.png").stat().st_size > 1000
+    gain = [_pt("2026-11-01", 100, 90)]
+    gain[0]["pnl_pct"] = None
+    assert pf.make_portfolio_chart(gain, [], tmp_path / "d")
+
+
+@pytest.mark.asyncio
+async def test_collect_with_evolution(tmp_path):
+    csv_path = tmp_path / "cartera.csv"
+    csv_path.write_text(
+        HEADER
+        + "2026-11-09,EUR,Liquidez,liquidez,compra,1000,1,EUR,0,,\n"
+        + "2026-11-20,SPY,ETF,etf,compra,1,100,USD,0,,\n",
+        encoding="utf-8",
+    )
+    now = datetime(2026, 11, 26, 7, 0, tzinfo=timezone.utc)
+    fetch = AsyncMock(return_value=({"SPY": 110.0, "EURUSD=X": 1.25}, []))
+    hists = AsyncMock(return_value=({"SPY": _series({"2026-11-20": 100.0})},
+                                    {"USD": _series({"2026-11-01": 1.25})}, [{"activo": "X", "message": "m"}]))
+    cfg = {"portfolio": {"grafico": {"desde": None, "objetivo_liquidez_pct": None}}}
+    with patch.object(pf, "fetch_prices", new=fetch), patch.object(pf, "fetch_histories", new=hists):
+        data = await pf.collect(cfg, csv_path, now=now, evolution=True, charts_dir=tmp_path / "charts")
+    assert hists.call_args.args[:3] == (["SPY"], ["USD"], date(2026, 11, 9))
+    evo = data["evolucion"]
+    assert evo[0]["fecha"] == "2026-11-09" and evo[-1]["fecha"] == "2026-11-26" and len(evo) == 18
+    assert evo[-1]["valor_inversiones_eur"] == data["totals"]["invertido_eur"] == 88
+    assert data["evolucion_resumen"]["pnl_eur"] == data["totals"]["pnl_no_realizado_eur"]
+    assert data["chart"].endswith("cartera.png")
+    assert {"activo": "X", "message": "m"} in data["issues"]
+    json.dumps(data)
+    # Inicio en el futuro (config) → sin evolución
+    cfg["portfolio"]["grafico"]["desde"] = "2027-01-01"
+    with patch.object(pf, "fetch_prices", new=fetch), patch.object(pf, "fetch_histories", new=hists):
+        data = await pf.collect(cfg, csv_path, now=now, evolution=True, charts_dir=tmp_path / "charts")
+    assert "evolucion" not in data
+
+
+def test_main_prints_evolution_and_no_chart_flag(tmp_path, capsys):
+    fake = {"generated_at_local": "2026-11-26T08:00:00+01:00", "exists": True, "movements": 2,
+            "positions": [{}], "totals": {"valor_eur": 100, "coste_eur": 90, "pnl_no_realizado_eur": 10},
+            "crypto": {"peso_pct": 0, "tope_pct": 25}, "issues": [], "chart": "/x/cartera.png",
+            "evolucion_resumen": {"desde": "2026-11-09", "dias": 18, "pnl_eur": 10, "pnl_cambio_1d_eur": 1,
+                                  "pnl_cambio_7d_eur": -2}}
+    with patch.object(pf, "collect", new=AsyncMock(return_value=fake)) as col:
+        pf.main(["--output", str(tmp_path / "p.json")])
+        assert col.call_args.kwargs["evolution"] is True
+        pf.main(["--output", str(tmp_path / "p.json"), "--no-chart"])
+        assert col.call_args.kwargs["evolution"] is False
+    out = capsys.readouterr().out
+    assert "Evolución desde 2026-11-09 (18 días): G/P 10 EUR (1 día 1, 7 días -2)" in out
+    assert "Gráfico de evolución: /x/cartera.png" in out

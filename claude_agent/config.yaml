@@ -107,6 +107,9 @@ renta_fija:
 portfolio:
   file: inputs/cartera.csv     # Relativo a claude_agent/
   base_currency: EUR
+  grafico:                     # Gráfico de evolución (docs/informes/charts/FECHA/cartera.png)
+    desde: null                # null = primer movimiento de liquidez (inicio del plan); o AAAA-MM-DD
+    objetivo_liquidez_pct: null  # Opcional: % de liquidez objetivo del plan (dibuja una línea de referencia)
   aportacion_mensual:          # Aportación periódica: el informe propone cómo repartirla (no se suma sola)
     importe: 200
     moneda: EUR

@@ -38,6 +38,7 @@ Tarea programada (L–V ~7:47 Madrid)
                                                     tipos_altos = Euríbor 12 m ≥ 3 % → apartado de renta fija a tipo fijo)
        3. python claude_agent/fetch_crypto.py    → data/crypto_FECHA.json (universo Coinbase, radar, técnico, Fear & Greed)
        4. python claude_agent/portfolio.py       → data/portfolio_FECHA.json (tu cartera desde inputs/cartera.csv)
+                                                  + docs/informes/charts/FECHA/cartera.png (evolución)
        5. web fetch de TODAS las páginas y búsquedas de sources.md (sin límite de tiempo)
                                                   → cierre anterior, futuros, agenda, bancos centrales, cripto
           + lee inputs/                           → tus notas, empresas de interés
@@ -63,7 +64,7 @@ Tarea programada (L–V ~7:47 Madrid)
 | `fetch_crypto.py` | Cripto: universo = todas las monedas de Coinbase cruzadas con Coinpaprika, radar (top por capitalización, más suben/bajan, amplitud), Fear & Greed, capitalización/dominancia e indicadores con velas diarias de Coinbase (par EUR o USD, 365 días) + gráficos |
 | `build_site.py` | Convierte todos los informes en la web estática de `docs/` (HTML/CSS propios, sin Jekyll): portada, `informes/FECHA.html` (en cada idea el gráfico queda fijo arriba mientras se lee su texto), `archivo.html`, `aprende.html`, `historial.html` (recomendaciones por activo e informe) |
 | `site/` | Plantilla HTML (`base.html`), estilos (`style.css`, modo claro/oscuro, móvil, impresión) y `site.js` (tema y ampliar gráficos) |
-| `portfolio.py` | Lee `inputs/cartera.csv` → posiciones (precio medio), valor y G/P en EUR, liquidez (`tipo=liquidez`), peso de cripto frente al tope y próxima aportación mensual (`portfolio.aportacion_mensual`) |
+| `portfolio.py` | Lee `inputs/cartera.csv` → posiciones (precio medio), valor y G/P en EUR, liquidez (`tipo=liquidez`), peso de cripto frente al tope, próxima aportación mensual (`portfolio.aportacion_mensual`) y **evolución diaria** reconstruida desde el inicio del plan (`portfolio.grafico.desde`) con gráfico `cartera.png` (lo puesto vs. lo que vale, G/P diaria y % invertido) |
 | `fetch_prices.py` | Velas diarias (Yahoo, 2 años; si el último cierre llega tarde lo completa con el precio de cierre de Yahoo, descarta la vela de una sesión aún abierta y marca `stale`) → indicadores (MM20/50/200, RSI, MACD, volatilidad, 52 semanas, soportes/resistencias) + gráficos PNG |
 | `learning_log.md` | Temario didáctico y registro de conceptos ya explicados (lo actualiza Claude) |
 | `daily_prompt.md` | Instrucciones completas que sigue Claude en cada ejecución |
@@ -82,7 +83,8 @@ python claude_agent/fetch_prices.py                # → claude_agent/data/price
 python claude_agent/fetch_prices.py --charts SAN.MC,^IBEX   # + gráficos en docs/informes/charts/AAAA-MM-DD/
 python claude_agent/fetch_crypto.py                # → claude_agent/data/crypto_AAAA-MM-DD.json
 python claude_agent/fetch_crypto.py --charts BTC,PEPE      # cualquier moneda de Coinbase
-python claude_agent/portfolio.py                   # → claude_agent/data/portfolio_AAAA-MM-DD.json
+python claude_agent/portfolio.py                   # → claude_agent/data/portfolio_AAAA-MM-DD.json + gráfico de evolución
+python claude_agent/portfolio.py --no-chart        # sin evolución ni gráfico
 python claude_agent/build_site.py                  # → docs/ (abre docs/index.html en el navegador)
 ```
 

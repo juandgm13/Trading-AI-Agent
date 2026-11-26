@@ -12,7 +12,7 @@
 | `claude_agent/test_claude_fetch_rates.py` | 14 | None (ECB / FRED HTTP mocked) |
 | `claude_agent/test_claude_fetch_crypto.py` | 24 | None (Coinbase / Coinpaprika / Fear & Greed mocked) |
 | `claude_agent/test_claude_build_site.py` | 34 | None (temporary reports/docs; also builds the real reports) |
-| `claude_agent/test_claude_portfolio.py` | 46 | None (prices mocked; reads the real `inputs/cartera.csv` template) |
+| `claude_agent/test_claude_portfolio.py` | 65 | None (prices mocked; reads the real `inputs/cartera.csv` template) |
 | `test_news_service.py` | 14 | None (aggregator + classifier mocked) |
 | `test_response_parser.py` | ~22 | None |
 | `test_alerting.py` | 5 | None (mock SMTP) |
@@ -117,6 +117,12 @@ Covers `claude_agent/portfolio.py`:
 - `next_contribution`: next monthly contribution date (same day, next month, year change, short months, disabled)
 - `fetch_prices` (Yahoo, Coinbase ticker fallback for crypto pairs, precision of tiny prices), `_coinbase_price`,
   `_is_crypto_pair`, `public_brokers` (only Coinbase named), `collect()` (FX symbols requested, cash not priced, `aportacion_mensual`, missing / empty CSV), `main()` (default path from config, cash and next contribution lines)
+- Evolution: `evolution_start` (config date, first cash movement, fallback), `history_range`, `daily_closes`,
+  `build_evolution` (buys/sells replayed per day, weekend forward-fill, historical FX for value vs current FX for cost,
+  asset without history valued at cost, closed positions, missing FX), `today_point` (matches `summarize`),
+  `evolution_summary`, `fetch_histories` (Yahoo, Coinbase candle fallback, FX split, errors), `make_portfolio_chart`
+  (PNG with buy/sell markers and optional cash target), `collect(evolution=True)` (last point = totals, future start
+  date → no evolution), `main()` evolution line and `--no-chart`
 
 ### `claude_agent/test_claude_build_site.py`
 Covers `claude_agent/build_site.py`:

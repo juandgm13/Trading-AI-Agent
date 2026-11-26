@@ -49,7 +49,8 @@ Notas:
 ### Liquidez (dinero disponible para invertir)
 Usa `tipo=liquidez` con precio `1`: activo `EUR` para euros, `USDC` (moneda `USD`) para la stablecoin.
 `compra` = ingresas dinero; `venta` = lo retiras o lo usas para invertir. No se busca cotización y no cuenta
-para el tope de cripto. **Cuando inviertas parte de la liquidez**, añade la compra del activo *y* una fila
+para el tope de cripto. **Toda esta liquidez se considera dinero para invertir**: el colchón de emergencia (gastos e
+imprevistos) va aparte y no se apunta aquí. **Cuando inviertas parte de la liquidez**, añade la compra del activo *y* una fila
 `venta` de `EUR` (o `USDC`) por el importe usado; el saldo no se descuenta solo.
 
 ```csv
@@ -58,6 +59,12 @@ para el tope de cripto. **Cuando inviertas parte de la liquidez**, añade la com
 2026-11-12,SPY,ETF S&P 500,etf,compra,0.3,690,USD,0,,
 2026-11-12,EUR,Liquidez disponible,liquidez,venta,180,1,EUR,0,,usado para el ETF
 ```
+
+### Gráfico de evolución
+Cada día `portfolio.py` reconstruye con estos movimientos y los precios históricos cómo ha evolucionado tu cartera
+desde el inicio del plan (el primer movimiento de liquidez; se puede cambiar en `config.yaml` →
+`portfolio.grafico.desde`) y el informe muestra un gráfico con lo que has puesto frente a lo que valen tus
+inversiones, la ganancia o pérdida de cada día y qué parte de tu dinero está ya invertida.
 
 ### Aportación mensual
 `config.yaml` → `portfolio.aportacion_mensual` (ahora: 200 € el día 1 de cada mes). El informe te recuerda la

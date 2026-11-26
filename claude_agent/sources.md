@@ -55,5 +55,7 @@ Si una página falla o está bloqueada, Claude lo anota en el apartado de fuente
 - Quiero seguir el **oro** cada día (activo refugio); para invertir, el ETC IGLN.L.
 - Cuando los tipos estén altos (Euríbor 12 m ≥ 3 %), quiero opciones **fiables** de renta fija a tipo fijo para la
   liquidez: Letras del Tesoro, depósitos con FGD, fondos de renta fija a vencimiento y monetarios.
+- Todo el dinero de mi cartera (`cartera.csv`) es para invertir: mi colchón para gastos e imprevistos lo tengo
+  aparte, así que no hace falta reservar parte de esta liquidez como colchón.
 - Criptomonedas: opero en **Coinbase** (en euros). Tope del 25 % de la cartera en cripto.
 - Quiero recomendaciones directas (comprar / mantener / reducir / vender / esperar) con su porqué.
